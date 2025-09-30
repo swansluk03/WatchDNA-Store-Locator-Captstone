@@ -1,4 +1,4 @@
-**Welcome to the Capstone Project Repo**
+**Welcome to the Capstone Project Repo!**
 
 I am using venv to manage my enviroment and using WSL: Ubuntu on VSCode
 
@@ -6,7 +6,7 @@ I am using venv to manage my enviroment and using WSL: Ubuntu on VSCode
 python3 -m venv venv
 source venv/bin/activate
 
-*Also if you need to install more requirements*
+*Also if you need to install requirements*
 pip install -r requirements.txt
 
 **Make Sure to add packages/Imports to requirements!**
