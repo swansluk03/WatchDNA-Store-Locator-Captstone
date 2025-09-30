@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lan="en">
+
+<head>
+    <title>Prototype Map for 485</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script> 
+
+    <style>
+        #map {
+            width: 1000px;
+            height: 600px;
+        }
+        .popup {
+            font-size: 1.1rem;
+        }
+    </style>
+
+</head>
+<body>
+
+    <div id="map"></div>
+
+</body>
+<script>
+
+    const map = L.map('map');
+    //map.setView([33.4544, -112.0468], 10); //setting the view to the Phoenix area
+    map.setView([37.58, -43.59], 3); //setting the view to see the U.S and Europe
+
+    //adding OpenStreetMap as a data source
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+
+    //defining a function to get a process a CSV file
+    async function loadFile() {
+        return new Promise((resolve, reject) => {
+            Papa.parse('./locations.csv', {
+                download: true, //first argument is the file to be fetched
+                header: true, //consider the first row as headers and to map the results to those names
+                complete: (results) => {
+                    resolve(results.data);
+                }
+            });
+        });
+    }
+
+    //call the function and add the marker
+    loadFile().then(data => {
+        //loop through each row of the parsed CSV data
+        data.forEach(row => {
+            //skip rows that might have invalid coordinates
+            if(row.Latitude && row.Longitude) {
+                //Headers that have spaces in them will be placed into variables so I can actually accesss its data
+                const address = row['Address Line 1'];
+                const state = row['State/Province/Region'];
+
+                //create a marker and add it to the map
+                L.marker([row.Latitude, row.Longitude])
+                .addTo(map)
+                .bindPopup(`<b>${row.Name}</b><br>
+                ${address}, ${row.City}, ${state}, ${row.Country}<br>
+                ${row.Phone}`);
+            }
+        });
+    }).catch(err => {
+        console.error("Error loading CSV:", err);
+    });
+
+
+
+
+    //adding a marker onto the map for ASU
+    // L.marker([33.42131, -111.93313], {
+    //     title: "Arizona State University",
+    // })
+    // .bindPopup(`
+    //     <span class="popup">
+    //         <b>Arizona State University</b><br>
+    //         1151 S Forest Ave<br>
+    //         Tempe, AZ 85281<br>
+    //         <a href="https://asuonline.asu.edu/?gclsrc=aw.ds&&utm_source=google&utm_medium=cpc&utm_content=br_main_asu_non&utm_campaign=22-nat_acq-hi_br_main_non_gg&utm_ecd22=22&utm_term=arizona+state+university&gad_source=1&gad_campaignid=10205493793&gbraid=0AAAAACemS5UntpeBuafPcn-BMBs0vA1Vn&gclid=CjwKCAjwuePGBhBZEiwAIGCVS4Mbjkc0LCmePuwnRc_dZMzcCeSyPN8_hkcvYm1JUSbvBt0TMMDgphoCRSkQAvD_BwE"
+    //             target="_blank">Arizona State University</a><br>
+    //     </span>
+    // `) // ^ this information will show up in a little box above the icon once you click on it
+    // .addTo(map);
+
+</script>
+
+
+
+</html>
