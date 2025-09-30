@@ -1,8 +1,8 @@
 import requests
 import csv
 
-# Put your actual endpoint URL here (for demonstration—a public endpoint is needed)
-API_URL = "https://www.watchlink.com/pages/locations.json"  # Replace with your real JSON endpoint
+# basic JSON scraper, needs tweaking
+API_URL = "https://www.watchlink.com/pages/locations.json" 
 
 # The column headers must match your template
 fieldnames = [
@@ -29,7 +29,7 @@ def fetch_store_data():
 
     results = []
     for store in stores:
-        # Map your store fields. This is an example mapping!
+        
         row = {
             "Handle": store.get("slug", ""),
             "Name": store.get("name", ""),

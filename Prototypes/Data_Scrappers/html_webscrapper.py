@@ -1,7 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import csv
-
+# basic HTML scraper using BeautifulSoup, needs tweaking
 LOCATOR_URL = "https://www.watchlink.com/pages/locations"   # Replace with your real locator page
 
 fieldnames = ["Handle", "Name", "Status", "Address Line 1", "Address Line 2", "Postal/ZIP Code",
@@ -21,7 +21,7 @@ fieldnames = ["Handle", "Name", "Status", "Address Line 1", "Address Line 2", "P
 def fetch_store_data():
     response = requests.get(LOCATOR_URL)
     soup = BeautifulSoup(response.text, 'html.parser')
-    store_cards = soup.select('.store-card')  # Adjust CSS select for your site
+    store_cards = soup.select('.store-card')
 
     results = []
     for card in store_cards:
