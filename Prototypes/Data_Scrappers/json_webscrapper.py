@@ -2,7 +2,7 @@ import requests
 import csv
 
 # basic JSON scraper, needs tweaking
-API_URL = "https://www.watchlink.com/pages/locations.json" 
+API_URL = "https://www.watchlink.com/pages/locations.json"
 
 # The column headers must match your template
 fieldnames = [
@@ -22,15 +22,26 @@ fieldnames = [
 ]
 
 def fetch_store_data():
-    resp = requests.get(API_URL)
-    print(resp.status_code)
-    print(resp.text)
-    stores = resp.json().get('stores', [])  # Adjust key if your API returns a different structure
+    try:
+        resp = requests.get(API_URL, timeout=10)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"Failed to fetch JSON from {API_URL}: {e}")
+        return []
+
+    try:
+        stores = resp.json().get('stores', [])  # Adjust key if your API returns a different structure
+    except Exception:
+        print("Response is not valid JSON")
+        return []
 
     results = []
     for store in stores:
-        
-        row = {
+        # Start with an explicit empty row for all expected columns
+        row = {k: "" for k in fieldnames}
+
+        # Basic mappings (adjust keys to match the actual JSON structure if different)
+        row.update({
             "Handle": store.get("slug", ""),
             "Name": store.get("name", ""),
             "Status": "TRUE" if store.get("active", True) else "FALSE",
@@ -44,14 +55,85 @@ def fetch_store_data():
             "Email": store.get("email", ""),
             "Website": store.get("website", ""),
             "Image URL": store.get("image", ""),
-            "Latitude": store.get("latitude", ""),
-            "Longitude": store.get("longitude", "")
-            # ... Populate other fields as needed, blank if not present in data
-        }
-        # Ensure all columns exist for CSV
-        for key in fieldnames:
-            row.setdefault(key, "")
+            "Latitude": str(store.get("latitude", "")),
+            "Longitude": str(store.get("longitude", "")),
+            "Page Title": store.get("page_title", ""),
+            "Page Description": store.get("page_description", ""),
+            "Meta Title": store.get("meta_title", ""),
+            "Meta Description": store.get("meta_description", ""),
+            "Priority": store.get("priority", "")
+        })
+
+        # Hours: expect either a dict or keys like 'hours_monday'
+        hours = store.get('hours', {}) or {}
+        if isinstance(hours, dict):
+            row['Monday'] = hours.get('monday', '')
+            row['Tuesday'] = hours.get('tuesday', '')
+            row['Wednesday'] = hours.get('wednesday', '')
+            row['Thursday'] = hours.get('thursday', '')
+            row['Friday'] = hours.get('friday', '')
+            row['Saturday'] = hours.get('saturday', '')
+            row['Sunday'] = hours.get('sunday', '')
+        else:
+            # fallback to individually named keys
+            row['Monday'] = store.get('hours_monday', '')
+            row['Tuesday'] = store.get('hours_tuesday', '')
+            row['Wednesday'] = store.get('hours_wednesday', '')
+            row['Thursday'] = store.get('hours_thursday', '')
+            row['Friday'] = store.get('hours_friday', '')
+            row['Saturday'] = store.get('hours_saturday', '')
+            row['Sunday'] = store.get('hours_sunday', '')
+
+        # Tags / brands
+        tags = store.get('tags') or store.get('categories')
+        if isinstance(tags, list):
+            row[' Tags'] = ",".join([str(t) for t in tags])
+        elif tags:
+            row[' Tags'] = str(tags)
+
+        brands = store.get('brands')
+        if isinstance(brands, list):
+            row['Custom Brands'] = ",".join([str(b) for b in brands])
+        elif brands:
+            row['Custom Brands'] = str(brands)
+
+        # Localized fields (common naming patterns)
+        row['Name - FR'] = store.get('name_fr', '') or store.get('name_fr_FR', '')
+        row['Page Title - FR'] = store.get('page_title_fr', '')
+        row['Page Description - FR'] = store.get('page_description_fr', '')
+        row['Name - ZH-CN'] = store.get('name_zh', '') or store.get('name_zh_cn', '')
+        row['Page Title - ZH-CN'] = store.get('page_title_zh', '')
+        row['Page Description - ZH-CN'] = store.get('page_description_zh', '')
+        row['Name - ES'] = store.get('name_es', '')
+        row['Page Title - ES'] = store.get('page_title_es', '')
+        row['Page Description - ES'] = store.get('page_description_es', '')
+
+        # Custom buttons (expect a list of dicts)
+        buttons = store.get('custom_buttons') or store.get('buttons') or []
+        if isinstance(buttons, list):
+            if len(buttons) > 0:
+                b = buttons[0]
+                row['Custom Button title 1'] = b.get('title', '')
+                row['Custom Button URL 1'] = b.get('url', '')
+                row['Custom Button title 1 - FR'] = b.get('title_fr', '')
+                row['Custom Button URL 1 - FR'] = b.get('url_fr', '')
+                row['Custom Button title 1 - ZH-CN'] = b.get('title_zh', '')
+                row['Custom Button URL 1 - ZH-CN'] = b.get('url_zh', '')
+                row['Custom Button title 1 - ES'] = b.get('title_es', '')
+                row['Custom Button URL 1 - ES'] = b.get('url_es', '')
+            if len(buttons) > 1:
+                b = buttons[1]
+                row['Custom Button title 2'] = b.get('title', '')
+                row['Custom Button URL 2'] = b.get('url', '')
+                row['Custom Button title 2 - FR'] = b.get('title_fr', '')
+                row['Custom Button URL 2 - FR'] = b.get('url_fr', '')
+                row['Custom Button title 2 - ZH-CN'] = b.get('title_zh', '')
+                row['Custom Button URL 2 - ZH-CN'] = b.get('url_zh', '')
+                row['Custom Button title 2 - ES'] = b.get('title_es', '')
+                row['Custom Button URL 2 - ES'] = b.get('url_es', '')
+
         results.append(row)
+
     return results
 
 def write_csv(data, filename="locations.csv"):
