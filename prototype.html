@@ -1,96 +1,170 @@
 <!DOCTYPE html>
-<html lan="en">
-
+<html lang="en">
 <head>
-    <title>Prototype Map for 485</title>
+  <meta charset="utf-8" />
+  <title>Prototype Map for 485</title>
 
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script> 
+  <!-- Leaflet core -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
 
-    <style>
-        #map {
-            width: 1000px;
-            height: 600px;
-        }
-        .popup {
-            font-size: 1.1rem;
-        }
-    </style>
+  <!-- PapaParse for CSV -->
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
 
+  <!-- MarkerCluster plugin -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
+  />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
+  />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <style>
+    :root { --card:#fff; --border:#d0d7de; }
+    body { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; margin: 0; }
+    header { padding: 12px 16px; display: flex; gap: 12px; align-items: center; }
+    #brandFilter { padding: 8px; min-width: 240px; }
+    #map { width: 100%; height: 640px; }
+    .popup { font-size: 1.05rem; line-height: 1.35; }
+    .banner {
+      position: absolute; top: 10px; right: 10px; background: var(--card);
+      border: 1px solid var(--border); padding: 8px 12px; border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,.06); z-index: 1000;
+    }
+  </style>
 </head>
 <body>
 
-    <div id="map"></div>
+  <header>
+    <label for="brandFilter"><strong>Filter by brand:</strong></label>
+    <select id="brandFilter">
+      <option value="">All brands</option>
+    </select>
+  </header>
 
-</body>
-<script>
+  <div id="map"></div>
 
+  <script>
+    // --- Map bootstrap ---
     const map = L.map('map');
-    //map.setView([33.4544, -112.0468], 10); //setting the view to the Phoenix area
-    map.setView([37.58, -43.59], 3); //setting the view to see the U.S and Europe
+    map.setView([20, 0], 2); // will be replaced by fitBounds if we have data
 
-    //adding OpenStreetMap as a data source
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
     }).addTo(map);
 
-    //defining a function to get a process a CSV file
-    async function loadFile() {
-        return new Promise((resolve, reject) => {
-            Papa.parse('./locations.csv', {
-                download: true, //first argument is the file to be fetched
-                header: true, //consider the first row as headers and to map the results to those names
-                complete: (results) => {
-                    resolve(results.data);
-                }
-            });
+    // --- CSV loader (with cache-busting to avoid stale results) ---
+    function loadCSV(path) {
+      const url = `${path}?v=${Date.now()}`;
+      return new Promise((resolve, reject) => {
+        Papa.parse(url, {
+          download: true,
+          header: true,
+          skipEmptyLines: true,
+          complete: res => resolve(res.data),
+          error: err => reject(err)
         });
+      });
     }
 
-    //call the function and add the marker
-    loadFile().then(data => {
-        //loop through each row of the parsed CSV data
-        data.forEach(row => {
-            //skip rows that might have invalid coordinates
-            if(row.Latitude && row.Longitude) {
-                //Headers that have spaces in them will be placed into variables so I can actually accesss its data
-                const address = row['Address Line 1'];
-                const state = row['State/Province/Region'];
+    // --- Clustering & filtering state ---
+    const clusterGroup = L.markerClusterGroup();
+    const bounds = L.latLngBounds();
+    let allRows = [];
+    let allMarkers = [];
 
-                //create a marker and add it to the map
-                L.marker([row.Latitude, row.Longitude])
-                .addTo(map)
-                .bindPopup(`<b>${row.Name}</b><br>
-                ${address}, ${row.City}, ${state}, ${row.Country}<br>
-                ${row.Phone}`);
-            }
+    function buildPopup(row) {
+      const addr = [row['Address Line 1'], row['City'], row['State/Province/Region'], row['Country']]
+        .filter(Boolean).join(', ');
+      const phone = row['Phone'] ? `<br>${row['Phone']}` : '';
+      return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}</div>`;
+    }
+
+    function applyFilter(brand) {
+      clusterGroup.clearLayers();
+      const value = (brand || '').trim().toUpperCase();
+      allMarkers.forEach(({ row, marker }) => {
+        if (!value) { clusterGroup.addLayer(marker); return; }
+        const brands = (row['Custom Brands'] || '')
+          .toUpperCase()
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
+        if (brands.includes(value)) clusterGroup.addLayer(marker);
+      });
+    }
+
+    function populateBrandSelect(brandSet) {
+      const sel = document.getElementById('brandFilter');
+      while (sel.options.length > 1) sel.remove(1);
+      [...brandSet].sort().forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b; opt.textContent = b; sel.appendChild(opt);
+      });
+      sel.onchange = () => applyFilter(sel.value);
+    }
+
+    function showBanner(msg) {
+      const div = document.createElement('div');
+      div.className = 'banner';
+      div.textContent = msg;
+      document.body.appendChild(div);
+    }
+
+    // --- Load data & render (with helpful logs) ---
+    loadCSV('locations.csv')
+      .then(rows => {
+        console.log('CSV rows (raw):', rows.length);
+        const brandSet = new Set();
+
+        // Keep only rows that *have something* in lat/lon
+        allRows = rows.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
+        console.log('Rows with any lat/lon value:', allRows.length);
+
+        allRows.forEach(row => {
+          const lat = parseFloat(String(row.Latitude).trim());
+          const lon = parseFloat(String(row.Longitude).trim());
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+          const marker = L.marker([lat, lon]).bindPopup(buildPopup(row));
+          allMarkers.push({ row, marker });
+          clusterGroup.addLayer(marker);
+          bounds.extend([lat, lon]);
+
+          (row['Custom Brands'] || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .forEach(b => brandSet.add(b));
         });
-    }).catch(err => {
-        console.error("Error loading CSV:", err);
-    });
 
+        map.addLayer(clusterGroup);
+        if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
 
+        populateBrandSelect(brandSet);
 
-
-    //adding a marker onto the map for ASU
-    // L.marker([33.42131, -111.93313], {
-    //     title: "Arizona State University",
-    // })
-    // .bindPopup(`
-    //     <span class="popup">
-    //         <b>Arizona State University</b><br>
-    //         1151 S Forest Ave<br>
-    //         Tempe, AZ 85281<br>
-    //         <a href="https://asuonline.asu.edu/?gclsrc=aw.ds&&utm_source=google&utm_medium=cpc&utm_content=br_main_asu_non&utm_campaign=22-nat_acq-hi_br_main_non_gg&utm_ecd22=22&utm_term=arizona+state+university&gad_source=1&gad_campaignid=10205493793&gbraid=0AAAAACemS5UntpeBuafPcn-BMBs0vA1Vn&gclid=CjwKCAjwuePGBhBZEiwAIGCVS4Mbjkc0LCmePuwnRc_dZMzcCeSyPN8_hkcvYm1JUSbvBt0TMMDgphoCRSkQAvD_BwE"
-    //             target="_blank">Arizona State University</a><br>
-    //     </span>
-    // `) // ^ this information will show up in a little box above the icon once you click on it
-    // .addTo(map);
-
-</script>
-
-
-
+        console.log('Markers added:', allMarkers.length);
+        if (allMarkers.length === 0) {
+          showBanner('No markers loaded — check that locations.csv has data rows with numeric Latitude/Longitude.');
+        }
+      })
+      .catch(err => {
+        console.error('Error loading CSV:', err);
+        alert('Failed to load locations.csv. Serve via http://localhost and ensure the CSV sits next to prototype.html.');
+      });
+  </script>
+</body>
 </html>
