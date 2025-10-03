@@ -2,11 +2,47 @@
 
 I am using venv to manage my enviroment and using WSL: Ubuntu on VSCode
 
-**I suggest setting up a venv to keep things working well:**
-python3 -m venv venv
-source venv/bin/activate
+## Setup Instructions
 
-*Also if you need to install requirements*
+### Option 1: Automatic Activation with direnv (Recommended)
+
+1. **Install direnv** (one-time setup):
+   ```bash
+   sudo apt-get install direnv    # Linux/WSL
+   # or: brew install direnv       # Mac
+   ```
+
+2. **Add to your shell** (one-time setup):
+   ```bash
+   echo 'eval "$(direnv hook bash)"' >> ~/.bashrc
+   source ~/.bashrc
+   ```
+
+3. **Allow the project** (first time in this repo):
+   ```bash
+   cd /path/to/Capstone
+   direnv allow
+   ```
+
+The virtual environment will now activate automatically when you enter the directory!
+
+### Option 2: Manual Activation
+
+If you prefer not to use direnv:
+
+```bash
+# Create venv (first time only)
+python3 -m venv venv
+
+# Activate manually each time
+source venv/bin/activate
+```
+
+### Install Dependencies
+
+Once your venv is active (automatically with direnv or manually):
+```bash
 pip install -r requirements.txt
+```
 
 **Make Sure to add packages/Imports to requirements!**
