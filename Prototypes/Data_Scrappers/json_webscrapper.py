@@ -1,25 +1,42 @@
 import requests
 import csv
+import os
 
 # basic JSON scraper, needs tweaking
 API_URL = "https://www.watchlink.com/pages/locations.json"
 
-# The column headers must match your template
-fieldnames = [
-    "Handle", "Name", "Status", "Address Line 1", "Address Line 2", "Postal/ZIP Code",
-    "City", "State/Province/Region", "Country", "Phone", "Email", "Website", "Image URL",
-    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Page Title",
-    "Page Description", "Meta Title", "Meta Description", "Latitude", "Longitude", "Priority",
-    "Name - FR", "Page Title - FR", "Page Description - FR", "Name - ZH-CN", "Page Title - ZH-CN",
-    "Page Description - ZH-CN", "Name - ES", "Page Title - ES", "Page Description - ES", " Tags",
-    "Custom Brands", "Custom Brands - FR", "Custom Brands - ZH-CN", "Custom Brands - ES",
-    "Custom Button title 1", "Custom Button title 1 - FR", "Custom Button title 1 - ZH-CN",
-    "Custom Button title 1 - ES", "Custom Button URL 1", "Custom Button URL 1 - FR",
-    "Custom Button URL 1 - ZH-CN", "Custom Button URL 1 - ES", "Custom Button title 2",
-    "Custom Button title 2 - FR", "Custom Button title 2 - ZH-CN", "Custom Button title 2 - ES",
-    "Custom Button URL 2", "Custom Button URL 2 - FR", "Custom Button URL 2 - ZH-CN",
-    "Custom Button URL 2 - ES"
-]
+# Attempt to load headers from repository's locations.csv and normalize them
+csv_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "locations.csv"))
+if os.path.exists(csv_path):
+    try:
+        with open(csv_path, newline='', encoding='utf-8') as f:
+            header_line = f.readline().strip()
+            if header_line:
+                fieldnames = [h.strip().replace(' Tags', 'Tags') for h in header_line.split(',')]
+            else:
+                raise Exception('empty header')
+    except Exception:
+        fieldnames = None
+else:
+    fieldnames = None
+
+# fallback hardcoded list (normalized) if CSV header not found
+if not fieldnames:
+    fieldnames = [
+        "Handle", "Name", "Status", "Address Line 1", "Address Line 2", "Postal/ZIP Code",
+        "City", "State/Province/Region", "Country", "Phone", "Email", "Website", "Image URL",
+        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Page Title",
+        "Page Description", "Meta Title", "Meta Description", "Latitude", "Longitude", "Priority",
+        "Name - FR", "Page Title - FR", "Page Description - FR", "Name - ZH-CN", "Page Title - ZH-CN",
+        "Page Description - ZH-CN", "Name - ES", "Page Title - ES", "Page Description - ES", "Tags",
+        "Custom Brands", "Custom Brands - FR", "Custom Brands - ZH-CN", "Custom Brands - ES",
+        "Custom Button title 1", "Custom Button title 1 - FR", "Custom Button title 1 - ZH-CN",
+        "Custom Button title 1 - ES", "Custom Button URL 1", "Custom Button URL 1 - FR",
+        "Custom Button URL 1 - ZH-CN", "Custom Button URL 1 - ES", "Custom Button title 2",
+        "Custom Button title 2 - FR", "Custom Button title 2 - ZH-CN", "Custom Button title 2 - ES",
+        "Custom Button URL 2", "Custom Button URL 2 - FR", "Custom Button URL 2 - ZH-CN",
+        "Custom Button URL 2 - ES"
+    ]
 
 def fetch_store_data():
     try:
@@ -64,32 +81,21 @@ def fetch_store_data():
             "Priority": store.get("priority", "")
         })
 
-        # Hours: expect either a dict or keys like 'hours_monday'
-        hours = store.get('hours', {}) or {}
-        if isinstance(hours, dict):
-            row['Monday'] = hours.get('monday', '')
-            row['Tuesday'] = hours.get('tuesday', '')
-            row['Wednesday'] = hours.get('wednesday', '')
-            row['Thursday'] = hours.get('thursday', '')
-            row['Friday'] = hours.get('friday', '')
-            row['Saturday'] = hours.get('saturday', '')
-            row['Sunday'] = hours.get('sunday', '')
-        else:
-            # fallback to individually named keys
-            row['Monday'] = store.get('hours_monday', '')
-            row['Tuesday'] = store.get('hours_tuesday', '')
-            row['Wednesday'] = store.get('hours_wednesday', '')
-            row['Thursday'] = store.get('hours_thursday', '')
-            row['Friday'] = store.get('hours_friday', '')
-            row['Saturday'] = store.get('hours_saturday', '')
-            row['Sunday'] = store.get('hours_sunday', '')
+        # Leave store hours blank by design (columns present but intentionally empty)
+        row['Monday'] = ''
+        row['Tuesday'] = ''
+        row['Wednesday'] = ''
+        row['Thursday'] = ''
+        row['Friday'] = ''
+        row['Saturday'] = ''
+        row['Sunday'] = ''
 
         # Tags / brands
         tags = store.get('tags') or store.get('categories')
         if isinstance(tags, list):
-            row[' Tags'] = ",".join([str(t) for t in tags])
+            row['Tags'] = ",".join([str(t) for t in tags])
         elif tags:
-            row[' Tags'] = str(tags)
+            row['Tags'] = str(tags)
 
         brands = store.get('brands')
         if isinstance(brands, list):

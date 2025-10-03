@@ -12,19 +12,38 @@ session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=
 # basic HTML scraper using BeautifulSoup, needs tweaking
 LOCATOR_URL = "https://www.watchlink.com/pages/locations"   # Replace with your real locator page
 
-fieldnames = ["Handle", "Name", "Status", "Address Line 1", "Address Line 2", "Postal/ZIP Code",
-    "City", "State/Province/Region", "Country", "Phone", "Email", "Website", "Image URL",
-    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Page Title",
-    "Page Description", "Meta Title", "Meta Description", "Latitude", "Longitude", "Priority",
-    "Name - FR", "Page Title - FR", "Page Description - FR", "Name - ZH-CN", "Page Title - ZH-CN",
-    "Page Description - ZH-CN", "Name - ES", "Page Title - ES", "Page Description - ES", " Tags",
-    "Custom Brands", "Custom Brands - FR", "Custom Brands - ZH-CN", "Custom Brands - ES",
-    "Custom Button title 1", "Custom Button title 1 - FR", "Custom Button title 1 - ZH-CN",
-    "Custom Button title 1 - ES", "Custom Button URL 1", "Custom Button URL 1 - FR",
-    "Custom Button URL 1 - ZH-CN", "Custom Button URL 1 - ES", "Custom Button title 2",
-    "Custom Button title 2 - FR", "Custom Button title 2 - ZH-CN", "Custom Button title 2 - ES",
-    "Custom Button URL 2", "Custom Button URL 2 - FR", "Custom Button URL 2 - ZH-CN",
-    "Custom Button URL 2 - ES" ] 
+# Attempt to load exact headers from the repository's locations.csv so output matches
+import os
+csv_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "locations.csv"))
+if os.path.exists(csv_path):
+    try:
+        with open(csv_path, newline='', encoding='utf-8') as f:
+            header_line = f.readline().strip()
+            if header_line:
+                # normalize headers by stripping whitespace and fixing the leading-space ' Tags'
+                fieldnames = [h.strip().replace(' Tags', 'Tags') for h in header_line.split(',')]
+            else:
+                raise Exception('empty header')
+    except Exception:
+        fieldnames = None
+else:
+    fieldnames = None
+
+# fallback hardcoded list (normalized) if CSV header not found
+if not fieldnames:
+    fieldnames = ["Handle", "Name", "Status", "Address Line 1", "Address Line 2", "Postal/ZIP Code",
+        "City", "State/Province/Region", "Country", "Phone", "Email", "Website", "Image URL",
+        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Page Title",
+        "Page Description", "Meta Title", "Meta Description", "Latitude", "Longitude", "Priority",
+        "Name - FR", "Page Title - FR", "Page Description - FR", "Name - ZH-CN", "Page Title - ZH-CN",
+        "Page Description - ZH-CN", "Name - ES", "Page Title - ES", "Page Description - ES", "Tags",
+        "Custom Brands", "Custom Brands - FR", "Custom Brands - ZH-CN", "Custom Brands - ES",
+        "Custom Button title 1", "Custom Button title 1 - FR", "Custom Button title 1 - ZH-CN",
+        "Custom Button title 1 - ES", "Custom Button URL 1", "Custom Button URL 1 - FR",
+        "Custom Button URL 1 - ZH-CN", "Custom Button URL 1 - ES", "Custom Button title 2",
+        "Custom Button title 2 - FR", "Custom Button title 2 - ZH-CN", "Custom Button title 2 - ES",
+        "Custom Button URL 2", "Custom Button URL 2 - FR", "Custom Button URL 2 - ZH-CN",
+        "Custom Button URL 2 - ES" ] 
 
 def fetch_store_data():
     from requests.adapters import HTTPAdapter, Retry
@@ -81,6 +100,15 @@ def fetch_store_data():
             else (website.get_text(strip=True) if website else "")
         )
 
+        # Image URL (optional)
+        img = card.select_one("img.logo, img.store-image, .image img, img")
+        img_url = ""
+        if img:
+            img_url = img.get("data-src") or img.get("data-lazy") or img.get("src") or ""
+        if not img_url:
+            img_url = card.get("data-image") or card.get("data-img") or ""
+        row["Image URL"] = img_url.strip() if img_url else ""
+
         # Data attributes often hold these
         row["Latitude"]  = (card.get("data-latitude") or card.get("data-lat") or "").strip()
         row["Longitude"] = (card.get("data-longitude") or card.get("data-lng") or "").strip()
@@ -89,34 +117,40 @@ def fetch_store_data():
         if active is not None:
             row["Status"] = "TRUE" if str(active).lower() in ("1", "true", "yes") else "FALSE"
 
-        # Page/meta (fallback to document-level <title>/<meta>)
-        page_title = card.select_one(".page-title") or soup.select_one("title")
-        meta_desc  = card.select_one('meta[name="description"]') or soup.select_one('meta[name="description"]')
-        row["Page Title"]       = page_title.get_text(strip=True) if page_title else ""
-        row["Page Description"] = meta_desc.get("content", "") if meta_desc and meta_desc.has_attr("content") else ""
+        # Meta / page: prefer og: tags then document-level tags
+        og_title = soup.select_one('meta[property="og:title"]')
+        meta_title = og_title.get("content", "") if og_title and og_title.has_attr("content") else ""
+        if not meta_title:
+            page_title_el = soup.select_one("title")
+            meta_title = page_title_el.get_text(strip=True) if page_title_el else ""
+        row["Meta Title"] = meta_title
 
-        # Hours parsing (expects "Mon: 10–6" style)
-        hrs = card.select(".hours li, .hours p")
-        if hrs:
-            for h in hrs:
-                text = h.get_text(" ", strip=True)
-                if ":" in text:
-                    day, val = text.split(":", 1)
-                    d = day.strip().lower()
-                    val = val.strip()
-                    if d.startswith("mon"): row["Monday"] = val
-                    elif d.startswith("tue"): row["Tuesday"] = val
-                    elif d.startswith("wed"): row["Wednesday"] = val
-                    elif d.startswith("thu"): row["Thursday"] = val
-                    elif d.startswith("fri"): row["Friday"] = val
-                    elif d.startswith("sat"): row["Saturday"] = val
-                    elif d.startswith("sun"): row["Sunday"] = val
+        og_desc = soup.select_one('meta[property="og:description"]')
+        meta_desc = og_desc.get("content", "") if og_desc and og_desc.has_attr("content") else ""
+        if not meta_desc:
+            meta_name = soup.select_one('meta[name="description"]')
+            meta_desc = meta_name.get("content", "") if meta_name and meta_name.has_attr("content") else ""
+        row["Meta Description"] = meta_desc
 
-        # Tags / brands
+        page_title = card.select_one(".page-title") or card.select_one(".title")
+        page_description = card.select_one(".page-description, .description")
+        row["Page Title"]       = page_title.get_text(strip=True) if page_title else row.get("Page Title", "")
+        row["Page Description"] = page_description.get_text(strip=True) if page_description else row.get("Page Description", "")
+
+        # Leave store hours blank by design (columns present but intentionally empty)
+        row["Monday"] = ""
+        row["Tuesday"] = ""
+        row["Wednesday"] = ""
+        row["Thursday"] = ""
+        row["Friday"] = ""
+        row["Saturday"] = ""
+        row["Sunday"] = ""
+
+        # Tags / brands (normalized to "Tags")
         tag_nodes = card.select(".tags .tag") or card.select(".tags")
         if tag_nodes:
             texts = [t.get_text(strip=True) for t in tag_nodes]
-            row[" Tags"] = ",".join([t for t in texts if t])
+            row["Tags"] = ",".join([t for t in texts if t])
 
         brand_nodes = card.select(".brands .brand")
         if brand_nodes:
