@@ -52,6 +52,14 @@
     <select id="brandFilter">
       <option value="">All brands</option>
     </select>
+    <label for="typeFilter" style="margin-left:12px"><strong>Type:</strong></label>
+    <select id="typeFilter" style="padding:8px;">
+      <option value="all">All</option>
+      <option value="retailer">Retailers</option>
+      <option value="accessory">Accessories</option>
+    </select>
+    <label for="storeFilter" style="margin-left:12px"><strong>Filter by store:</strong></label>
+    <input id="storeFilter" type="search" placeholder="Store name or handle (handle:asu-test)" style="padding:8px; min-width:260px;" />
   </header>
 
   <div id="map"></div>
@@ -95,15 +103,40 @@
 
     function applyFilter(brand) {
       clusterGroup.clearLayers();
-      const value = (brand || '').trim().toUpperCase();
+      const brandValue = (brand || '').trim().toUpperCase();
+      const typeValue = (document.getElementById('typeFilter').value || 'all');
+      const storeInput = (document.getElementById('storeFilter').value || '').trim();
+      const storeFilter = storeInput.toLowerCase();
+
       allMarkers.forEach(({ row, marker }) => {
-        if (!value) { clusterGroup.addLayer(marker); return; }
-        const brands = (row['Custom Brands'] || '')
-          .toUpperCase()
-          .split(',')
-          .map(s => s.trim())
-          .filter(Boolean);
-        if (brands.includes(value)) clusterGroup.addLayer(marker);
+        let show = true;
+
+        // brand filter
+        if (brandValue) {
+          const brands = (row['Custom Brands'] || '')
+            .toUpperCase()
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean);
+          show = brands.includes(brandValue);
+        }
+
+        // store filter: support 'handle:XYZ' exact match, or substring match against Name
+        if (storeFilter) {
+          if (storeFilter.startsWith('handle:')) {
+            const h = storeFilter.split(':', 2)[1] || '';
+            show = show && (String(row['Handle'] || '') === h);
+          } else {
+            show = show && ((String(row['Name'] || '') || '').toLowerCase().includes(storeFilter));
+          }
+        }
+
+        // type filter: row._type is set at load time ("accessory" or "retailer")
+        if (typeValue && typeValue !== 'all') {
+          show = show && (String(row._type || 'retailer') === typeValue);
+        }
+
+        if (show) clusterGroup.addLayer(marker);
       });
     }
 
@@ -115,6 +148,16 @@
         opt.value = b; opt.textContent = b; sel.appendChild(opt);
       });
       sel.onchange = () => applyFilter(sel.value);
+      // wire type select
+      const typeSel = document.getElementById('typeFilter');
+      typeSel.onchange = () => applyFilter(sel.value);
+      // wire store filter input (debounced)
+      const storeInput = document.getElementById('storeFilter');
+      let debounce;
+      storeInput.addEventListener('input', () => {
+        clearTimeout(debounce);
+        debounce = setTimeout(() => applyFilter(sel.value), 250);
+      });
     }
 
     function showBanner(msg) {
@@ -135,6 +178,13 @@
         console.log('Rows with any lat/lon value:', allRows.length);
 
         allRows.forEach(row => {
+          // classify row as 'accessory' or 'retailer' using simple heuristics
+          // - if any descriptive field contains the word 'accessor' treat as accessory
+          // - otherwise default to retailer
+          const descFields = [row['Name'], row['Page Description'], row['Page Title'], row['Meta Description'], row['Tags'], row['Custom Brands']].filter(Boolean).join('\n');
+          const descLower = String(descFields).toLowerCase();
+          row._type = /accessor/.test(descLower) || /accessories/.test(descLower) ? 'accessory' : 'retailer';
+
           const lat = parseFloat(String(row.Latitude).trim());
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
@@ -149,6 +199,8 @@
             .map(s => s.trim())
             .filter(Boolean)
             .forEach(b => brandSet.add(b));
+          // also expose type values for debugging / UI
+          // (we don't include types in the brand list)
         });
 
         map.addLayer(clusterGroup);
