@@ -34,32 +34,76 @@
   <style>
     :root { --card:#fff; --border:#d0d7de; }
     body { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; margin: 0; }
-    header { padding: 12px 16px; display: flex; gap: 12px; align-items: center; }
-    #brandFilter { padding: 8px; min-width: 240px; }
-    #map { width: 100%; height: 640px; }
+    /* Layout: left vertical control bar + map content to the right.
+       We keep the DOM structure identical and only change presentation so
+       JavaScript (which targets elements by id) continues to work. */
+    body { display: flex; }
+    header {
+      box-sizing: border-box;
+      width: 320px; /* width of the left control bar */
+      min-width: 240px;
+      height: 100vh;
+      position: fixed;
+      left: 0; top: 0; bottom: 0;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: flex-start;
+      background: var(--card);
+      border-right: 1px solid var(--border);
+      z-index: 1002;
+    }
+    #brandFilter { padding: 8px; min-width: 160px; width:100%; }
+    /* push the map to the right so it doesn't sit underneath the fixed left bar */
+    #map { margin-left: 320px; width: calc(100% - 320px); height: 100vh; }
     .popup { font-size: 1.05rem; line-height: 1.35; }
-    .banner {
+    /* hamburger & panel styles (left side) */
+   /* When the panel has the HTML `hidden` attribute, ensure it is not displayed.
+     Author styles previously overrode the UA hidden behaviour, so make this
+     rule higher specificity and important to restore expected behavior. */
+   #filtersPanel[hidden] { display: none !important; }
+    #hamburger { font-size: 20px; background: var(--card); border: 1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer }
+    #filtersPanel { display:flex; gap:12px; align-items:center; }
+    .filters-panel { /* default: make the controls look like a card inside the left bar */
+      position: relative; left: 0; top: 0; background:transparent; border:0; padding:0; box-shadow:none;
+      display: flex; flex-direction: column; gap:10px; width:100%;
+    }
+    /* On small screens keep the original top-header behavior: make the header a normal top bar */
+    @media(max-width:899px){
+      body { display: block; }
+      header {
+        position: static; width:100%; height:auto; border-right: none; padding: 12px 16px; display:flex; flex-direction:row; align-items:center;
+      }
+      #map { margin-left: 0; width: 100%; height: 640px; }
+      .filters-panel { flex-direction: row; align-items: center; gap:12px; }
+    }
+  .banner {
       position: absolute; top: 10px; right: 10px; background: var(--card);
       border: 1px solid var(--border); padding: 8px 12px; border-radius: 8px;
       box-shadow: 0 2px 6px rgba(0,0,0,.06); z-index: 1000;
     }
   </style>
 </head>
-<body>
-
-  <header>
-    <label for="brandFilter"><strong>Filter by brand:</strong></label>
-    <select id="brandFilter">
-      <option value="">All brands</option>
-    </select>
-    <label for="typeFilter" style="margin-left:12px"><strong>Type:</strong></label>
-    <select id="typeFilter" style="padding:8px;">
-      <option value="all">All</option>
-      <option value="retailer">Retailers</option>
-      <option value="accessory">Accessories</option>
-    </select>
-    <label for="storeFilter" style="margin-left:12px"><strong>Filter by store:</strong></label>
-    <input id="storeFilter" type="search" placeholder="Store name or handle (handle:asu-test)" style="padding:8px; min-width:260px;" />
+<body> 
+<header>
+    <button id="hamburger" aria-expanded="false" aria-controls="filtersPanel" title="Show filters">☰</button>
+    <div id="filtersPanel" class="filters-panel" hidden>
+      <label for="brandFilter"><strong>Filter by brand:</strong></label>
+      <select id="brandFilter">
+        <option value="">All brands</option>
+      </select>
+      <label for="typeFilter" style="margin-left:12px"><strong>Type:</strong></label>
+      <select id="typeFilter" style="padding:8px;">
+        <option value="all">All</option>
+        <option value="retailer">Retailers</option>
+        <option value="accessory">Accessories</option>
+      </select>
+      <label for="storeFilter" style="margin-left:12px"><strong>Filter by store:</strong></label>
+      <input id="storeFilter" type="search" placeholder="Store name or handle (handle:asu-test)" style="padding:8px; min-width:260px;" />
+      <label for="accessoryOnly" style="margin-left:12px"><strong>Accessories only</strong></label>
+      <input id="accessoryOnly" type="checkbox" title="Show only accessory locations" style="width:18px; height:18px;" />
+    </div>
   </header>
 
   <div id="map"></div>
@@ -87,6 +131,24 @@
         });
       });
     }
+
+    // --- small hamburger toggle (left) ---
+    (function(){
+      const btn = document.getElementById('hamburger');
+      const panel = document.getElementById('filtersPanel');
+      if (!btn || !panel) return;
+      btn.addEventListener('click', (e) => {
+        const wasHidden = panel.hasAttribute('hidden');
+        if (wasHidden) { panel.removeAttribute('hidden'); btn.setAttribute('aria-expanded','true'); }
+        else { panel.setAttribute('hidden',''); btn.setAttribute('aria-expanded','false'); }
+        e.stopPropagation();
+      });
+      document.addEventListener('click', (ev) => {
+        if (!panel.hasAttribute('hidden') && !panel.contains(ev.target) && ev.target !== btn) {
+          panel.setAttribute('hidden',''); btn.setAttribute('aria-expanded','false');
+        }
+      });
+    })();
 
     // --- Clustering & filtering state ---
     const clusterGroup = L.markerClusterGroup();
