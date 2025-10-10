@@ -34,9 +34,7 @@
   <style>
     :root { --card:#fff; --border:#d0d7de; }
     body { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; margin: 0; }
-    /* Layout: left vertical control bar + map content to the right.
-       We keep the DOM structure identical and only change presentation so
-       JavaScript (which targets elements by id) continues to work. */
+    /* Layout: left vertical control bar + map content to the right. */
     body { display: flex; }
     header {
       box-sizing: border-box;
@@ -58,10 +56,7 @@
     /* push the map to the right so it doesn't sit underneath the fixed left bar */
     #map { margin-left: 320px; width: calc(100% - 320px); height: 100vh; }
     .popup { font-size: 1.05rem; line-height: 1.35; }
-    /* hamburger & panel styles (left side) */
-   /* When the panel has the HTML `hidden` attribute, ensure it is not displayed.
-     Author styles previously overrode the UA hidden behaviour, so make this
-     rule higher specificity and important to restore expected behavior. */
+   
    #filtersPanel[hidden] { display: none !important; }
     #hamburger { font-size: 20px; background: var(--card); border: 1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer }
     #filtersPanel { display:flex; gap:12px; align-items:center; }
