@@ -1,0 +1,190 @@
+{% comment %}
+  Template: page.store-locator-osm.liquid
+
+  Instructions:
+  1. Go to Shopify Admin → Online Store → Themes → Actions → Edit code
+  2. In 'Templates' folder, click 'Add a new template'
+  3. Select 'page' and name it 'store-locator-osm'
+  4. Paste this code
+  5. Create a new page and assign this template to it
+{% endcomment %}
+
+<div class="page-width">
+  <header class="section-header">
+    <h1 class="section-header__title">{{ page.title }}</h1>
+  </header>
+
+  <div class="rte">
+    {{ page.content }}
+  </div>
+
+  <style>
+    :root { --card:#fff; --border:#d0d7de; }
+    body { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; }
+    .store-locator-header {
+      padding: 12px 16px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    #brandFilter { padding: 8px; min-width: 240px; }
+    #map { width: 100%; height: 640px; margin-top: 20px; }
+    .popup { font-size: 1.05rem; line-height: 1.35; }
+    .banner {
+      position: absolute; top: 10px; right: 10px; background: var(--card);
+      border: 1px solid var(--border); padding: 8px 12px; border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,.06); z-index: 1000;
+    }
+  </style>
+
+  <div class="store-locator-header">
+    <label for="brandFilter"><strong>Filter by brand:</strong></label>
+    <select id="brandFilter">
+      <option value="">All brands</option>
+    </select>
+  </div>
+
+  <div id="map"></div>
+
+  <!-- Leaflet core -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+  <!-- PapaParse for CSV -->
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <!-- MarkerCluster plugin -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
+  />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
+  />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <script>
+    // --- Map bootstrap ---
+    const map = L.map('map');
+    map.setView([20, 0], 2);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+
+    // --- CSV loader (change this path to your Shopify asset URL) ---
+    function loadCSV(path) {
+      // TODO: Replace with actual Shopify asset URL
+      // Upload locations.csv to Shopify: Assets folder
+      // Then use: {{ 'locations.csv' | asset_url }}
+      const url = `${path}?v=${Date.now()}`;
+      return new Promise((resolve, reject) => {
+        Papa.parse(url, {
+          download: true,
+          header: true,
+          skipEmptyLines: true,
+          complete: res => resolve(res.data),
+          error: err => reject(err)
+        });
+      });
+    }
+
+    // --- Clustering & filtering state ---
+    const clusterGroup = L.markerClusterGroup();
+    const bounds = L.latLngBounds();
+    let allRows = [];
+    let allMarkers = [];
+
+    function buildPopup(row) {
+      const addr = [row['Address Line 1'], row['City'], row['State/Province/Region'], row['Country']]
+        .filter(Boolean).join(', ');
+      const phone = row['Phone'] ? `<br>${row['Phone']}` : '';
+      return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}</div>`;
+    }
+
+    function applyFilter(brand) {
+      clusterGroup.clearLayers();
+      const value = (brand || '').trim().toUpperCase();
+      allMarkers.forEach(({ row, marker }) => {
+        if (!value) { clusterGroup.addLayer(marker); return; }
+        const brands = (row['Custom Brands'] || '')
+          .toUpperCase()
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
+        if (brands.includes(value)) clusterGroup.addLayer(marker);
+      });
+    }
+
+    function populateBrandSelect(brandSet) {
+      const sel = document.getElementById('brandFilter');
+      while (sel.options.length > 1) sel.remove(1);
+      [...brandSet].sort().forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b; opt.textContent = b; sel.appendChild(opt);
+      });
+      sel.onchange = () => applyFilter(sel.value);
+    }
+
+    function showBanner(msg) {
+      const div = document.createElement('div');
+      div.className = 'banner';
+      div.textContent = msg;
+      document.body.appendChild(div);
+    }
+
+    // --- Load data & render ---
+    // IMPORTANT: Change 'locations.csv' to your Shopify asset URL
+    loadCSV('{{ "locations.csv" | asset_url }}')
+      .then(rows => {
+        console.log('CSV rows (raw):', rows.length);
+        const brandSet = new Set();
+
+        allRows = rows.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
+        console.log('Rows with any lat/lon value:', allRows.length);
+
+        allRows.forEach(row => {
+          const lat = parseFloat(String(row.Latitude).trim());
+          const lon = parseFloat(String(row.Longitude).trim());
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+          const marker = L.marker([lat, lon]).bindPopup(buildPopup(row));
+          allMarkers.push({ row, marker });
+          clusterGroup.addLayer(marker);
+          bounds.extend([lat, lon]);
+
+          (row['Custom Brands'] || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .forEach(b => brandSet.add(b));
+        });
+
+        map.addLayer(clusterGroup);
+        if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
+
+        populateBrandSelect(brandSet);
+
+        console.log('Markers added:', allMarkers.length);
+        if (allMarkers.length === 0) {
+          showBanner('No markers loaded — check that locations.csv is uploaded to Shopify assets.');
+        }
+      })
+      .catch(err => {
+        console.error('Error loading CSV:', err);
+        alert('Failed to load locations.csv. Make sure it is uploaded to Shopify Assets.');
+      });
+  </script>
+</div>

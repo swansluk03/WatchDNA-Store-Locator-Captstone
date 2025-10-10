@@ -1,0 +1,375 @@
+{% comment %}
+  Template: page.store-locator-mapbox.liquid
+
+  Instructions:
+  1. Go to Shopify Admin → Online Store → Themes → Actions → Edit code
+  2. In 'Templates' folder, click 'Add a new template'
+  3. Select 'page' and name it 'store-locator-mapbox'
+  4. Paste this code
+  5. Create a new page and assign this template to it
+{% endcomment %}
+
+<div class="page-width">
+  <header class="section-header">
+    <h1 class="section-header__title">{{ page.title }}</h1>
+  </header>
+
+  <div class="rte">
+    {{ page.content }}
+  </div>
+
+  <style>
+    :root { --card:#fff; --border:#d0d7de; --primary:#2563eb; }
+
+    .store-locator-wrapper {
+      display: flex;
+      height: 640px;
+      margin-top: 20px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    #sidebar {
+      width: 320px;
+      background: var(--card);
+      border-right: 1px solid var(--border);
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .sidebar-title {
+      margin: 0 0 8px 0;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+
+    .subtitle {
+      color: #6b7280;
+      font-size: 0.875rem;
+      margin-bottom: 12px;
+    }
+
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .filter-group label {
+      font-weight: 500;
+      font-size: 0.875rem;
+      color: #374151;
+    }
+
+    select, input[type="text"] {
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.875rem;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    select:focus, input:focus {
+      outline: 2px solid var(--primary);
+      outline-offset: -1px;
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 0;
+    }
+
+    .checkbox-group input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    .checkbox-group label {
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+
+    #map {
+      flex: 1;
+      position: relative;
+    }
+
+    .mapboxgl-popup-content {
+      padding: 16px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    .popup-title {
+      font-weight: 600;
+      font-size: 1.1rem;
+      margin-bottom: 8px;
+      color: #111827;
+    }
+
+    .popup-content {
+      font-size: 0.875rem;
+      line-height: 1.5;
+      color: #4b5563;
+    }
+
+    .popup-tags {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      font-size: 0.75rem;
+      color: #6b7280;
+    }
+
+    .stats {
+      padding: 12px;
+      background: #f9fafb;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      color: #4b5563;
+    }
+
+    .provider-badge {
+      display: inline-block;
+      background: #2563eb;
+      color: white;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+  </style>
+
+  <div class="store-locator-wrapper">
+    <div id="sidebar">
+      <div>
+        <h2 class="sidebar-title">Find Stores</h2>
+        <div class="subtitle">
+          <span class="provider-badge">Mapbox</span>
+          <div style="margin-top: 8px;">WatchDNA retailers near you</div>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <label for="brandFilter">Filter by Brand</label>
+        <select id="brandFilter">
+          <option value="">All brands</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label for="typeFilter">Filter by Type</label>
+        <select id="typeFilter">
+          <option value="">All types</option>
+          <option value="RETAILER">Retailers</option>
+          <option value="SERVICE">Services</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label for="storeSearch">Search Stores</label>
+        <input type="text" id="storeSearch" placeholder="Search by name or handle...">
+      </div>
+
+      <div class="checkbox-group">
+        <input type="checkbox" id="accessoriesOnly">
+        <label for="accessoriesOnly">Accessories only</label>
+      </div>
+
+      <div class="stats" id="statsBox">
+        <strong>Loading...</strong>
+      </div>
+    </div>
+
+    <div id="map"></div>
+  </div>
+
+  <!-- Mapbox GL JS -->
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css" rel="stylesheet" />
+
+  <!-- PapaParse for CSV -->
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <script>
+    // Mapbox access token
+    mapboxgl.accessToken = 'pk.eyJ1Ijoic20xMXQiLCJhIjoiY21nbDRrOXkwMTFzZDJub2VxcDVjMGprNSJ9.Qxv5rmbtXRKGE1siB13ZaQ';
+
+    // Initialize map
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/streets-v12',
+      center: [0, 20],
+      zoom: 2
+    });
+
+    map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+
+    let allLocations = [];
+    let markers = [];
+    const brandSet = new Set();
+
+    function buildPopup(row) {
+      const addr = [
+        row['Address Line 1'],
+        row['City'],
+        row['State/Province/Region'],
+        row['Country']
+      ].filter(Boolean).join(', ');
+
+      const phone = row['Phone'] ? `<div>📞 ${row['Phone']}</div>` : '';
+      const website = row['Website'] ? `<div>🌐 <a href="${row['Website']}" target="_blank">Website</a></div>` : '';
+      const tags = row['Custom Brands'] ? `<div class="popup-tags">Brands: ${row['Custom Brands']}</div>` : '';
+
+      return `
+        <div class="popup-title">${row['Name'] || 'Unnamed Store'}</div>
+        <div class="popup-content">
+          <div>📍 ${addr}</div>
+          ${phone}
+          ${website}
+        </div>
+        ${tags}
+      `;
+    }
+
+    function applyFilters() {
+      const brandFilter = document.getElementById('brandFilter').value.toUpperCase().trim();
+      const typeFilter = document.getElementById('typeFilter').value.toUpperCase().trim();
+      const searchTerm = document.getElementById('storeSearch').value.toLowerCase().trim();
+      const accessoriesOnly = document.getElementById('accessoriesOnly').checked;
+
+      markers.forEach(m => m.remove());
+      markers = [];
+
+      let visibleCount = 0;
+
+      allLocations.forEach(row => {
+        let show = true;
+
+        if (brandFilter) {
+          const brands = (row['Custom Brands'] || '')
+            .toUpperCase()
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean);
+          if (!brands.includes(brandFilter)) show = false;
+        }
+
+        if (typeFilter) {
+          const tags = (row['Tags'] || '').toUpperCase();
+          if (!tags.includes(typeFilter)) show = false;
+        }
+
+        if (searchTerm) {
+          const name = (row['Name'] || '').toLowerCase();
+          const handle = (row['Handle'] || '').toLowerCase();
+          if (!name.includes(searchTerm) && !handle.includes(searchTerm)) show = false;
+        }
+
+        if (accessoriesOnly) {
+          const tags = (row['Tags'] || '').toUpperCase();
+          if (!tags.includes('ACCESSORY') && !tags.includes('ACCESSORIES')) show = false;
+        }
+
+        if (show) {
+          const lat = parseFloat(row.Latitude);
+          const lon = parseFloat(row.Longitude);
+
+          if (Number.isFinite(lat) && Number.isFinite(lon)) {
+            const marker = new mapboxgl.Marker({ color: '#2563eb' })
+              .setLngLat([lon, lat])
+              .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(buildPopup(row)))
+              .addTo(map);
+
+            markers.push(marker);
+            visibleCount++;
+          }
+        }
+      });
+
+      document.getElementById('statsBox').innerHTML = `
+        <strong>${visibleCount}</strong> of <strong>${allLocations.length}</strong> locations shown
+      `;
+    }
+
+    function populateBrandSelect() {
+      const sel = document.getElementById('brandFilter');
+      while (sel.options.length > 1) sel.remove(1);
+
+      [...brandSet].sort().forEach(brand => {
+        const opt = document.createElement('option');
+        opt.value = brand;
+        opt.textContent = brand;
+        sel.appendChild(opt);
+      });
+    }
+
+    function loadCSV(path) {
+      const url = `${path}?v=${Date.now()}`;
+      return new Promise((resolve, reject) => {
+        Papa.parse(url, {
+          download: true,
+          header: true,
+          skipEmptyLines: true,
+          complete: res => resolve(res.data),
+          error: err => reject(err)
+        });
+      });
+    }
+
+    map.on('load', () => {
+      // IMPORTANT: Change to your Shopify asset URL
+      loadCSV('{{ "locations.csv" | asset_url }}')
+        .then(rows => {
+          console.log('CSV rows loaded:', rows.length);
+
+          allLocations = rows.filter(r => {
+            const lat = parseFloat(String(r.Latitude || '').trim());
+            const lon = parseFloat(String(r.Longitude || '').trim());
+            return Number.isFinite(lat) && Number.isFinite(lon);
+          });
+
+          console.log('Valid locations:', allLocations.length);
+
+          allLocations.forEach(row => {
+            (row['Custom Brands'] || '')
+              .split(',')
+              .map(s => s.trim())
+              .filter(Boolean)
+              .forEach(b => brandSet.add(b));
+          });
+
+          populateBrandSelect();
+          applyFilters();
+
+          if (allLocations.length > 0) {
+            const bounds = new mapboxgl.LngLatBounds();
+            allLocations.forEach(row => {
+              const lat = parseFloat(row.Latitude);
+              const lon = parseFloat(row.Longitude);
+              bounds.extend([lon, lat]);
+            });
+            map.fitBounds(bounds, { padding: 50 });
+          }
+
+          document.getElementById('brandFilter').addEventListener('change', applyFilters);
+          document.getElementById('typeFilter').addEventListener('change', applyFilters);
+          document.getElementById('storeSearch').addEventListener('input', applyFilters);
+          document.getElementById('accessoriesOnly').addEventListener('change', applyFilters);
+        })
+        .catch(err => {
+          console.error('Error loading CSV:', err);
+          document.getElementById('statsBox').innerHTML =
+            '<strong style="color: red;">Failed to load locations.csv</strong>';
+        });
+    });
+  </script>
+</div>
