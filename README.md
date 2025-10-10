@@ -40,8 +40,27 @@ source venv/bin/activate
 
 ### Install Dependencies
 
-Once your venv is active (automatically with direnv or manually):
+#### Option 1: Automatic Setup (Recommended)
 ```bash
+# One-command setup for new team members
+./setup_environment.sh
+```
+
+#### Option 2: Quick Setup
+```bash
+# Simple setup
+./quick_setup.sh
+```
+
+#### Option 3: Manual Setup
+```bash
+# Create venv
+python3 -m venv venv
+
+# Activate venv
+source venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 

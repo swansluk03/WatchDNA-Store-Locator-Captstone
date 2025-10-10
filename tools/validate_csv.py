@@ -2,6 +2,10 @@
 """
 CSV Validator for WatchDNA Store Locator
 Validates CSV files for header correctness and row-level data quality.
+
+Can be used as:
+  1. CLI tool: python validate_csv.py locations.csv
+  2. Module: from validate_csv import validate_csv
 """
 
 import csv
@@ -36,7 +40,7 @@ ALL_HEADERS = [
     "Name - FR", "Page Title - FR", "Page Description - FR",
     "Name - ZH-CN", "Page Title - ZH-CN", "Page Description - ZH-CN",
     "Name - ES", "Page Title - ES", "Page Description - ES",
-    " Tags",  # Note: has leading space in actual CSV
+    " Tags", "Tags",  # Note: has leading space in actual CSV, include both
     "Custom Brands", "Custom Brands - FR", "Custom Brands - ZH-CN", "Custom Brands - ES",
     "Custom Button title 1", "Custom Button title 1 - FR", "Custom Button title 1 - ZH-CN", "Custom Button title 1 - ES",
     "Custom Button URL 1", "Custom Button URL 1 - FR", "Custom Button URL 1 - ZH-CN", "Custom Button URL 1 - ES",
@@ -46,6 +50,7 @@ ALL_HEADERS = [
 
 # Default required headers
 DEFAULT_REQUIRED = ["Name", "Latitude", "Longitude", "City", "Country"]
+REQUIRED = {"Handle", "Name", "Latitude", "Longitude", "City", "Country"}
 
 # Default duplicate key fields
 DEFAULT_DUPLICATE_KEY = ["Name", "Address Line 1", "City"]
@@ -393,6 +398,56 @@ class CSVValidator:
         }
 
 
+# ==============================================================================
+# SIMPLE VALIDATE_CSV FUNCTION (for module imports from dynamic_scraper.py)
+# ==============================================================================
+
+def validate_csv(path="locations.csv"):
+    """
+    Simple validation function for use as an importable module.
+    Returns True if valid, False otherwise.
+    
+    This is used by dynamic_scraper.py for quick validation.
+    For comprehensive validation, use the CLI tool or CSVValidator class.
+    """
+    try:
+        with open(path, newline='', encoding="utf-8") as f:
+            r = csv.DictReader(f)
+            missing = [h for h in REQUIRED if h not in r.fieldnames]
+            extra = [h for h in r.fieldnames if h not in ALL_HEADERS]
+            if missing: 
+                print("❌ Missing headers:", missing)
+                return False
+            if extra:
+                print("⚠️ Extra headers (ok but check):", extra)
+            bad = 0
+            for i, row in enumerate(r, start=2):
+                lat, lon = row.get("Latitude", ""), row.get("Longitude", "")
+                try:
+                    lat_f, lon_f = float(lat), float(lon)
+                    if not (-90 <= lat_f <= 90 and -180 <= lon_f <= 180) or math.isnan(lat_f) or math.isnan(lon_f):
+                        raise ValueError()
+                except Exception:
+                    print(f"❌ Row {i}: invalid coords → {lat},{lon} ({row.get('Name', '')})")
+                    bad += 1
+            if bad == 0:
+                print("✅ OK")
+                return True
+            else:
+                print(f"⚠️ {bad} bad rows")
+                return False
+    except FileNotFoundError:
+        print(f"❌ File not found: {path}")
+        return False
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return False
+
+
+# ==============================================================================
+# CLI ARGUMENT PARSING
+# ==============================================================================
+
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
@@ -474,12 +529,24 @@ Examples:
         help="Output JSON format in addition to console text"
     )
 
+    parser.add_argument(
+        "--simple",
+        action="store_true",
+        default=False,
+        help="Use simple validation (same as module import)"
+    )
+
     return parser.parse_args()
 
 
 def main():
     """Main entry point"""
     args = parse_args()
+
+    # If --simple flag, use simple validation
+    if args.simple:
+        valid = validate_csv(args.file)
+        sys.exit(0 if valid else 2)
 
     # Parse required headers
     required_headers = [h.strip() for h in args.required.split(",") if h.strip()]

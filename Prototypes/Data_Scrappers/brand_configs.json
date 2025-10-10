@@ -1,0 +1,235 @@
+{
+  "_README": {
+    "description": "Brand configuration examples - completely dynamic for any website",
+    "json_config_fields": {
+      "type": "json or html",
+      "url": "API or page URL",
+      "description": "Human-readable description",
+      "data_path": "(JSON only) Path to stores array, supports dot notation",
+      "field_mapping": "(JSON only) Map canonical fields to API fields, supports arrays for fallbacks"
+    },
+    "html_config_fields": {
+      "card_selector": "(HTML only) CSS selector for store cards",
+      "selectors": "(HTML only) Map canonical fields to CSS selectors",
+      "data_attributes": "(HTML only) Map canonical fields to HTML data attributes"
+    },
+    "selector_syntax": {
+      "text_extraction": ".selector - extracts text content",
+      "attribute_extraction": ".selector|attr - extracts attribute (e.g., a|href, img|src)",
+      "multiple_values": {"selector": ".tag", "multiple": true}
+    }
+  },
+
+  "watchlink_json": {
+    "type": "json",
+    "url": "https://www.watchlink.com/pages/locations.json",
+    "data_path": "stores",
+    "description": "WatchLink JSON API - standard flat structure",
+    "field_mapping": {
+      "Handle": ["slug", "handle", "id"],
+      "Name": ["name", "store_name"],
+      "Status": ["active", "is_active"],
+      "Address Line 1": ["address1", "address", "street"],
+      "Address Line 2": ["address2", "suite"],
+      "City": ["city", "city_name"],
+      "State/Province/Region": ["state", "province", "region"],
+      "Country": ["country", "country_code"],
+      "Postal/ZIP Code": ["zip", "postal_code", "zipcode"],
+      "Phone": ["phone", "telephone"],
+      "Email": ["email", "contact_email"],
+      "Website": ["website", "url"],
+      "Image URL": ["image", "logo", "image_url"],
+      "Latitude": ["latitude", "lat"],
+      "Longitude": ["longitude", "lng", "lon"],
+      "Page Title": ["page_title", "title"],
+      "Page Description": ["page_description", "description"],
+      "Tags": ["tags", "categories"],
+      "Custom Brands": ["brands", "brand"]
+    }
+  },
+
+  "watchlink_html": {
+    "type": "html",
+    "url": "https://www.watchlink.com/pages/locations",
+    "description": "WatchLink HTML page - typical store locator structure",
+    "card_selector": ".store-card",
+    "selectors": {
+      "Name": ".store-name",
+      "Address Line 1": ".address-line1",
+      "Address Line 2": ".address-line2",
+      "City": ".city",
+      "State/Province/Region": ".state",
+      "Country": ".country",
+      "Postal/ZIP Code": ".postal",
+      "Phone": ".phone",
+      "Email": ".email",
+      "Website": "a.website|href",
+      "Image URL": "img.logo|src",
+      "Tags": {"selector": ".tag", "multiple": true},
+      "Custom Brands": {"selector": ".brand", "multiple": true}
+    },
+    "data_attributes": {
+      "Latitude": "data-latitude",
+      "Longitude": "data-longitude",
+      "Handle": "data-handle",
+      "Status": "data-active"
+    }
+  },
+
+  "shopify_json": {
+    "type": "json",
+    "url": "https://example.myshopify.com/apps/store-locator/locations.json",
+    "data_path": "locations",
+    "description": "Shopify Store Locator app - common structure",
+    "field_mapping": {
+      "Name": ["name", "title"],
+      "Address Line 1": ["address", "address_1"],
+      "Address Line 2": ["address_2"],
+      "City": "city",
+      "State/Province/Region": ["province", "state"],
+      "Country": "country",
+      "Postal/ZIP Code": ["zip", "postal_code"],
+      "Phone": "phone",
+      "Email": "email",
+      "Latitude": ["lat", "latitude"],
+      "Longitude": ["lng", "longitude"],
+      "Status": "active"
+    }
+  },
+
+  "google_maps_embed": {
+    "type": "html",
+    "url": "https://example.com/locations",
+    "description": "Site with Google Maps markers in HTML",
+    "card_selector": "div[data-location]",
+    "selectors": {
+      "Name": "h3.location-name",
+      "Address Line 1": ".street-address",
+      "City": ".locality",
+      "State/Province/Region": ".region",
+      "Postal/ZIP Code": ".postal-code",
+      "Country": ".country-name",
+      "Phone": "a[href^='tel:']",
+      "Website": "a.website|href"
+    },
+    "data_attributes": {
+      "Latitude": "data-lat",
+      "Longitude": "data-lng",
+      "Handle": "data-location-id"
+    }
+  },
+
+  "nested_json_api": {
+    "type": "json",
+    "url": "https://api.example.com/v2/retail/locations",
+    "data_path": "data.locations",
+    "description": "Deeply nested JSON structure - demonstrates dot notation",
+    "field_mapping": {
+      "Name": "details.name",
+      "Address Line 1": "details.address.street",
+      "City": "details.address.city",
+      "State/Province/Region": "details.address.state",
+      "Country": "details.address.country",
+      "Postal/ZIP Code": "details.address.zipCode",
+      "Latitude": "geoLocation.coordinates.lat",
+      "Longitude": "geoLocation.coordinates.lon",
+      "Phone": "contactInfo.phone",
+      "Email": "contactInfo.email",
+      "Website": "contactInfo.website",
+      "Status": "operationalStatus.isOpen"
+    }
+  },
+
+  "wordpress_locator": {
+    "type": "html",
+    "url": "https://example.com/store-locator",
+    "description": "WordPress site with WP Store Locator plugin",
+    "card_selector": ".wpsl-store-location",
+    "selectors": {
+      "Name": ".wpsl-store-name",
+      "Address Line 1": ".wpsl-street",
+      "City": ".wpsl-city",
+      "State/Province/Region": ".wpsl-region",
+      "Postal/ZIP Code": ".wpsl-zip",
+      "Country": ".wpsl-country",
+      "Phone": ".wpsl-phone",
+      "Website": "a.wpsl-website|href"
+    },
+    "data_attributes": {
+      "Latitude": "data-wpsl-lat",
+      "Longitude": "data-wpsl-lng"
+    }
+  },
+
+  "simple_list_json": {
+    "type": "json",
+    "url": "https://example.com/stores.json",
+    "data_path": "",
+    "description": "Simple JSON - array is the root response (no data_path needed)",
+    "field_mapping": {
+      "Name": "name",
+      "Address Line 1": "address",
+      "City": "city",
+      "State/Province/Region": "state",
+      "Country": "country",
+      "Postal/ZIP Code": "zip",
+      "Latitude": "lat",
+      "Longitude": "lng",
+      "Phone": "phone"
+    }
+  },
+
+  "bootstrap_cards": {
+    "type": "html",
+    "url": "https://example.com/find-us",
+    "description": "Bootstrap-based site with card layout",
+    "card_selector": ".card.location-card",
+    "selectors": {
+      "Name": ".card-title",
+      "Address Line 1": ".card-text .address-line-1",
+      "Address Line 2": ".card-text .address-line-2",
+      "City": ".card-text .city",
+      "State/Province/Region": ".card-text .state",
+      "Country": ".card-text .country",
+      "Postal/ZIP Code": ".card-text .zip",
+      "Phone": "a.btn-phone",
+      "Email": "a.btn-email|href",
+      "Website": ".card-footer a|href"
+    },
+    "data_attributes": {
+      "Latitude": "data-lat",
+      "Longitude": "data-lon"
+    }
+  },
+
+  "rolex_retailers": {
+    "type": "json",
+    "url": "https://retailers.rolex.com/app/establishments/by_viewport/light?brand=RLX&northEastLat=40.917577&northEastLng=-73.700272&southWestLat=40.477399&southWestLng=-74.259090&langCode=en-us&establishmentType=STORE&lat=40.712776&lng=-74.005974",
+    "data_path": "",
+    "description": "Rolex Official Retailers API - uses viewport coordinates (NY example)",
+    "field_mapping": {
+      "Handle": ["rolexId", "dealerId"],
+      "Name": ["nameTranslated", "dealerName"],
+      "Status": "TRUE",
+      "Address Line 1": ["streetAddress", "address"],
+      "City": ["cityName", "city"],
+      "State/Province/Region": ["regionName", "state"],
+      "Country": ["countryName", "country"],
+      "Postal/ZIP Code": ["postalCode", "zip"],
+      "Phone": ["phone1", "phone2"],
+      "Website": ["dealerSiteUrl", "inventoryExternalUrl"],
+      "Image URL": ["imageUrl"],
+      "Latitude": ["lat", "latitude"],
+      "Longitude": ["lng", "longitude"],
+      "Monday": "Monday",
+      "Tuesday": "Tuesday",
+      "Wednesday": "Wednesday",
+      "Thursday": "Thursday",
+      "Friday": "Friday",
+      "Saturday": "Saturday",
+      "Sunday": "Sunday",
+      "Custom Brands": "brand"
+    },
+    "notes": "Change coordinates in URL for different regions. Hours are auto-extracted from hoursTranslatedDetails."
+  }
+}
