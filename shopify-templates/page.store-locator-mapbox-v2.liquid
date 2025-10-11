@@ -1,0 +1,368 @@
+{% comment %}
+  Template: page.store-locator-mapbox-v2.liquid
+  Simple version for Templates folder - Mapbox Edition
+{% endcomment %}
+
+<style>
+  .store-locator-wrapper {
+    display: flex;
+    height: 640px;
+    margin: 40px auto;
+    max-width: 1400px;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  #sidebar-mapbox {
+    width: 320px;
+    background: #fff;
+    border-right: 1px solid #d0d7de;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .sidebar-title {
+    margin: 0 0 8px 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+
+  .subtitle {
+    color: #6b7280;
+    font-size: 0.875rem;
+    margin-bottom: 12px;
+  }
+
+  .filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .filter-group label {
+    font-weight: 500;
+    font-size: 0.875rem;
+    color: #374151;
+  }
+
+  .filter-group select,
+  .filter-group input[type="text"] {
+    padding: 10px;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+  }
+
+  .checkbox-group input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+  }
+
+  .checkbox-group label {
+    cursor: pointer;
+    font-size: 0.875rem;
+  }
+
+  #mapbox-map {
+    flex: 1;
+    position: relative;
+  }
+
+  .mapboxgl-popup-content {
+    padding: 16px;
+    border-radius: 8px;
+  }
+
+  .popup-title {
+    font-weight: 600;
+    font-size: 1.1rem;
+    margin-bottom: 8px;
+    color: #111827;
+  }
+
+  .popup-content {
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: #4b5563;
+  }
+
+  .popup-tags {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #d0d7de;
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+
+  .stats {
+    padding: 12px;
+    background: #f9fafb;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    color: #4b5563;
+  }
+
+  .provider-badge {
+    display: inline-block;
+    background: #2563eb;
+    color: white;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .page-header {
+    max-width: 1400px;
+    margin: 0 auto 20px;
+    padding: 0 20px;
+  }
+</style>
+
+<div class="page-header">
+  <h1>{{ page.title }}</h1>
+  {% if page.content != blank %}
+    <div class="rte">{{ page.content }}</div>
+  {% endif %}
+</div>
+
+<div class="store-locator-wrapper">
+  <div id="sidebar-mapbox">
+    <div>
+      <h2 class="sidebar-title">Find Stores</h2>
+      <div class="subtitle">
+        <span class="provider-badge">Mapbox</span>
+        <div style="margin-top: 8px;">WatchDNA retailers near you</div>
+      </div>
+    </div>
+
+    <div class="filter-group">
+      <label for="brandFilterMapbox">Filter by Brand</label>
+      <select id="brandFilterMapbox">
+        <option value="">All brands</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="typeFilterMapbox">Filter by Type</label>
+      <select id="typeFilterMapbox">
+        <option value="">All types</option>
+        <option value="RETAILER">Retailers</option>
+        <option value="SERVICE">Services</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="storeSearchMapbox">Search Stores</label>
+      <input type="text" id="storeSearchMapbox" placeholder="Search by name or handle...">
+    </div>
+
+    <div class="checkbox-group">
+      <input type="checkbox" id="accessoriesOnlyMapbox">
+      <label for="accessoriesOnlyMapbox">Accessories only</label>
+    </div>
+
+    <div class="stats" id="statsBoxMapbox">
+      <strong>Loading...</strong>
+    </div>
+  </div>
+
+  <div id="mapbox-map"></div>
+</div>
+
+<!-- Mapbox GL JS -->
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js"></script>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css" rel="stylesheet" />
+
+<!-- PapaParse for CSV -->
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+<script>
+// Mapbox access token
+mapboxgl.accessToken = 'pk.eyJ1Ijoic20xMXQiLCJhIjoiY21nbDRrOXkwMTFzZDJub2VxcDVjMGprNSJ9.Qxv5rmbtXRKGE1siB13ZaQ';
+
+// Initialize map
+var map = new mapboxgl.Map({
+  container: 'mapbox-map',
+  style: 'mapbox://styles/mapbox/streets-v12',
+  center: [0, 20],
+  zoom: 2
+});
+
+map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+
+var allLocations = [];
+var markers = [];
+var brandSet = new Set();
+
+function buildPopup(row) {
+  var addr = [
+    row['Address Line 1'],
+    row['City'],
+    row['State/Province/Region'],
+    row['Country']
+  ].filter(Boolean).join(', ');
+
+  var phone = row['Phone'] ? '<div>📞 ' + row['Phone'] + '</div>' : '';
+  var website = row['Website'] ? '<div>🌐 <a href="' + row['Website'] + '" target="_blank">Website</a></div>' : '';
+  var tags = row['Custom Brands'] ? '<div class="popup-tags">Brands: ' + row['Custom Brands'] + '</div>' : '';
+
+  return '<div class="popup-title">' + (row['Name'] || 'Unnamed Store') + '</div>' +
+    '<div class="popup-content"><div>📍 ' + addr + '</div>' + phone + website + '</div>' + tags;
+}
+
+function applyFilters() {
+  var brandFilter = document.getElementById('brandFilterMapbox').value.toUpperCase().trim();
+  var typeFilter = document.getElementById('typeFilterMapbox').value.toUpperCase().trim();
+  var searchTerm = document.getElementById('storeSearchMapbox').value.toLowerCase().trim();
+  var accessoriesOnly = document.getElementById('accessoriesOnlyMapbox').checked;
+
+  // Remove all existing markers
+  markers.forEach(function(m) { m.remove(); });
+  markers = [];
+
+  var visibleCount = 0;
+
+  allLocations.forEach(function(row) {
+    var show = true;
+
+    // Brand filter
+    if (brandFilter) {
+      var brands = (row['Custom Brands'] || '')
+        .toUpperCase()
+        .split(',')
+        .map(function(s) { return s.trim(); })
+        .filter(Boolean);
+      if (brands.indexOf(brandFilter) === -1) show = false;
+    }
+
+    // Type filter
+    if (typeFilter) {
+      var tags = (row['Tags'] || '').toUpperCase();
+      if (tags.indexOf(typeFilter) === -1) show = false;
+    }
+
+    // Search filter
+    if (searchTerm) {
+      var name = (row['Name'] || '').toLowerCase();
+      var handle = (row['Handle'] || '').toLowerCase();
+      if (name.indexOf(searchTerm) === -1 && handle.indexOf(searchTerm) === -1) show = false;
+    }
+
+    // Accessories filter
+    if (accessoriesOnly) {
+      var tags = (row['Tags'] || '').toUpperCase();
+      if (tags.indexOf('ACCESSORY') === -1 && tags.indexOf('ACCESSORIES') === -1) show = false;
+    }
+
+    if (show) {
+      var lat = parseFloat(row.Latitude);
+      var lon = parseFloat(row.Longitude);
+
+      if (isFinite(lat) && isFinite(lon)) {
+        var marker = new mapboxgl.Marker({ color: '#2563eb' })
+          .setLngLat([lon, lat])
+          .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(buildPopup(row)))
+          .addTo(map);
+
+        markers.push(marker);
+        visibleCount++;
+      }
+    }
+  });
+
+  document.getElementById('statsBoxMapbox').innerHTML =
+    '<strong>' + visibleCount + '</strong> of <strong>' + allLocations.length + '</strong> locations shown';
+}
+
+function populateBrandSelect() {
+  var sel = document.getElementById('brandFilterMapbox');
+  while (sel.options.length > 1) sel.remove(1);
+
+  var brandsArray = Array.from(brandSet).sort();
+  brandsArray.forEach(function(brand) {
+    var opt = document.createElement('option');
+    opt.value = brand;
+    opt.textContent = brand;
+    sel.appendChild(opt);
+  });
+}
+
+function loadCSV(path) {
+  var url = path + '?v=' + Date.now();
+  return new Promise(function(resolve, reject) {
+    Papa.parse(url, {
+      download: true,
+      header: true,
+      skipEmptyLines: true,
+      complete: function(res) { resolve(res.data); },
+      error: function(err) { reject(err); }
+    });
+  });
+}
+
+map.on('load', function() {
+  var csvUrl = '{{ "locations.csv" | asset_url }}';
+  console.log('Loading CSV from:', csvUrl);
+
+  loadCSV(csvUrl)
+    .then(function(rows) {
+      console.log('CSV rows loaded:', rows.length);
+
+      allLocations = rows.filter(function(r) {
+        var lat = parseFloat(String(r.Latitude || '').trim());
+        var lon = parseFloat(String(r.Longitude || '').trim());
+        return isFinite(lat) && isFinite(lon);
+      });
+
+      console.log('Valid locations:', allLocations.length);
+
+      allLocations.forEach(function(row) {
+        (row['Custom Brands'] || '')
+          .split(',')
+          .map(function(s) { return s.trim(); })
+          .filter(Boolean)
+          .forEach(function(b) { brandSet.add(b); });
+      });
+
+      populateBrandSelect();
+      applyFilters();
+
+      if (allLocations.length > 0) {
+        var bounds = new mapboxgl.LngLatBounds();
+        allLocations.forEach(function(row) {
+          var lat = parseFloat(row.Latitude);
+          var lon = parseFloat(row.Longitude);
+          bounds.extend([lon, lat]);
+        });
+        map.fitBounds(bounds, { padding: 50 });
+      }
+
+      document.getElementById('brandFilterMapbox').addEventListener('change', applyFilters);
+      document.getElementById('typeFilterMapbox').addEventListener('change', applyFilters);
+      document.getElementById('storeSearchMapbox').addEventListener('input', applyFilters);
+      document.getElementById('accessoriesOnlyMapbox').addEventListener('change', applyFilters);
+
+      console.log('Mapbox store locator initialized successfully');
+    })
+    .catch(function(err) {
+      console.error('Error loading CSV:', err);
+      document.getElementById('statsBoxMapbox').innerHTML =
+        '<strong style="color: red;">Failed to load locations.csv</strong>';
+    });
+});
+</script>

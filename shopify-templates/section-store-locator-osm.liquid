@@ -1,0 +1,190 @@
+{% comment %}
+  Section: Store Locator (OpenStreetMap)
+
+  Instructions:
+  1. Go to Shopify → Themes → Edit Code
+  2. In 'Sections' folder, click 'Add a new section'
+  3. Name it: store-locator-osm
+  4. Paste this entire code
+  5. Save
+  6. Go to your page → Customize → Add Section → "Store Locator OSM"
+{% endcomment %}
+
+<style>
+  .store-locator-container {
+    max-width: 1400px;
+    margin: 40px auto;
+    padding: 0 20px;
+  }
+
+  .store-locator-header {
+    padding: 12px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    background: #f9fafb;
+    border-radius: 8px;
+    margin-bottom: 20px;
+  }
+
+  #brandFilter-{{ section.id }} {
+    padding: 10px;
+    min-width: 240px;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+  }
+
+  #map-{{ section.id }} {
+    width: 100%;
+    height: 640px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+
+  .popup { font-size: 1.05rem; line-height: 1.35; }
+</style>
+
+<div class="store-locator-container">
+  <h2>{{ section.settings.title }}</h2>
+
+  <div class="store-locator-header">
+    <label for="brandFilter-{{ section.id }}"><strong>Filter by brand:</strong></label>
+    <select id="brandFilter-{{ section.id }}">
+      <option value="">All brands</option>
+    </select>
+  </div>
+
+  <div id="map-{{ section.id }}"></div>
+</div>
+
+<!-- Leaflet core -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<!-- PapaParse for CSV -->
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+<!-- MarkerCluster plugin -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+<script>
+(function() {
+  const mapId = 'map-{{ section.id }}';
+  const filterId = 'brandFilter-{{ section.id }}';
+
+  // Initialize map
+  const map = L.map(mapId);
+  map.setView([20, 0], 2);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(map);
+
+  // Clustering & state
+  const clusterGroup = L.markerClusterGroup();
+  const bounds = L.latLngBounds();
+  let allRows = [];
+  let allMarkers = [];
+
+  function buildPopup(row) {
+    const addr = [row['Address Line 1'], row['City'], row['State/Province/Region'], row['Country']]
+      .filter(Boolean).join(', ');
+    const phone = row['Phone'] ? `<br>${row['Phone']}` : '';
+    return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}</div>`;
+  }
+
+  function applyFilter(brand) {
+    clusterGroup.clearLayers();
+    const value = (brand || '').trim().toUpperCase();
+    allMarkers.forEach(({ row, marker }) => {
+      if (!value) {
+        clusterGroup.addLayer(marker);
+        return;
+      }
+      const brands = (row['Custom Brands'] || '')
+        .toUpperCase()
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+      if (brands.includes(value)) clusterGroup.addLayer(marker);
+    });
+  }
+
+  function populateBrandSelect(brandSet) {
+    const sel = document.getElementById(filterId);
+    while (sel.options.length > 1) sel.remove(1);
+    [...brandSet].sort().forEach(b => {
+      const opt = document.createElement('option');
+      opt.value = b;
+      opt.textContent = b;
+      sel.appendChild(opt);
+    });
+    sel.onchange = () => applyFilter(sel.value);
+  }
+
+  // Load CSV
+  const csvUrl = '{{ "locations.csv" | asset_url }}';
+
+  Papa.parse(csvUrl, {
+    download: true,
+    header: true,
+    skipEmptyLines: true,
+    complete: function(results) {
+      console.log('CSV loaded:', results.data.length, 'rows');
+      const brandSet = new Set();
+
+      allRows = results.data.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
+
+      allRows.forEach(row => {
+        const lat = parseFloat(String(row.Latitude).trim());
+        const lon = parseFloat(String(row.Longitude).trim());
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+        const marker = L.marker([lat, lon]).bindPopup(buildPopup(row));
+        allMarkers.push({ row, marker });
+        clusterGroup.addLayer(marker);
+        bounds.extend([lat, lon]);
+
+        (row['Custom Brands'] || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+          .forEach(b => brandSet.add(b));
+      });
+
+      map.addLayer(clusterGroup);
+      if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
+      populateBrandSelect(brandSet);
+
+      console.log('Markers added:', allMarkers.length);
+    },
+    error: function(err) {
+      console.error('CSV load error:', err);
+      alert('Failed to load store locations');
+    }
+  });
+})();
+</script>
+
+{% schema %}
+{
+  "name": "Store Locator (OSM)",
+  "settings": [
+    {
+      "type": "text",
+      "id": "title",
+      "label": "Section Title",
+      "default": "Find Our Stores"
+    }
+  ],
+  "presets": [
+    {
+      "name": "Store Locator (OSM)"
+    }
+  ]
+}
+{% endschema %}

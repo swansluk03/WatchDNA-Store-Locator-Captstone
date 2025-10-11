@@ -1,0 +1,49 @@
+{% comment %}
+  DEBUG VERSION - Use this to test if CSV is loading
+  Create a page with this template to see what's happening
+{% endcomment %}
+
+<div class="page-width">
+  <h1>Store Locator Debug Test</h1>
+
+  <div id="debug" style="padding: 20px; background: #f0f0f0; margin: 20px 0; font-family: monospace;">
+    <p>Testing CSV load...</p>
+  </div>
+
+  <div id="map" style="width: 100%; height: 400px; background: #ddd; margin: 20px 0;">
+    Map will load here
+  </div>
+
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <script>
+    const debugBox = document.getElementById('debug');
+
+    // Test 1: Check if PapaParse loaded
+    debugBox.innerHTML += '<p>✓ PapaParse loaded: ' + (typeof Papa !== 'undefined') + '</p>';
+
+    // Test 2: Try to load CSV
+    const csvUrl = '{{ "locations.csv" | asset_url }}';
+    debugBox.innerHTML += '<p>CSV URL: <a href="' + csvUrl + '" target="_blank">' + csvUrl + '</a></p>';
+
+    // Test 3: Attempt to fetch
+    Papa.parse(csvUrl, {
+      download: true,
+      header: true,
+      complete: function(results) {
+        debugBox.innerHTML += '<p style="color: green;">✓ CSV loaded successfully!</p>';
+        debugBox.innerHTML += '<p>Rows found: ' + results.data.length + '</p>';
+        debugBox.innerHTML += '<p>First row: <pre>' + JSON.stringify(results.data[0], null, 2) + '</pre></p>';
+
+        // Show all rows
+        debugBox.innerHTML += '<h3>All Locations:</h3>';
+        results.data.forEach((row, i) => {
+          debugBox.innerHTML += '<p>' + (i+1) + '. ' + row.Name + ' (' + row.Latitude + ', ' + row.Longitude + ')</p>';
+        });
+      },
+      error: function(err) {
+        debugBox.innerHTML += '<p style="color: red;">✗ Error loading CSV: ' + err.message + '</p>';
+      }
+    });
+  </script>
+</div>

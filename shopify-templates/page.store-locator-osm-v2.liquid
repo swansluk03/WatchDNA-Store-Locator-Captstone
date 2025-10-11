@@ -1,0 +1,187 @@
+{% comment %}
+  Template: page.store-locator-osm-v2.liquid
+  Simple version for Templates folder
+{% endcomment %}
+
+<style>
+  .store-locator-container {
+    max-width: 1400px;
+    margin: 40px auto;
+    padding: 0 20px;
+  }
+
+  .store-locator-header {
+    padding: 12px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    background: #f9fafb;
+    border-radius: 8px;
+    margin-bottom: 20px;
+  }
+
+  #brandFilter {
+    padding: 10px;
+    min-width: 240px;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+  }
+
+  #store-map {
+    width: 100%;
+    height: 640px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+
+  .popup { font-size: 1.05rem; line-height: 1.35; }
+</style>
+
+<div class="store-locator-container">
+  <h1>{{ page.title }}</h1>
+
+  {% if page.content != blank %}
+    <div class="rte">{{ page.content }}</div>
+  {% endif %}
+
+  <div class="store-locator-header">
+    <label for="brandFilter"><strong>Filter by brand:</strong></label>
+    <select id="brandFilter">
+      <option value="">All brands</option>
+    </select>
+  </div>
+
+  <div id="store-map"></div>
+</div>
+
+<!-- Leaflet core -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<!-- PapaParse for CSV -->
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+<!-- MarkerCluster plugin -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+<script>
+// Initialize map
+const map = L.map('store-map');
+map.setView([20, 0], 2);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+}).addTo(map);
+
+// Clustering & state
+const clusterGroup = L.markerClusterGroup();
+const bounds = L.latLngBounds();
+let allRows = [];
+let allMarkers = [];
+
+function buildPopup(row) {
+  const addr = [row['Address Line 1'], row['City'], row['State/Province/Region'], row['Country']]
+    .filter(Boolean).join(', ');
+  const phone = row['Phone'] ? `<br>${row['Phone']}` : '';
+  return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}</div>`;
+}
+
+function applyFilter(brand) {
+  clusterGroup.clearLayers();
+  const value = (brand || '').trim().toUpperCase();
+  allMarkers.forEach(function(item) {
+    if (!value) {
+      clusterGroup.addLayer(item.marker);
+      return;
+    }
+    const brands = (item.row['Custom Brands'] || '')
+      .toUpperCase()
+      .split(',')
+      .map(function(s) { return s.trim(); })
+      .filter(Boolean);
+    if (brands.indexOf(value) !== -1) {
+      clusterGroup.addLayer(item.marker);
+    }
+  });
+}
+
+function populateBrandSelect(brandSet) {
+  const sel = document.getElementById('brandFilter');
+  while (sel.options.length > 1) sel.remove(1);
+
+  const brandsArray = Array.from(brandSet).sort();
+  brandsArray.forEach(function(b) {
+    const opt = document.createElement('option');
+    opt.value = b;
+    opt.textContent = b;
+    sel.appendChild(opt);
+  });
+
+  sel.onchange = function() {
+    applyFilter(sel.value);
+  };
+}
+
+// Load CSV
+const csvUrl = '{{ "locations.csv" | asset_url }}';
+console.log('Loading CSV from:', csvUrl);
+
+Papa.parse(csvUrl, {
+  download: true,
+  header: true,
+  skipEmptyLines: true,
+  complete: function(results) {
+    console.log('CSV loaded:', results.data.length, 'rows');
+    const brandSet = new Set();
+
+    allRows = results.data.filter(function(r) {
+      return (r.Latitude || '') !== '' && (r.Longitude || '') !== '';
+    });
+
+    console.log('Rows with coordinates:', allRows.length);
+
+    allRows.forEach(function(row) {
+      const lat = parseFloat(String(row.Latitude).trim());
+      const lon = parseFloat(String(row.Longitude).trim());
+
+      if (!isFinite(lat) || !isFinite(lon)) {
+        console.log('Invalid coords for:', row.Name, lat, lon);
+        return;
+      }
+
+      const marker = L.marker([lat, lon]).bindPopup(buildPopup(row));
+      allMarkers.push({ row: row, marker: marker });
+      clusterGroup.addLayer(marker);
+      bounds.extend([lat, lon]);
+
+      // Collect brands
+      const brandStr = row['Custom Brands'] || '';
+      brandStr.split(',').forEach(function(b) {
+        const trimmed = b.trim();
+        if (trimmed) brandSet.add(trimmed);
+      });
+    });
+
+    map.addLayer(clusterGroup);
+    if (bounds.isValid()) {
+      map.fitBounds(bounds.pad(0.2));
+    }
+
+    populateBrandSelect(brandSet);
+
+    console.log('Markers added:', allMarkers.length);
+
+    if (allMarkers.length === 0) {
+      alert('No store locations found. Check that locations.csv has valid data.');
+    }
+  },
+  error: function(err) {
+    console.error('CSV load error:', err);
+    alert('Failed to load store locations: ' + err.message);
+  }
+});
+</script>
