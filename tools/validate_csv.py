@@ -261,6 +261,66 @@ class CSVValidator:
         # Return only keys that have duplicates
         return [(key, rows) for key, rows in duplicates_map.items() if len(rows) > 1]
 
+    def remove_duplicates_from_file(self, file_path: str, output_path: str = None) -> int:
+        """
+        Remove duplicate rows from a CSV file, keeping the first occurrence.
+        
+        Args:
+            file_path: Path to input CSV file
+            output_path: Path to output CSV file (defaults to overwriting input)
+        
+        Returns:
+            Number of duplicates removed
+        """
+        if output_path is None:
+            output_path = file_path
+        
+        key_fields = DEFAULT_DUPLICATE_KEY
+        seen_keys = set()
+        unique_rows = []
+        duplicates_removed = 0
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                reader = csv.DictReader(f)
+                headers = reader.fieldnames
+                
+                if not headers:
+                    print(f"❌ No headers found in {file_path}")
+                    return 0
+                
+                for row in reader:
+                    # Build key tuple from key fields
+                    key = tuple(row.get(field, "").strip() for field in key_fields)
+                    
+                    # Only check for duplicates if all key fields are non-empty
+                    if all(k for k in key):
+                        if key in seen_keys:
+                            duplicates_removed += 1
+                            continue
+                        seen_keys.add(key)
+                    
+                    unique_rows.append(row)
+            
+            # Write back to file with Unix line endings
+            with open(output_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=headers, lineterminator='\n')
+                writer.writeheader()
+                writer.writerows(unique_rows)
+            
+            # Post-process to ensure Unix line endings (\n only)
+            with open(output_path, 'rb') as f:
+                content = f.read()
+            content = content.replace(b'\r\n', b'\n')
+            with open(output_path, 'wb') as f:
+                f.write(content)
+            
+            return duplicates_removed
+            
+        except Exception as e:
+            print(f"❌ Error removing duplicates: {e}")
+            return 0
+
     def validate_file(self, file_path: str) -> int:
         """
         Validate a CSV file.
@@ -462,16 +522,23 @@ Exit Codes:
   4 - Unexpected exception/IO error
 
 Examples:
-  %(prog)s locations.csv
-  %(prog)s data/locations_2025-10-06.csv --json
-  %(prog)s locations.csv --fail-duplicates --show-bad
-  %(prog)s locations.csv --required Name,Latitude,Longitude --limit 100
+  Single file validation:
+    %(prog)s locations.csv
+    %(prog)s data/locations_2025-10-06.csv --json
+    %(prog)s locations.csv --fail-duplicates --show-bad
+    %(prog)s locations.csv --required Name,Latitude,Longitude --limit 100
+  
+  Batch validation (validate all CSVs in a directory):
+    %(prog)s --batch
+    %(prog)s --batch --directory output
+    %(prog)s --batch --directory scraped_data --fail-duplicates
         """
     )
 
     parser.add_argument(
         "file",
-        help="Path to CSV file to validate"
+        nargs='?',
+        help="Path to CSV file to validate (optional if using --batch)"
     )
 
     parser.add_argument(
@@ -536,12 +603,156 @@ Examples:
         help="Use simple validation (same as module import)"
     )
 
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        default=False,
+        help="Validate all CSV files in a directory"
+    )
+
+    parser.add_argument(
+        "--directory",
+        default="output",
+        help="Directory to scan for CSV files when using --batch (default: output)"
+    )
+
+    parser.add_argument(
+        "--remove-duplicates",
+        action="store_true",
+        default=False,
+        help="Remove duplicate rows from the CSV file (keeps first occurrence)"
+    )
+
     return parser.parse_args()
+
+
+def batch_validate(directory: str, args):
+    """
+    Validate all CSV files in a directory
+    
+    Args:
+        directory: Directory path to scan for CSV files
+        args: Parsed command line arguments
+    
+    Returns:
+        Exit code (0 if all pass, 3 if any fail)
+    """
+    from pathlib import Path
+    
+    dir_path = Path(directory)
+    
+    if not dir_path.exists():
+        print(f"❌ Directory not found: {directory}")
+        return EXIT_USAGE
+    
+    # Find all CSV files
+    csv_files = list(dir_path.glob("*.csv"))
+    
+    if not csv_files:
+        print(f"⚠️  No CSV files found in {directory}")
+        return EXIT_OK
+    
+    print("=" * 70)
+    print(f"BATCH CSV VALIDATION - {len(csv_files)} file(s) in {directory}")
+    print("=" * 70)
+    print()
+    
+    results = []
+    total_errors = 0
+    total_warnings = 0
+    total_rows = 0
+    
+    # Parse required headers once
+    required_headers = [h.strip() for h in args.required.split(",") if h.strip()]
+    
+    for csv_file in sorted(csv_files):
+        print(f"📄 {csv_file.name}")
+        print("-" * 70)
+        
+        # Create validator
+        validator = CSVValidator(
+            required_headers=required_headers,
+            warn_duplicates=args.warn_duplicates,
+            fail_duplicates=args.fail_duplicates,
+            show_bad=False,  # Don't show full rows in batch mode
+            limit=args.limit,
+            max_rows=args.max_rows
+        )
+        
+        # Validate
+        exit_code = validator.validate_file(str(csv_file))
+        
+        # Store results
+        error_count = len(validator.errors)
+        warning_count = len(validator.warnings)
+        total_errors += error_count
+        total_warnings += warning_count
+        total_rows += validator.rows_checked
+        
+        status = "✅ PASS" if error_count == 0 else "❌ FAIL"
+        results.append({
+            "file": csv_file.name,
+            "status": status,
+            "rows": validator.rows_checked,
+            "errors": error_count,
+            "warnings": warning_count
+        })
+        
+        # Print brief summary for this file
+        if error_count > 0:
+            print(f"❌ {error_count} error(s):")
+            for error in validator.errors[:3]:  # Show first 3 errors
+                print(f"   • {error}")
+            if error_count > 3:
+                print(f"   ... and {error_count - 3} more")
+        else:
+            print(f"✅ OK ({validator.rows_checked} rows)")
+        
+        if warning_count > 0:
+            print(f"⚠️  {warning_count} warning(s)")
+        
+        print()
+    
+    # Print summary table
+    print("=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
+    print(f"{'File':<35} {'Status':<8} {'Rows':<8} {'Errors':<8} {'Warnings':<8}")
+    print("-" * 70)
+    
+    for result in results:
+        print(f"{result['file']:<35} {result['status']:<8} {result['rows']:<8} "
+              f"{result['errors']:<8} {result['warnings']:<8}")
+    
+    print("-" * 70)
+    print(f"{'TOTAL':<35} {'':<8} {total_rows:<8} {total_errors:<8} {total_warnings:<8}")
+    print("=" * 70)
+    
+    # Exit with appropriate code
+    if total_errors > 0:
+        print(f"\n❌ Validation failed: {total_errors} total error(s) across {len(csv_files)} file(s)")
+        return EXIT_DATA
+    else:
+        print(f"\n✅ All files validated successfully! ({total_rows} total rows)")
+        if total_warnings > 0:
+            print(f"⚠️  {total_warnings} total warning(s) - review recommended")
+        return EXIT_OK
 
 
 def main():
     """Main entry point"""
     args = parse_args()
+
+    # Handle batch mode
+    if args.batch:
+        exit_code = batch_validate(args.directory, args)
+        sys.exit(exit_code)
+
+    # Require file argument if not in batch mode
+    if not args.file:
+        print("❌ Error: file argument required (or use --batch to validate a directory)")
+        print("Run with -h for help")
+        sys.exit(EXIT_USAGE)
 
     # If --simple flag, use simple validation
     if args.simple:
@@ -567,6 +778,33 @@ def main():
     # If schema errors, exit early
     if exit_code == EXIT_SCHEMA or exit_code == EXIT_EXCEPTION:
         sys.exit(exit_code)
+
+    # Remove duplicates if requested
+    if args.remove_duplicates:
+        print()
+        print("🔧 Removing duplicates...")
+        duplicates_removed = validator.remove_duplicates_from_file(args.file)
+        
+        if duplicates_removed > 0:
+            print(f"✅ Removed {duplicates_removed} duplicate row(s)")
+            print(f"💾 Updated file: {args.file}")
+            print()
+            
+            # Re-validate to show clean results
+            print("🔍 Re-validating cleaned file...")
+            print()
+            validator = CSVValidator(
+                required_headers=required_headers,
+                warn_duplicates=args.warn_duplicates,
+                fail_duplicates=args.fail_duplicates,
+                show_bad=args.show_bad,
+                limit=args.limit,
+                max_rows=args.max_rows
+            )
+            exit_code = validator.validate_file(args.file)
+        else:
+            print("✅ No duplicates found")
+            print()
 
     # Print report
     validator.print_report()

@@ -35,7 +35,7 @@ CANONICAL_SCHEMA = [
     "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Page Title",
     "Page Description", "Meta Title", "Meta Description", "Latitude", "Longitude", "Priority",
     "Name - FR", "Page Title - FR", "Page Description - FR", "Name - ZH-CN", "Page Title - ZH-CN",
-    "Page Description - ZH-CN", "Name - ES", "Page Title - ES", "Page Description - ES", "Tags",
+    "Page Description - ZH-CN", "Name - ES", "Page Title - ES", "Page Description - ES", " Tags",
     "Custom Brands", "Custom Brands - FR", "Custom Brands - ZH-CN", "Custom Brands - ES",
     "Custom Button title 1", "Custom Button title 1 - FR", "Custom Button title 1 - ZH-CN",
     "Custom Button title 1 - ES", "Custom Button URL 1", "Custom Button URL 1 - FR",
@@ -45,18 +45,32 @@ CANONICAL_SCHEMA = [
     "Custom Button URL 2 - ES"
 ]
 
-# Try to load schema from the repository's locations.csv
+# Try to load schema from the repository's locations2.csv (the master template)
 def load_canonical_schema():
-    """Load the canonical schema from locations.csv if it exists"""
+    """Load the canonical schema from locations2.csv if it exists"""
+    # Try locations2.csv first (this is the master template with correct formatting)
+    csv_path2 = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "locations2.csv"))
+    if os.path.exists(csv_path2):
+        try:
+            with open(csv_path2, newline='', encoding='utf-8') as f:
+                header_line = f.readline().strip()
+                if header_line:
+                    # Don't strip individual headers - preserve spaces like " Tags"
+                    return [h for h in header_line.split(',')]
+        except Exception as e:
+            print(f"⚠️  Could not load schema from locations2.csv: {e}")
+    
+    # Fall back to locations.csv if locations2.csv doesn't exist
     csv_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "locations.csv"))
     if os.path.exists(csv_path):
         try:
             with open(csv_path, newline='', encoding='utf-8') as f:
                 header_line = f.readline().strip()
                 if header_line:
-                    return [h.strip() for h in header_line.split(',')]
+                    return [h for h in header_line.split(',')]
         except Exception as e:
             print(f"⚠️  Could not load schema from locations.csv: {e}")
+    
     return CANONICAL_SCHEMA
 
 SCHEMA = load_canonical_schema()
@@ -403,11 +417,11 @@ def normalize_location(
     normalized["Meta Description"] = str(mapped_data.get("Meta Description", "")).strip()
     
     # Tags and brands (handle lists or comma-separated strings)
-    tags = mapped_data.get("Tags", "")
+    tags = mapped_data.get(" Tags", mapped_data.get("Tags", ""))  # Support both with and without space
     if isinstance(tags, list):
-        normalized["Tags"] = ",".join([str(t).strip() for t in tags if t])
+        normalized[" Tags"] = ",".join([str(t).strip() for t in tags if t])
     else:
-        normalized["Tags"] = str(tags).strip()
+        normalized[" Tags"] = str(tags).strip()
     
     brands = mapped_data.get("Custom Brands", "")
     if isinstance(brands, list):
@@ -476,7 +490,7 @@ def batch_normalize(
 
 def write_normalized_csv(data: List[Dict[str, str]], filename: str = "output/locations.csv"):
     """
-    Write normalized data to CSV using the canonical schema
+    Write normalized data to CSV using the canonical schema with Unix line endings
     
     Args:
         data: List of normalized location dictionaries
@@ -484,11 +498,20 @@ def write_normalized_csv(data: List[Dict[str, str]], filename: str = "output/loc
     """
     os.makedirs(os.path.dirname(filename) if os.path.dirname(filename) else '.', exist_ok=True)
     
+    # Write CSV with standard newline handling
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=SCHEMA)
+        writer = csv.DictWriter(csvfile, fieldnames=SCHEMA, lineterminator='\n')
         writer.writeheader()
         for row in data:
             writer.writerow(row)
+    
+    # Post-process to ensure Unix line endings (\n only, no \r\n)
+    # This is necessary because csv module may still write \r\n on some systems
+    with open(filename, 'rb') as f:
+        content = f.read()
+    content = content.replace(b'\r\n', b'\n')  # Convert Windows to Unix
+    with open(filename, 'wb') as f:
+        f.write(content)
     
     print(f"✅ Exported {len(data)} normalized locations to {filename}")
 

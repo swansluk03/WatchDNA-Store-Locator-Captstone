@@ -231,5 +231,269 @@
       "Custom Brands": "brand"
     },
     "notes": "Change coordinates in URL for different regions. Hours are auto-extracted from hoursTranslatedDetails."
+  },
+
+  "_MAJOR_BRANDS_GUIDE": {
+    "description": "===== MAJOR WATCH BRANDS WITH 1000+ LOCATIONS =====",
+    "note": "These are template configurations. You'll need to inspect each brand's actual store locator to get the correct API endpoints and selectors.",
+    "research_steps": [
+      "1. Visit brand's official website",
+      "2. Find 'Store Locator' or 'Find a Retailer' page",
+      "3. Open browser DevTools > Network tab",
+      "4. Interact with the map/search",
+      "5. Look for API calls (usually JSON) or inspect HTML structure",
+      "6. Copy the API endpoint or CSS selectors",
+      "7. Update the config below with real values"
+    ]
+  },
+
+  "fossil_stores": {
+    "type": "json",
+    "url": "https://www.fossil.com/api/store-locator/stores?lat=40.7128&lng=-74.0060&radius=50&limit=1000",
+    "data_path": "stores",
+    "description": "Fossil Group Stores - 1000+ locations worldwide (Fossil, Skagen, Michele, Zodiac)",
+    "field_mapping": {
+      "Handle": ["storeId", "id"],
+      "Name": ["name", "storeName"],
+      "Status": ["isActive", "status"],
+      "Address Line 1": ["address", "address1", "street"],
+      "Address Line 2": ["address2"],
+      "City": "city",
+      "State/Province/Region": ["state", "province"],
+      "Country": "country",
+      "Postal/ZIP Code": ["postalCode", "zip"],
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "website",
+      "Latitude": ["latitude", "lat"],
+      "Longitude": ["longitude", "lng"],
+      "Custom Brands": "brands"
+    },
+    "notes": "Fossil Group owns multiple brands. Adjust lat/lng for different regions. May need to scrape multiple regions and combine."
+  },
+
+  "citizen_dealers": {
+    "type": "json",
+    "url": "https://www.citizenwatch.com/us/en/store-locator-api/search?lat=40.7128&lng=-74.0060&radius=100",
+    "data_path": "dealers",
+    "description": "Citizen Watch Authorized Dealers - 2000+ locations globally",
+    "field_mapping": {
+      "Handle": ["dealerId", "id"],
+      "Name": ["dealerName", "name"],
+      "Status": "TRUE",
+      "Address Line 1": ["address", "street"],
+      "City": "city",
+      "State/Province/Region": ["state", "region"],
+      "Country": "country",
+      "Postal/ZIP Code": ["zipCode", "postalCode"],
+      "Phone": ["phoneNumber", "phone"],
+      "Website": "website",
+      "Latitude": "latitude",
+      "Longitude": "longitude",
+      "Custom Brands": "CITIZEN"
+    },
+    "notes": "Citizen has extensive dealer network. May require multiple API calls for full global coverage."
+  },
+
+  "casio_retailers": {
+    "type": "html",
+    "url": "https://world.casio.com/wat/storelocator/",
+    "description": "Casio Watch Retailers - 5000+ locations worldwide",
+    "card_selector": ".store-location-item",
+    "selectors": {
+      "Name": ".store-name",
+      "Address Line 1": ".store-address-1",
+      "City": ".store-city",
+      "State/Province/Region": ".store-state",
+      "Country": ".store-country",
+      "Postal/ZIP Code": ".store-zip",
+      "Phone": ".store-phone",
+      "Website": "a.store-website|href"
+    },
+    "data_attributes": {
+      "Latitude": "data-lat",
+      "Longitude": "data-lng",
+      "Handle": "data-store-id"
+    },
+    "notes": "Casio has region-specific sites. Check casio.com, casio.co.jp, etc. for different markets."
+  },
+
+  "seiko_boutiques": {
+    "type": "json",
+    "url": "https://www.seikowatches.com/api/stores/search?country=US&limit=500",
+    "data_path": "stores",
+    "description": "Seiko Boutiques & Authorized Dealers - 3000+ locations",
+    "field_mapping": {
+      "Handle": ["storeCode", "id"],
+      "Name": ["storeName", "name"],
+      "Status": "TRUE",
+      "Address Line 1": "address",
+      "City": "city",
+      "State/Province/Region": "state",
+      "Country": "country",
+      "Postal/ZIP Code": ["zip", "postalCode"],
+      "Phone": "telephone",
+      "Website": "url",
+      "Latitude": "lat",
+      "Longitude": "lng",
+      "Custom Brands": "SEIKO"
+    },
+    "notes": "Change country parameter for different regions: US, GB, JP, etc."
+  },
+
+  "tissot_stores": {
+    "type": "json",
+    "url": "https://www.tissotwatches.com/en-en/store-locator/api/stores?lat=40.7128&lng=-74.0060&radius=100",
+    "data_path": "results",
+    "description": "Tissot Stores (Swatch Group) - 2000+ locations worldwide",
+    "field_mapping": {
+      "Handle": ["id", "storeId"],
+      "Name": "name",
+      "Status": ["active", "isOpen"],
+      "Address Line 1": ["address1", "street"],
+      "Address Line 2": "address2",
+      "City": "city",
+      "State/Province/Region": ["state", "province"],
+      "Country": "country",
+      "Postal/ZIP Code": ["postalCode", "zipCode"],
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "website",
+      "Latitude": "latitude",
+      "Longitude": "longitude",
+      "Custom Brands": "TISSOT"
+    },
+    "notes": "Part of Swatch Group. Similar API structure for Omega, Longines, Hamilton, etc."
+  },
+
+  "omega_boutiques": {
+    "type": "json",
+    "url": "https://www.omegawatches.com/api/store-locator?lat=40.7128&lng=-74.0060&type=boutique",
+    "data_path": "stores",
+    "description": "Omega Boutiques & Retailers (Swatch Group) - 800+ boutiques, 5000+ retailers",
+    "field_mapping": {
+      "Handle": ["storeId", "id"],
+      "Name": ["name", "storeName"],
+      "Status": "TRUE",
+      "Address Line 1": "address",
+      "City": "city",
+      "State/Province/Region": "state",
+      "Country": "country",
+      "Postal/ZIP Code": "postalCode",
+      "Phone": "phone",
+      "Website": "url",
+      "Image URL": "image",
+      "Latitude": "lat",
+      "Longitude": "lng",
+      "Custom Brands": "OMEGA"
+    },
+    "notes": "Change type parameter to 'retailer' for authorized dealers instead of boutiques."
+  },
+
+  "timex_retailers": {
+    "type": "html",
+    "url": "https://www.timex.com/store-locator",
+    "description": "Timex Retailers - 3000+ locations in North America",
+    "card_selector": ".location-card",
+    "selectors": {
+      "Name": ".location-name",
+      "Address Line 1": ".location-address",
+      "City": ".location-city",
+      "State/Province/Region": ".location-state",
+      "Postal/ZIP Code": ".location-zip",
+      "Phone": ".location-phone"
+    },
+    "data_attributes": {
+      "Latitude": "data-latitude",
+      "Longitude": "data-longitude"
+    },
+    "notes": "Strong presence in department stores and mass retailers."
+  },
+
+  "michael_kors_watches": {
+    "type": "json",
+    "url": "https://www.michaelkors.com/api/stores?lat=40.7128&lng=-74.0060&radius=50",
+    "data_path": "stores",
+    "description": "Michael Kors Watch Retailers (Fossil Group) - 1500+ locations",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "name",
+      "Address Line 1": "address",
+      "City": "city",
+      "State/Province/Region": "state",
+      "Country": "country",
+      "Postal/ZIP Code": "zip",
+      "Phone": "phone",
+      "Latitude": "lat",
+      "Longitude": "lng",
+      "Custom Brands": "MICHAEL KORS"
+    },
+    "notes": "Part of Fossil Group. Luxury fashion watches."
+  },
+
+  "swatch_stores": {
+    "type": "json",
+    "url": "https://www.swatch.com/en-us/store-locator/api/stores?lat=40.7128&lng=-74.0060",
+    "data_path": "stores",
+    "description": "Swatch Stores - 3000+ locations worldwide",
+    "field_mapping": {
+      "Handle": ["storeId", "id"],
+      "Name": "name",
+      "Address Line 1": "address",
+      "City": "city",
+      "State/Province/Region": "state",
+      "Country": "country",
+      "Postal/ZIP Code": "zip",
+      "Phone": "phone",
+      "Website": "website",
+      "Latitude": "lat",
+      "Longitude": "lng",
+      "Custom Brands": "SWATCH"
+    },
+    "notes": "Flagship brand of Swatch Group. Global presence."
+  },
+
+  "tag_heuer_boutiques": {
+    "type": "json",
+    "url": "https://www.tagheuer.com/us/en/store-locator/api?lat=40.7128&lng=-74.0060",
+    "data_path": "stores",
+    "description": "TAG Heuer Boutiques & Retailers (LVMH) - 1000+ locations",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": ["name", "storeName"],
+      "Address Line 1": "address",
+      "City": "city",
+      "State/Province/Region": "state",
+      "Country": "country",
+      "Postal/ZIP Code": "postalCode",
+      "Phone": "phone",
+      "Website": "website",
+      "Latitude": "latitude",
+      "Longitude": "longitude",
+      "Custom Brands": "TAG HEUER"
+    },
+    "notes": "Part of LVMH. Luxury sports watches."
+  },
+
+  "bulova_dealers": {
+    "type": "json",
+    "url": "https://www.bulova.com/api/dealer-locator?lat=40.7128&lng=-74.0060&radius=100",
+    "data_path": "dealers",
+    "description": "Bulova Authorized Dealers (Citizen Group) - 2000+ locations",
+    "field_mapping": {
+      "Handle": "dealerId",
+      "Name": "name",
+      "Address Line 1": "address",
+      "City": "city",
+      "State/Province/Region": "state",
+      "Country": "country",
+      "Postal/ZIP Code": "zip",
+      "Phone": "phone",
+      "Website": "website",
+      "Latitude": "lat",
+      "Longitude": "lng",
+      "Custom Brands": "BULOVA"
+    },
+    "notes": "Owned by Citizen. Classic American brand."
   }
 }
