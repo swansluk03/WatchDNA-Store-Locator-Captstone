@@ -108,6 +108,18 @@
           </button>
           <span id="nearMeStatus" style="font-size:.9rem; opacity:.8;"></span>
         </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <select id="nearMeRadius" style="padding:6px; border:1px solid var(--border); border-radius:6px;">
+          <option value="5">5 mi</option>
+          <option value="10" selected>10 mi</option>
+          <option value="25">25 mi</option>
+          <option value="50">50 mi</option>
+        </select>
+          <button id="nearMeWithinBtn" title="Show stores within radius"
+                  style="padding:8px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer;"></button>
+          Within radius
+          </button>
+      </div>
     </div>
   </header>
 
@@ -211,21 +223,25 @@
 
     function meters(mi) { return mi * 1609.344; }
 
-    function showWithinRadius(centerLL, radiusMeters) {
-      // Clear circle if any
+    function applyRadiusToCurrent(centerLL, radiusMeters) {
       if (radiusCircle) { map.removeLayer(radiusCircle); radiusCircle = null; }
       radiusCircle = L.circle(centerLL, { radius: radiusMeters, fillOpacity: 0.07 }).addTo(map);
 
-      // Filter which markers to display within radius (without losing the original set)
+      // Start from your existing filtered set
+      const brandValue = (document.getElementById('brandFilter').value || '');
+      applyFilter(brandValue);
+
+      // Filter only visible markers within the radius
+      const current = clusterGroup.getLayers();
       clusterGroup.clearLayers();
-      let count = 0;
-      allMarkers.forEach(({ marker }) => {
-        const d = map.distance(centerLL, marker.getLatLng());
-        if (d <= radiusMeters) { clusterGroup.addLayer(marker); count++; }
+      let kept = 0;
+      current.forEach(m => {
+        const d = map.distance(centerLL, m.getLatLng());
+        if (d <= radiusMeters) { clusterGroup.addLayer(m); kept++; }
       });
 
-      setNearMeStatus(`Showing ${count} location(s) within ${(radiusMeters/1609.344).toFixed(0)} mi`);
-      if (count > 0) map.fitBounds(radiusCircle.getBounds().pad(0.2));
+      setNearMeStatus(`Showing ${kept} location(s) within ${(radiusMeters/1609.344).toFixed(0)} mi`);
+      if (kept > 0) map.fitBounds(radiusCircle.getBounds().pad(0.2));
     }
 
     function locateAndFilterWithinRadius() {
@@ -236,7 +252,7 @@
           const ll = toLatLng(pos.coords.latitude, pos.coords.longitude);
           showUserMarker(ll);
           const mi = parseFloat(document.getElementById('nearMeRadius').value || '10');
-          showWithinRadius(ll, meters(mi));
+          applyRadiusToCurrent(ll, meters(mi));
         },
         () => setNearMeStatus('Unable to get location.'),
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
@@ -378,6 +394,9 @@
         populateBrandSelect(brandSet);
         const nearBtn = document.getElementById('nearMeBtn');
         if (nearBtn) nearBtn.addEventListener('click', locateAndJumpToNearest);
+
+        const withinBtn = document.getElementById('nearMeWithinBtn');
+        if (withinBtn) withinBtn.addEventListener('click', locateAndFilterWithinRadius);
 
         console.log('Markers added:', allMarkers.length);
         if (allMarkers.length === 0) {
