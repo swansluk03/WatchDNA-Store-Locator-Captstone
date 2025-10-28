@@ -5,3 +5,4 @@ __pycache__/
 *.env
 Prototypes/Data_Scrappers/output/
 output/
+.claude/
