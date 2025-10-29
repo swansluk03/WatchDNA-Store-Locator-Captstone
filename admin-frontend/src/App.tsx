@@ -1,4 +1,3 @@
-import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -7,6 +6,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Uploads from './pages/Uploads';
 import UploadDetail from './pages/UploadDetail';
+import Scraper from './pages/Scraper';
 import './styles/App.css';
 
 function App() {
@@ -27,6 +27,7 @@ function App() {
             <Route index element={<Dashboard />} />
             <Route path="uploads" element={<Uploads />} />
             <Route path="uploads/:id" element={<UploadDetail />} />
+            <Route path="scraper" element={<Scraper />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
