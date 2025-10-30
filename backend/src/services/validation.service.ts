@@ -51,20 +51,20 @@ export class ValidationService {
 
       console.log(`Running validation: ${this.pythonPath} ${args.join(' ')}`);
 
-      const process = spawn(this.pythonPath, args);
+      const childProcess = spawn(this.pythonPath, args);
 
       let stdoutData = '';
       let stderrData = '';
 
-      process.stdout.on('data', (data) => {
+      childProcess.stdout.on('data', (data) => {
         stdoutData += data.toString();
       });
 
-      process.stderr.on('data', (data) => {
+      childProcess.stderr.on('data', (data) => {
         stderrData += data.toString();
       });
 
-      process.on('close', (code) => {
+      childProcess.on('close', (code) => {
         console.log(`Validation process exited with code ${code}`);
 
         if (stderrData && process.env.NODE_ENV === 'development') {

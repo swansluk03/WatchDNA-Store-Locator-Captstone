@@ -22,6 +22,7 @@ const Layout: React.FC = () => {
         <div className="nav-links">
           <Link to="/">Dashboard</Link>
           <Link to="/uploads">Uploads</Link>
+          <Link to="/scraper">Scraper</Link>
         </div>
 
         <div className="nav-user">

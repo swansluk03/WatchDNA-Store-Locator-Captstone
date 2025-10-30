@@ -1,37 +1,20 @@
 import { Router } from 'express';
-import fs from 'fs';
-import path from 'path';
+import { scraperController } from '../controllers/scraper.controller';
 
 const router = Router();
 
-// GET /api/scraper/brands - List available brand configs
-router.get('/brands', (req, res) => {
-  try {
-    const configPath = path.join(__dirname, '..', '..', '..', 'Prototypes', 'Data_Scrappers', 'brand_configs.json');
-    const configData = fs.readFileSync(configPath, 'utf-8');
-    const configs = JSON.parse(configData);
+// Brand config routes
+router.get('/brands', scraperController.getBrands);
 
-    // Filter out the _README entry
-    const brands = Object.entries(configs)
-      .filter(([key]) => key !== '_README')
-      .map(([key, value]: [string, any]) => ({
-        name: key,
-        type: value.type,
-        url: value.url,
-        description: value.description || ''
-      }));
+// Job management routes
+router.post('/jobs', scraperController.createJob);
+router.get('/jobs', scraperController.listJobs);
+router.get('/jobs/:id', scraperController.getJob);
+router.get('/jobs/:id/logs', scraperController.getJobLogs);
+router.post('/jobs/:id/cancel', scraperController.cancelJob);
+router.delete('/jobs/:id', scraperController.deleteJob);
 
-    res.json({ brands });
-
-  } catch (error: any) {
-    console.error('Error loading brand configs:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// TODO: Add scraper job endpoints in next phase
-// POST /api/scraper/jobs - Start scraping job
-// GET /api/scraper/jobs - List scraper jobs
-// GET /api/scraper/jobs/:id - Get job status
+// Statistics
+router.get('/stats', scraperController.getStats);
 
 export default router;

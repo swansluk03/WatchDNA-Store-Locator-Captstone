@@ -1,35 +1,41 @@
 {
   "_README": {
-    "description": "Brand configuration examples - completely dynamic for any website",
-    "json_config_fields": {
-      "type": "json or html",
-      "url": "API or page URL",
-      "description": "Human-readable description",
-      "data_path": "(JSON only) Path to stores array, supports dot notation",
-      "field_mapping": "(JSON only) Map canonical fields to API fields, supports arrays for fallbacks"
-    },
-    "html_config_fields": {
-      "card_selector": "(HTML only) CSS selector for store cards",
-      "selectors": "(HTML only) Map canonical fields to CSS selectors",
-      "data_attributes": "(HTML only) Map canonical fields to HTML data attributes"
-    },
-    "selector_syntax": {
-      "text_extraction": ".selector - extracts text content",
-      "attribute_extraction": ".selector|attr - extracts attribute (e.g., a|href, img|src)",
-      "multiple_values": {"selector": ".tag", "multiple": true}
+    "description": "Brand configurations for store locator scraping",
+    "usage": "Select a brand, modify the URL if needed, and start scraping",
+    "add_new_brand": "Copy a similar 'type' configuration and update the URL and field mappings"
+  },
+
+  "rolex_retailers": {
+    "type": "json",
+    "url": "https://retailers.rolex.com/app/establishments/by_viewport/light?brand=RLX&northEastLat=50.0&northEastLng=10.0&southWestLat=40.0&southWestLng=-10.0&langCode=en-us&establishmentType=STORE",
+    "description": "Rolex Official Retailers API - Verified Working ✅",
+    "method": "GET",
+    "data_path": "",
+    "field_mapping": {
+      "Name": ["name", "establishment_name"],
+      "Address Line 1": ["address", "street"],
+      "City": "city",
+      "State/Province/Region": ["state", "province"],
+      "Country": "country",
+      "Postal/ZIP Code": ["zipCode", "postalCode", "zip"],
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "website",
+      "Latitude": ["latitude", "lat"],
+      "Longitude": ["longitude", "lng"]
     }
   },
 
-  "watchlink_json": {
+  "custom_json_api": {
     "type": "json",
-    "url": "https://www.watchlink.com/pages/locations.json",
-    "data_path": "stores",
-    "description": "WatchLink JSON API - standard flat structure",
+    "url": "https://api.yourbrand.com/stores",
+    "description": "Template: Standard JSON API - Customize URL and field mapping",
+    "method": "GET",
+    "enabled": false,
+    "data_path": "data.stores",
     "field_mapping": {
-      "Handle": ["slug", "handle", "id"],
-      "Name": ["name", "store_name"],
-      "Status": ["active", "is_active"],
-      "Address Line 1": ["address1", "address", "street"],
+      "Name": ["name", "store_name", "title"],
+      "Address Line 1": ["address", "address1", "street"],
       "Address Line 2": ["address2", "suite"],
       "City": ["city", "city_name"],
       "State/Province/Region": ["state", "province", "region"],
@@ -38,53 +44,22 @@
       "Phone": ["phone", "telephone"],
       "Email": ["email", "contact_email"],
       "Website": ["website", "url"],
-      "Image URL": ["image", "logo", "image_url"],
       "Latitude": ["latitude", "lat"],
-      "Longitude": ["longitude", "lng", "lon"],
-      "Page Title": ["page_title", "title"],
-      "Page Description": ["page_description", "description"],
-      "Tags": ["tags", "categories"],
-      "Custom Brands": ["brands", "brand"]
+      "Longitude": ["longitude", "lng", "lon"]
     }
   },
 
-  "watchlink_html": {
-    "type": "html",
-    "url": "https://www.watchlink.com/pages/locations",
-    "description": "WatchLink HTML page - typical store locator structure",
-    "card_selector": ".store-card",
-    "selectors": {
-      "Name": ".store-name",
-      "Address Line 1": ".address-line1",
-      "Address Line 2": ".address-line2",
-      "City": ".city",
-      "State/Province/Region": ".state",
-      "Country": ".country",
-      "Postal/ZIP Code": ".postal",
-      "Phone": ".phone",
-      "Email": ".email",
-      "Website": "a.website|href",
-      "Image URL": "img.logo|src",
-      "Tags": {"selector": ".tag", "multiple": true},
-      "Custom Brands": {"selector": ".brand", "multiple": true}
-    },
-    "data_attributes": {
-      "Latitude": "data-latitude",
-      "Longitude": "data-longitude",
-      "Handle": "data-handle",
-      "Status": "data-active"
-    }
-  },
-
-  "shopify_json": {
+  "shopify_store_locator": {
     "type": "json",
-    "url": "https://example.myshopify.com/apps/store-locator/locations.json",
+    "url": "https://yourstore.myshopify.com/apps/store-locator/locations.json",
+    "description": "Template: Shopify Store Locator App - Common structure",
+    "method": "GET",
+    "enabled": false,
     "data_path": "locations",
-    "description": "Shopify Store Locator app - common structure",
     "field_mapping": {
       "Name": ["name", "title"],
       "Address Line 1": ["address", "address_1"],
-      "Address Line 2": ["address_2"],
+      "Address Line 2": "address_2",
       "City": "city",
       "State/Province/Region": ["province", "state"],
       "Country": "country",
@@ -92,408 +67,92 @@
       "Phone": "phone",
       "Email": "email",
       "Latitude": ["lat", "latitude"],
-      "Longitude": ["lng", "longitude"],
-      "Status": "active"
+      "Longitude": ["lng", "longitude"]
     }
   },
 
-  "google_maps_embed": {
+  "nested_json_deep": {
+    "type": "json",
+    "url": "https://api.yourbrand.com/v2/locations",
+    "description": "Template: Deeply nested JSON - Uses dot notation for data_path",
+    "method": "GET",
+    "enabled": false,
+    "data_path": "response.data.locations.items",
+    "field_mapping": {
+      "Name": "location.name",
+      "Address Line 1": "location.address.street",
+      "City": "location.address.city",
+      "State/Province/Region": "location.address.state",
+      "Country": "location.address.country",
+      "Postal/ZIP Code": "location.address.postal_code",
+      "Latitude": "location.coordinates.lat",
+      "Longitude": "location.coordinates.lng"
+    }
+  },
+
+  "html_bootstrap_cards": {
     "type": "html",
-    "url": "https://example.com/locations",
-    "description": "Site with Google Maps markers in HTML",
-    "card_selector": "div[data-location]",
+    "url": "https://yourwebsite.com/locations",
+    "description": "Template: HTML page with store cards - Typical structure",
+    "method": "GET",
+    "enabled": false,
+    "card_selector": ".store-card, .location-item, [data-store]",
     "selectors": {
-      "Name": "h3.location-name",
-      "Address Line 1": ".street-address",
-      "City": ".locality",
-      "State/Province/Region": ".region",
-      "Postal/ZIP Code": ".postal-code",
-      "Country": ".country-name",
-      "Phone": "a[href^='tel:']",
+      "Name": ".store-name, h3, h4",
+      "Address Line 1": ".address, .street",
+      "City": ".city",
+      "State/Province/Region": ".state, .province",
+      "Country": ".country",
+      "Postal/ZIP Code": ".zip, .postal",
+      "Phone": ".phone, a[href^='tel:']",
+      "Email": ".email, a[href^='mailto:']",
       "Website": "a.website|href"
     },
     "data_attributes": {
       "Latitude": "data-lat",
       "Longitude": "data-lng",
-      "Handle": "data-location-id"
+      "Handle": "data-id"
     }
   },
 
-  "nested_json_api": {
-    "type": "json",
-    "url": "https://api.example.com/v2/retail/locations",
-    "data_path": "data.locations",
-    "description": "Deeply nested JSON structure - demonstrates dot notation",
-    "field_mapping": {
-      "Name": "details.name",
-      "Address Line 1": "details.address.street",
-      "City": "details.address.city",
-      "State/Province/Region": "details.address.state",
-      "Country": "details.address.country",
-      "Postal/ZIP Code": "details.address.zipCode",
-      "Latitude": "geoLocation.coordinates.lat",
-      "Longitude": "geoLocation.coordinates.lon",
-      "Phone": "contactInfo.phone",
-      "Email": "contactInfo.email",
-      "Website": "contactInfo.website",
-      "Status": "operationalStatus.isOpen"
-    }
-  },
-
-  "wordpress_locator": {
+  "wordpress_wp_store_locator": {
     "type": "html",
-    "url": "https://example.com/store-locator",
-    "description": "WordPress site with WP Store Locator plugin",
+    "url": "https://yoursite.com/store-locator/",
+    "description": "Template: WordPress WP Store Locator plugin",
+    "method": "GET",
+    "enabled": false,
     "card_selector": ".wpsl-store-location",
     "selectors": {
       "Name": ".wpsl-store-name",
       "Address Line 1": ".wpsl-street",
       "City": ".wpsl-city",
-      "State/Province/Region": ".wpsl-region",
+      "State/Province/Region": ".wpsl-state",
       "Postal/ZIP Code": ".wpsl-zip",
       "Country": ".wpsl-country",
-      "Phone": ".wpsl-phone",
-      "Website": "a.wpsl-website|href"
-    },
-    "data_attributes": {
-      "Latitude": "data-wpsl-lat",
-      "Longitude": "data-wpsl-lng"
-    }
-  },
-
-  "simple_list_json": {
-    "type": "json",
-    "url": "https://example.com/stores.json",
-    "data_path": "",
-    "description": "Simple JSON - array is the root response (no data_path needed)",
-    "field_mapping": {
-      "Name": "name",
-      "Address Line 1": "address",
-      "City": "city",
-      "State/Province/Region": "state",
-      "Country": "country",
-      "Postal/ZIP Code": "zip",
-      "Latitude": "lat",
-      "Longitude": "lng",
-      "Phone": "phone"
-    }
-  },
-
-  "bootstrap_cards": {
-    "type": "html",
-    "url": "https://example.com/find-us",
-    "description": "Bootstrap-based site with card layout",
-    "card_selector": ".card.location-card",
-    "selectors": {
-      "Name": ".card-title",
-      "Address Line 1": ".card-text .address-line-1",
-      "Address Line 2": ".card-text .address-line-2",
-      "City": ".card-text .city",
-      "State/Province/Region": ".card-text .state",
-      "Country": ".card-text .country",
-      "Postal/ZIP Code": ".card-text .zip",
-      "Phone": "a.btn-phone",
-      "Email": "a.btn-email|href",
-      "Website": ".card-footer a|href"
+      "Phone": ".wpsl-phone"
     },
     "data_attributes": {
       "Latitude": "data-lat",
-      "Longitude": "data-lon"
+      "Longitude": "data-lng"
     }
   },
 
-  "rolex_retailers": {
-    "type": "json",
-    "url": "https://retailers.rolex.com/app/establishments/by_viewport/light?brand=RLX&northEastLat=40.917577&northEastLng=-73.700272&southWestLat=40.477399&southWestLng=-74.259090&langCode=en-us&establishmentType=STORE&lat=40.712776&lng=-74.005974",
-    "data_path": "",
-    "description": "Rolex Official Retailers API - uses viewport coordinates (NY example)",
-    "field_mapping": {
-      "Handle": ["rolexId", "dealerId"],
-      "Name": ["nameTranslated", "dealerName"],
-      "Status": "TRUE",
-      "Address Line 1": ["streetAddress", "address"],
-      "City": ["cityName", "city"],
-      "State/Province/Region": ["regionName", "state"],
-      "Country": ["countryName", "country"],
-      "Postal/ZIP Code": ["postalCode", "zip"],
-      "Phone": ["phone1", "phone2"],
-      "Website": ["dealerSiteUrl", "inventoryExternalUrl"],
-      "Image URL": ["imageUrl"],
-      "Latitude": ["lat", "latitude"],
-      "Longitude": ["lng", "longitude"],
-      "Monday": "Monday",
-      "Tuesday": "Tuesday",
-      "Wednesday": "Wednesday",
-      "Thursday": "Thursday",
-      "Friday": "Friday",
-      "Saturday": "Saturday",
-      "Sunday": "Sunday",
-      "Custom Brands": "brand"
-    },
-    "notes": "Change coordinates in URL for different regions. Hours are auto-extracted from hoursTranslatedDetails."
-  },
-
-  "_MAJOR_BRANDS_GUIDE": {
-    "description": "===== MAJOR WATCH BRANDS WITH 1000+ LOCATIONS =====",
-    "note": "These are template configurations. You'll need to inspect each brand's actual store locator to get the correct API endpoints and selectors.",
-    "research_steps": [
-      "1. Visit brand's official website",
-      "2. Find 'Store Locator' or 'Find a Retailer' page",
-      "3. Open browser DevTools > Network tab",
-      "4. Interact with the map/search",
-      "5. Look for API calls (usually JSON) or inspect HTML structure",
-      "6. Copy the API endpoint or CSS selectors",
-      "7. Update the config below with real values"
-    ]
-  },
-
-  "fossil_stores": {
-    "type": "json",
-    "url": "https://www.fossil.com/api/store-locator/stores?lat=40.7128&lng=-74.0060&radius=50&limit=1000",
-    "data_path": "stores",
-    "description": "Fossil Group Stores - 1000+ locations worldwide (Fossil, Skagen, Michele, Zodiac)",
-    "field_mapping": {
-      "Handle": ["storeId", "id"],
-      "Name": ["name", "storeName"],
-      "Status": ["isActive", "status"],
-      "Address Line 1": ["address", "address1", "street"],
-      "Address Line 2": ["address2"],
-      "City": "city",
-      "State/Province/Region": ["state", "province"],
-      "Country": "country",
-      "Postal/ZIP Code": ["postalCode", "zip"],
-      "Phone": "phone",
-      "Email": "email",
-      "Website": "website",
-      "Latitude": ["latitude", "lat"],
-      "Longitude": ["longitude", "lng"],
-      "Custom Brands": "brands"
-    },
-    "notes": "Fossil Group owns multiple brands. Adjust lat/lng for different regions. May need to scrape multiple regions and combine."
-  },
-
-  "citizen_dealers": {
-    "type": "json",
-    "url": "https://www.citizenwatch.com/us/en/store-locator-api/search?lat=40.7128&lng=-74.0060&radius=100",
-    "data_path": "dealers",
-    "description": "Citizen Watch Authorized Dealers - 2000+ locations globally",
-    "field_mapping": {
-      "Handle": ["dealerId", "id"],
-      "Name": ["dealerName", "name"],
-      "Status": "TRUE",
-      "Address Line 1": ["address", "street"],
-      "City": "city",
-      "State/Province/Region": ["state", "region"],
-      "Country": "country",
-      "Postal/ZIP Code": ["zipCode", "postalCode"],
-      "Phone": ["phoneNumber", "phone"],
-      "Website": "website",
-      "Latitude": "latitude",
-      "Longitude": "longitude",
-      "Custom Brands": "CITIZEN"
-    },
-    "notes": "Citizen has extensive dealer network. May require multiple API calls for full global coverage."
-  },
-
-  "casio_retailers": {
+  "google_maps_embedded": {
     "type": "html",
-    "url": "https://world.casio.com/wat/storelocator/",
-    "description": "Casio Watch Retailers - 5000+ locations worldwide",
-    "card_selector": ".store-location-item",
+    "url": "https://yoursite.com/find-us",
+    "description": "Template: Site with embedded Google Maps markers",
+    "method": "GET",
+    "enabled": false,
+    "card_selector": ".map-marker, [data-marker]",
     "selectors": {
-      "Name": ".store-name",
-      "Address Line 1": ".store-address-1",
-      "City": ".store-city",
-      "State/Province/Region": ".store-state",
-      "Country": ".store-country",
-      "Postal/ZIP Code": ".store-zip",
-      "Phone": ".store-phone",
-      "Website": "a.store-website|href"
+      "Name": ".marker-title, h3",
+      "Address Line 1": ".marker-address",
+      "Phone": ".marker-phone"
     },
     "data_attributes": {
       "Latitude": "data-lat",
       "Longitude": "data-lng",
-      "Handle": "data-store-id"
-    },
-    "notes": "Casio has region-specific sites. Check casio.com, casio.co.jp, etc. for different markets."
-  },
-
-  "seiko_boutiques": {
-    "type": "json",
-    "url": "https://www.seikowatches.com/api/stores/search?country=US&limit=500",
-    "data_path": "stores",
-    "description": "Seiko Boutiques & Authorized Dealers - 3000+ locations",
-    "field_mapping": {
-      "Handle": ["storeCode", "id"],
-      "Name": ["storeName", "name"],
-      "Status": "TRUE",
-      "Address Line 1": "address",
-      "City": "city",
-      "State/Province/Region": "state",
-      "Country": "country",
-      "Postal/ZIP Code": ["zip", "postalCode"],
-      "Phone": "telephone",
-      "Website": "url",
-      "Latitude": "lat",
-      "Longitude": "lng",
-      "Custom Brands": "SEIKO"
-    },
-    "notes": "Change country parameter for different regions: US, GB, JP, etc."
-  },
-
-  "tissot_stores": {
-    "type": "json",
-    "url": "https://www.tissotwatches.com/en-en/store-locator/api/stores?lat=40.7128&lng=-74.0060&radius=100",
-    "data_path": "results",
-    "description": "Tissot Stores (Swatch Group) - 2000+ locations worldwide",
-    "field_mapping": {
-      "Handle": ["id", "storeId"],
-      "Name": "name",
-      "Status": ["active", "isOpen"],
-      "Address Line 1": ["address1", "street"],
-      "Address Line 2": "address2",
-      "City": "city",
-      "State/Province/Region": ["state", "province"],
-      "Country": "country",
-      "Postal/ZIP Code": ["postalCode", "zipCode"],
-      "Phone": "phone",
-      "Email": "email",
-      "Website": "website",
-      "Latitude": "latitude",
-      "Longitude": "longitude",
-      "Custom Brands": "TISSOT"
-    },
-    "notes": "Part of Swatch Group. Similar API structure for Omega, Longines, Hamilton, etc."
-  },
-
-  "omega_boutiques": {
-    "type": "json",
-    "url": "https://www.omegawatches.com/api/store-locator?lat=40.7128&lng=-74.0060&type=boutique",
-    "data_path": "stores",
-    "description": "Omega Boutiques & Retailers (Swatch Group) - 800+ boutiques, 5000+ retailers",
-    "field_mapping": {
-      "Handle": ["storeId", "id"],
-      "Name": ["name", "storeName"],
-      "Status": "TRUE",
-      "Address Line 1": "address",
-      "City": "city",
-      "State/Province/Region": "state",
-      "Country": "country",
-      "Postal/ZIP Code": "postalCode",
-      "Phone": "phone",
-      "Website": "url",
-      "Image URL": "image",
-      "Latitude": "lat",
-      "Longitude": "lng",
-      "Custom Brands": "OMEGA"
-    },
-    "notes": "Change type parameter to 'retailer' for authorized dealers instead of boutiques."
-  },
-
-  "timex_retailers": {
-    "type": "html",
-    "url": "https://www.timex.com/store-locator",
-    "description": "Timex Retailers - 3000+ locations in North America",
-    "card_selector": ".location-card",
-    "selectors": {
-      "Name": ".location-name",
-      "Address Line 1": ".location-address",
-      "City": ".location-city",
-      "State/Province/Region": ".location-state",
-      "Postal/ZIP Code": ".location-zip",
-      "Phone": ".location-phone"
-    },
-    "data_attributes": {
-      "Latitude": "data-latitude",
-      "Longitude": "data-longitude"
-    },
-    "notes": "Strong presence in department stores and mass retailers."
-  },
-
-  "michael_kors_watches": {
-    "type": "json",
-    "url": "https://www.michaelkors.com/api/stores?lat=40.7128&lng=-74.0060&radius=50",
-    "data_path": "stores",
-    "description": "Michael Kors Watch Retailers (Fossil Group) - 1500+ locations",
-    "field_mapping": {
-      "Handle": "id",
-      "Name": "name",
-      "Address Line 1": "address",
-      "City": "city",
-      "State/Province/Region": "state",
-      "Country": "country",
-      "Postal/ZIP Code": "zip",
-      "Phone": "phone",
-      "Latitude": "lat",
-      "Longitude": "lng",
-      "Custom Brands": "MICHAEL KORS"
-    },
-    "notes": "Part of Fossil Group. Luxury fashion watches."
-  },
-
-  "swatch_stores": {
-    "type": "json",
-    "url": "https://www.swatch.com/en-us/store-locator/api/stores?lat=40.7128&lng=-74.0060",
-    "data_path": "stores",
-    "description": "Swatch Stores - 3000+ locations worldwide",
-    "field_mapping": {
-      "Handle": ["storeId", "id"],
-      "Name": "name",
-      "Address Line 1": "address",
-      "City": "city",
-      "State/Province/Region": "state",
-      "Country": "country",
-      "Postal/ZIP Code": "zip",
-      "Phone": "phone",
-      "Website": "website",
-      "Latitude": "lat",
-      "Longitude": "lng",
-      "Custom Brands": "SWATCH"
-    },
-    "notes": "Flagship brand of Swatch Group. Global presence."
-  },
-
-  "tag_heuer_boutiques": {
-    "type": "json",
-    "url": "https://www.tagheuer.com/us/en/store-locator/api?lat=40.7128&lng=-74.0060",
-    "data_path": "stores",
-    "description": "TAG Heuer Boutiques & Retailers (LVMH) - 1000+ locations",
-    "field_mapping": {
-      "Handle": "id",
-      "Name": ["name", "storeName"],
-      "Address Line 1": "address",
-      "City": "city",
-      "State/Province/Region": "state",
-      "Country": "country",
-      "Postal/ZIP Code": "postalCode",
-      "Phone": "phone",
-      "Website": "website",
-      "Latitude": "latitude",
-      "Longitude": "longitude",
-      "Custom Brands": "TAG HEUER"
-    },
-    "notes": "Part of LVMH. Luxury sports watches."
-  },
-
-  "bulova_dealers": {
-    "type": "json",
-    "url": "https://www.bulova.com/api/dealer-locator?lat=40.7128&lng=-74.0060&radius=100",
-    "data_path": "dealers",
-    "description": "Bulova Authorized Dealers (Citizen Group) - 2000+ locations",
-    "field_mapping": {
-      "Handle": "dealerId",
-      "Name": "name",
-      "Address Line 1": "address",
-      "City": "city",
-      "State/Province/Region": "state",
-      "Country": "country",
-      "Postal/ZIP Code": "zip",
-      "Phone": "phone",
-      "Website": "website",
-      "Latitude": "lat",
-      "Longitude": "lng",
-      "Custom Brands": "BULOVA"
-    },
-    "notes": "Owned by Citizen. Classic American brand."
+      "Name": "data-title"
+    }
   }
 }
