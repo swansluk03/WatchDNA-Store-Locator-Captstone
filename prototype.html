@@ -215,6 +215,14 @@
           show = show && (String(row._type || 'retailer') === typeValue);
         }
 
+        // read checkbox state (lower in applyFilter)
+        const accessoryOnly = !!(document.getElementById('accessoryOnly') && document.getElementById('accessoryOnly').checked);
+
+        // enforce accessory-only if checked
+        if (accessoryOnly) {
+          show = show && (String(row._type || 'retailer') === 'accessory');
+        }
+
         if (show) clusterGroup.addLayer(marker);
       });
     }
