@@ -136,14 +136,20 @@
   }
 
   #storeCheckboxes input[type="checkbox"] {
-    accent-color: #007bff; /* standard blue */
+    accent-color: #007bff; /* bright blue */
     cursor: pointer;
+    margin-right: 6px;
   }
+
   #storeCheckboxes label {
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    padding: 2px 0;
   }
-  #storeCheckboxes input[type="checkbox"]:checked + span,
-  #storeCheckboxes input[type="checkbox"]:checked + label {
+
+  #storeCheckboxes input[type="checkbox"]:checked + label,
+  #storeCheckboxes input[type="checkbox"]:checked {
     color: #007bff;
     font-weight: 600;
   }
@@ -270,40 +276,55 @@
     }
 
 
-    function rebuildStoreCheckboxes(filteredRows) {
+    function rebuildStoreCheckboxes(rowsForList) {
+      // rowsForList should be the rows after applying non-checkbox filters
       const storeCheckboxesDiv = document.getElementById('storeCheckboxes');
+
+      // preserve which store names were checked before rebuild
       const prevChecked = new Set(
         Array.from(storeCheckboxesDiv.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value)
       );
+
       storeCheckboxesDiv.innerHTML = '';
-      const storeNames = [...new Set(filteredRows.map(r => r['Name']).filter(Boolean))].sort();
+
+      const storeNames = [...new Set(rowsForList.map(r => (r['Name'] || '').trim()).filter(Boolean))].sort();
 
       storeNames.forEach(name => {
+        // Use label > input + span so we can use sibling selector for styling text when checked
         const label = document.createElement('label');
-        label.style.display = 'block';
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.gap = '8px';
+        label.style.padding = '2px 0';
+
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.value = name;
+        cb.checked = prevChecked.has(name); // preserve previous checked state
         cb.addEventListener('change', () => applyFilter(document.getElementById('brandFilter').value));
+
+        const span = document.createElement('span');
+        span.textContent = name;
+        span.style.userSelect = 'none';
+
         label.appendChild(cb);
-        label.appendChild(document.createTextNode(' ' + name));
+        label.appendChild(span);
         storeCheckboxesDiv.appendChild(label);
       });
-}
+    }
+
     function applyFilter(brand) {
-      const filteredRows = [];
       clusterGroup.clearLayers();
+
       const brandValue = (brand || '').trim().toUpperCase();
       const typeValue = (document.getElementById('typeFilter').value || 'all');
-      const storeInput = (document.getElementById('storeFilter').value || '').trim();
-      const storeFilter = storeInput.toLowerCase();
+      const storeInput = (document.getElementById('storeFilter').value || '').trim().toLowerCase();
 
-      const checkedStores = Array.from(document.querySelectorAll('#storeCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value.toLowerCase());
-      allMarkers.forEach(({ row, marker }) => {
-        let show = true;
-        if (show) {
-          filteredRows.push(row);
-        }
+      // 1) Determine base set of rows that match the non-checkbox filters (brand/type/text)
+      const baseRows = [];
+      allMarkers.forEach(({ row }) => {
+        let passes = true;
+
         // brand filter
         if (brandValue) {
           const brands = (row['Custom Brands'] || '')
@@ -311,34 +332,51 @@
             .split(',')
             .map(s => s.trim())
             .filter(Boolean);
-          show = brands.includes(brandValue);
+          passes = brands.includes(brandValue);
         }
 
-        // store filter: support 'handle:XYZ' exact match, or substring match against Name
-        if (storeFilter) {
-          if (storeFilter.startsWith('handle:')) {
-            const h = storeFilter.split(':', 2)[1] || '';
-            show = show && (String(row['Handle'] || '') === h);
+        // store text search
+        if (passes && storeInput) {
+          if (storeInput.startsWith('handle:')) {
+            const h = storeInput.split(':', 2)[1] || '';
+            passes = (String(row['Handle'] || '') === h);
           } else {
-            show = show && ((String(row['Name'] || '') || '').toLowerCase().includes(storeFilter));
+            passes = (String(row['Name'] || '').toLowerCase().includes(storeInput));
           }
         }
 
-        // type filter: row._type is set at load time ("accessory" or "retailer")
-        if (typeValue && typeValue !== 'all') {
-          show = show && (String(row._type || 'retailer') === typeValue);
+        // type filter
+        if (passes && typeValue && typeValue !== 'all') {
+          passes = (String(row._type || 'retailer') === typeValue);
         }
 
-        // store checkbox filter
-        if (checkedStores.length > 0) {
-          show = show && checkedStores.includes((row['Name'] || '').toLowerCase());
-        }
+        if (passes) baseRows.push(row);
+      });
 
+      // 2) Rebuild the checkbox list from the baseRows (so checking boxes doesn't shrink the list)
+      rebuildStoreCheckboxes(baseRows);
+
+      // 3) Collect checked stores (case-sensitive compare to the values we put in the inputs)
+      const checkedStores = Array.from(document.querySelectorAll('#storeCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value.toLowerCase());
+
+      // 4) Now apply final filter (baseRows ∩ checkedStores if any checked, else baseRows)
+      // We'll show markers that are in baseRows and, if boxes are checked, whose name is in checkedStores.
+      // Build a Set for faster lookup.
+      const baseNameSet = new Set(baseRows.map(r => (r['Name'] || '').trim().toLowerCase()));
+
+      allMarkers.forEach(({ row, marker }) => {
+        const nameLower = (row['Name'] || '').trim().toLowerCase();
+        let show = baseNameSet.has(nameLower); // only show if it matched non-checkbox filters
+
+        if (show && checkedStores.length > 0) {
+          show = checkedStores.includes(nameLower);
+        }
 
         if (show) clusterGroup.addLayer(marker);
       });
-      rebuildStoreCheckboxes(filteredRows);
     }
+
+    // --- Near Me radius filter ---
 
     let radiusCircle = null;
 
