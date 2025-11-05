@@ -324,6 +324,35 @@
       });
     }
 
+    // Sync the "Filter by store" checkbox list with the rows that passed ALL filters
+    function syncStoreCheckboxes(filteredRows) {
+      const allowed = new Set(
+        filteredRows.map(r => (r['Name'] || '').trim().toLowerCase())
+    );
+
+     const q = (document.getElementById('storeFilter').value || '')
+              .trim().toLowerCase();
+      
+      // Walk all checkbox rows in the list
+      document.querySelectorAll('#storeCheckboxes label').forEach(label => {
+        const cb = label.querySelector('input[type="checkbox"]');
+        const name = (label.querySelector('span')?.textContent || cb.value || '')
+                   .trim().toLowerCase();
+
+        const inFiltered = allowed.has(name);
+
+        // Show/hide entries that are not part of the current filtered set
+        label.style.display = inFiltered ? '' : 'none';
+
+        // If a store text filter exists, auto-check matches; otherwise uncheck hidden
+        if (q) {
+          cb.checked = inFiltered && name.includes(q);
+        } else if (!inFiltered) {
+          cb.checked = false;
+        }
+      });
+    }
+
     function applyFilter(brand) {
       clusterGroup.clearLayers();
 
@@ -364,6 +393,8 @@
       });
 
       rebuildStoreCheckboxes(baseRows);
+      syncStoreCheckboxes(baseRows);
+
 
       const checkedStores = Array.from(document.querySelectorAll('#storeCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value.toLowerCase());
 
@@ -716,26 +747,11 @@
         // --- Sync checkboxes to match URL store filter ---
         if (INITIAL.store) {
           const filterValue = INITIAL.store.toLowerCase();
-          document.querySelectorAll('#storeList input[type="checkbox"]').forEach(cb => {
-            const label = cb.nextSibling?.textContent?.toLowerCase() || '';
+          document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => {
+            const label = cb.parentElement.querySelector('span')?.textContent?.toLowerCase() || '';
             cb.checked = label.includes(filterValue);
           });
         }
-
-        const storeCheckboxesDiv = document.getElementById('storeCheckboxes');
-        const storeNames = [...new Set(allRows.map(r => r['Name']).filter(Boolean))].sort();
-
-        storeNames.forEach(name => {
-          const label = document.createElement('label');
-          label.style.display = 'block';
-          const cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.value = name;
-          cb.addEventListener('change', () => applyFilter(document.getElementById('brandFilter').value));
-          label.appendChild(cb);
-          label.appendChild(document.createTextNode(' ' + name));
-          storeCheckboxesDiv.appendChild(label);
-        });
 
         const nearBtn = document.getElementById('nearMeBtn');
         if (nearBtn) nearBtn.addEventListener('click', locateAndJumpToNearest);
