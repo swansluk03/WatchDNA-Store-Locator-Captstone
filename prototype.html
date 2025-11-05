@@ -134,6 +134,19 @@
     border-top: 1px solid var(--border);
     background: var(--card);
   }
+
+  #storeCheckboxes input[type="checkbox"] {
+    accent-color: #007bff; /* standard blue */
+    cursor: pointer;
+  }
+  #storeCheckboxes label {
+    cursor: pointer;
+  }
+  #storeCheckboxes input[type="checkbox"]:checked + span,
+  #storeCheckboxes input[type="checkbox"]:checked + label {
+    color: #007bff;
+    font-weight: 600;
+  }
   </style>
 </head>
 <body> 
@@ -148,7 +161,9 @@
       </div>
     </div>
 
-    <button id="hamburger" aria-expanded="false" aria-controls="filtersPanel" title="Show filters">☰</button>
+    <button id="hamburger" aria-expanded="false" aria-controls="filtersPanel" title="Show filters">
+      ☰ Filter
+    </button>
     <div id="filtersPanel" class="filters-panel" hidden>
       <label for="brandFilter"><strong>Filter by brand:</strong></label>
       <select id="brandFilter">
@@ -505,6 +520,38 @@
         });
 
         map.addLayer(clusterGroup);
+
+        const NearMeControl = L.Control.extend({
+        options: { position: 'bottomright' },
+
+        onAdd: function(map) {
+          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
+          container.style.backgroundColor = 'white';
+          container.style.border = '1px solid #ccc';
+          container.style.borderRadius = '6px';
+          container.style.cursor = 'pointer';
+          container.style.boxShadow = '0 2px 6px rgba(0,0,0,0.2)';
+          container.style.padding = '6px 10px';
+          container.style.fontSize = '16px';
+          container.style.display = 'flex';
+          container.style.alignItems = 'center';
+          container.style.justifyContent = 'center';
+          container.title = 'Find stores near me';
+          container.innerHTML = '📍 Near Me';
+
+          // Prevent map from zooming when clicking the control
+          L.DomEvent.disableClickPropagation(container);
+
+          container.addEventListener('click', () => {
+            locateAndJumpToNearest();
+          });
+
+          return container;
+        }
+      });
+
+      map.addControl(new NearMeControl());
+
         if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
 
         // Building the sidebar list
@@ -544,6 +591,76 @@
           storeList.appendChild(item);
         });
 
+        const RadiusControl = L.Control.extend({
+        options: { position: 'bottomright' },
+
+        onAdd: function(map) {
+          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
+          container.style.backgroundColor = 'white';
+          container.style.border = '1px solid #ccc';
+          container.style.borderRadius = '6px';
+          container.style.boxShadow = '0 2px 6px rgba(0,0,0,0.2)';
+          container.style.padding = '8px';
+          container.style.display = 'flex';
+          container.style.flexDirection = 'column';
+          container.style.gap = '6px';
+          container.style.fontSize = '14px';
+          container.title = 'Show stores within a radius of your location';
+
+          // Prevent clicks from affecting map zoom/pan
+          L.DomEvent.disableClickPropagation(container);
+
+          // Radius dropdown
+          const select = L.DomUtil.create('select', '', container);
+          select.style.padding = '4px';
+          select.style.borderRadius = '4px';
+          select.style.border = '1px solid #ccc';
+          select.style.cursor = 'pointer';
+
+          [5, 10, 25, 50].forEach(mi => {
+            const opt = document.createElement('option');
+            opt.value = mi;
+            opt.textContent = `${mi} mi`;
+            if (mi === 10) opt.selected = true;
+            select.appendChild(opt);
+          });
+
+          // "Within radius" button
+          const button = L.DomUtil.create('button', '', container);
+          button.textContent = 'Within radius';
+          button.style.padding = '6px 8px';
+          button.style.border = '1px solid #ccc';
+          button.style.borderRadius = '4px';
+          button.style.cursor = 'pointer';
+          button.style.background = 'white';
+
+          // Click handler
+          button.addEventListener('click', () => {
+            const mi = parseFloat(select.value || '10');
+            const radiusMeters = mi * 1609.344;
+
+            if (!navigator.geolocation) {
+              setNearMeStatus('Geolocation not supported.');
+              return;
+            }
+
+            setNearMeStatus(`Locating...`);
+            navigator.geolocation.getCurrentPosition(
+              pos => {
+                const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+                showUserMarker(ll);
+                applyRadiusToCurrent(ll, radiusMeters);
+              },
+              () => setNearMeStatus('Unable to get location.'),
+              { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+            );
+          });
+
+          return container;
+        }
+      });
+
+      map.addControl(new RadiusControl());
         populateBrandSelect(brandSet);
         rebuildStoreCheckboxes(allRows);
 
