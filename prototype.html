@@ -481,16 +481,19 @@
       if (!best) { setNearMeStatus('No locations loaded.'); return; }
 
       nearestMarker = best.marker;
-      nearestMarker.setZIndexOffset(1000);
-      nearestLine = L.polyline([userLL, best.marker.getLatLng()], { weight: 3, dashArray: '6,6' }).addTo(map);
+      const row = best.row || getRowForMarker(nearestMarker);
 
+      nearestMarker.setZIndexOffset(1000);
+      nearestLine = L.polyline([userLL, nearestMarker.getLatLng()], { weight: 3, dashArray: '6,6' }).addTo(map);
+
+      const dist = map.distance(userLL, nearestMarker.getLatLng());
       const miles = (best.dist / 1609.344).toFixed(2);
       const km = (best.dist / 1000).toFixed(2);
       const b = L.latLngBounds([userLL, best.marker.getLatLng()]).pad(0.4);
       map.fitBounds(b);
 
-      setNearMeStatus(`Closest: ${(best.row['Name'] || 'Location')} — ${miles} mi / ${km} km`);
-      best.marker.openPopup();
+      setNearMeStatus(`Closest: ${(row['Name'] || 'Location')} — ${miles} mi / ${km} km`);
+      nearestMarker.openPopup();
     }
 
     function showUserMarker(ll) {
@@ -502,15 +505,45 @@
       L.circle(ll, { radius: 25, stroke: false, fillOpacity: 0.15 }).addTo(map);
     }
 
+    // Return the markers currently visible after applyFilter()
+    function getVisibleMarkers() {
+      return clusterGroup.getLayers(); // array of L.Marker
+    }
+
+    // Lookup the original row for a given marker
+    function getRowForMarker(marker) {
+      const rec = allMarkers.find(x => x.marker === marker);
+      return rec ? rec.row : {};
+    }
+
+    // Find the nearest marker among a given set (visible layers)
+    function findNearestAmong(targetLatLng, layers) {
+      let best = null; // { dist, marker }
+      layers.forEach(m => {
+        const d = map.distance(targetLatLng, m.getLatLng());
+        if (!best || d < best.dist) best = { dist: d, marker: m };
+      });
+      return best;
+    }
+
     function locateAndJumpToNearest() {
       if (!navigator.geolocation) { setNearMeStatus('Geolocation not supported.'); return; }
       setNearMeStatus('Locating…');
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          const ll = toLatLng(pos.coords.latitude, pos.coords.longitude);
-          showUserMarker(ll);
-          const best = findNearest(ll);
-          emphasizeNearest(ll, best);
+          const userLL = toLatLng(pos.coords.latitude, pos.coords.longitude);
+          showUserMarker(userLL);
+
+          // Ensure we're using the current filtered set (whatever UI is set to)
+          const brandValue = (document.getElementById('brandFilter').value || '');
+          applyFilter(brandValue); // keeps current type/store filters
+
+          const visible = getVisibleMarkers();
+          if (!visible.length) { setNearMeStatus('No locations match current filters.'); return; }
+
+          const best = findNearestAmong(userLL, visible);
+          // Include row for nicer status text
+          emphasizeNearest(userLL, { ...best, row: getRowForMarker(best.marker) });
         },
         (err) => {
           const m = {1:'Permission denied.',2:'Position unavailable.',3:'Request timed out.'};
