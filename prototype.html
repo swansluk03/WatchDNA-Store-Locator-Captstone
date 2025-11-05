@@ -233,6 +233,15 @@
       attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
     }).addTo(map);
 
+    // --- URL parameter helpers (CSV + initial filters) ---
+    const params = new URLSearchParams(window.location.search);
+    const INITIAL = {
+      brand: params.get('brand') || '',
+      type:  params.get('type')  || 'all',
+      store: params.get('store') || ''
+    };
+    console.log('[proto] initial filters:', INITIAL);
+
     // --- CSV loader (with cache-busting to avoid stale results) ---
     function loadCSV(path) {
       const url = `${path}?v=${Date.now()}`;
@@ -697,6 +706,21 @@
       map.addControl(new RadiusControl());
         populateBrandSelect(brandSet);
         rebuildStoreCheckboxes(allRows);
+
+        // Preload filters from URL, then apply once
+        document.getElementById('brandFilter').value = INITIAL.brand;
+        document.getElementById('typeFilter').value  = INITIAL.type;
+        document.getElementById('storeFilter').value = INITIAL.store;
+        applyFilter(INITIAL.brand);
+
+        // --- Sync checkboxes to match URL store filter ---
+        if (INITIAL.store) {
+          const filterValue = INITIAL.store.toLowerCase();
+          document.querySelectorAll('#storeList input[type="checkbox"]').forEach(cb => {
+            const label = cb.nextSibling?.textContent?.toLowerCase() || '';
+            cb.checked = label.includes(filterValue);
+          });
+        }
 
         const storeCheckboxesDiv = document.getElementById('storeCheckboxes');
         const storeNames = [...new Set(allRows.map(r => r['Name']).filter(Boolean))].sort();
