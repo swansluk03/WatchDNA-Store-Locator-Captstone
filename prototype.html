@@ -153,8 +153,9 @@
       </select>
       <label for="storeFilter" style="margin-left:12px"><strong>Filter by store:</strong></label>
       <input id="storeFilter" type="search" placeholder="Store name or handle (handle:asu-test)" style="padding:8px; min-width:260px;" />
-      <label for="accessoryOnly" style="margin-left:12px"><strong>Accessories only</strong></label>
-      <input id="accessoryOnly" type="checkbox" title="Show only accessory locations" style="width:18px; height:18px;" />
+      <div id="storeCheckboxes" style="margin-top:10px; max-height:200px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px;">
+        <!-- Store name checkboxes -->
+      </div>      
       <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
         <button id="nearMeBtn" title="Share your location to find the closest store" style="padding:8px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer;">
           📍 Near me
@@ -249,6 +250,7 @@
       const storeInput = (document.getElementById('storeFilter').value || '').trim();
       const storeFilter = storeInput.toLowerCase();
 
+      const checkedStores = Array.from(document.querySelectorAll('#storeCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value.toLowerCase());
       allMarkers.forEach(({ row, marker }) => {
         let show = true;
 
@@ -277,13 +279,11 @@
           show = show && (String(row._type || 'retailer') === typeValue);
         }
 
-        // read checkbox state (lower in applyFilter)
-        const accessoryOnly = !!(document.getElementById('accessoryOnly') && document.getElementById('accessoryOnly').checked);
-
-        // enforce accessory-only if checked
-        if (accessoryOnly) {
-          show = show && (String(row._type || 'retailer') === 'accessory');
+        // store checkbox filter
+        if (checkedStores.length > 0) {
+          show = show && checkedStores.includes((row['Name'] || '').toLowerCase());
         }
+
 
         if (show) clusterGroup.addLayer(marker);
       });
@@ -499,6 +499,22 @@
         });
 
         populateBrandSelect(brandSet);
+
+        const storeCheckboxesDiv = document.getElementById('storeCheckboxes');
+        const storeNames = [...new Set(allRows.map(r => r['Name']).filter(Boolean))].sort();
+
+        storeNames.forEach(name => {
+          const label = document.createElement('label');
+          label.style.display = 'block';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.value = name;
+          cb.addEventListener('change', () => applyFilter(document.getElementById('brandFilter').value));
+          label.appendChild(cb);
+          label.appendChild(document.createTextNode(' ' + name));
+          storeCheckboxesDiv.appendChild(label);
+        });
+
         const nearBtn = document.getElementById('nearMeBtn');
         if (nearBtn) nearBtn.addEventListener('click', locateAndJumpToNearest);
 
