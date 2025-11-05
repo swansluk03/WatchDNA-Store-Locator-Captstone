@@ -42,7 +42,7 @@
     body { display: flex; }
     header {
       box-sizing: border-box;
-      width: 320px; /* width of the left control bar */
+      width: 400px; /* width of the left control bar */
       min-width: 240px;
       height: 100vh;
       position: fixed;
@@ -58,7 +58,7 @@
     }
     #brandFilter { padding: 8px; min-width: 160px; width:100%; }
     /* push the map to the right so it doesn't sit underneath the fixed left bar */
-    #map { margin-left: 320px; width: calc(100% - 320px); height: 100vh; }
+    #map { margin-left: 400px; width: calc(100% - 400px); height: 100vh; }
     .popup { font-size: 1.05rem; line-height: 1.35; }
    
    #filtersPanel[hidden] { display: none !important; }
@@ -82,10 +82,41 @@
       border: 1px solid var(--border); padding: 8px 12px; border-radius: 8px;
       box-shadow: 0 2px 6px rgba(0,0,0,.06); z-index: 1000;
     }
+  #top {
+    /* This is for making the border-bottom span the entire width of the sidebar */
+    margin-left: -18px;
+    margin-right: -18px;
+    border-bottom: 1px solid var(--border);
+  }
+  #top #inner {
+    /* This allows the text within the top div to maintain the same padding as the rest of the sidebar */
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  #footer {
+    /* This fixes the footer div to the bottom of the sidebar */
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 18px;
+    box-sizing: border-box;
+    border-top: 1px solid var(--border);
+  }
   </style>
 </head>
 <body> 
 <header>
+  
+    <div id="top">
+      <div id="inner">
+        <h2>WatchDNA's Network | Find jewellers in your area</h2>
+        <p>As your trusted directory for brands and authorized dealers, we make it easy to find and reach out to
+        Authorized Dealers. (Please note that only select authorized dealers will be featured under our brand filters.)
+        </p>
+      </div>
+    </div>
+
     <button id="hamburger" aria-expanded="false" aria-controls="filtersPanel" title="Show filters">☰</button>
     <div id="filtersPanel" class="filters-panel" hidden>
       <label for="brandFilter"><strong>Filter by brand:</strong></label>
@@ -121,6 +152,11 @@
           </button>
       </div>
     </div>
+
+    <div id="footer">
+      <a href="https://watchdna.com/tools/storelocator/directory">Store Directory</a>
+    </div>
+
   </header>
 
   <div id="map"></div>
