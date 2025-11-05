@@ -55,6 +55,15 @@
       background: var(--card);
       border-right: 1px solid var(--border);
       z-index: 1002;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    header::-webkit-scrollbar {
+      width: 8px;
+    }
+    header::-webkit-scrollbar-thumb {
+      background-color: rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
     }
     #brandFilter { padding: 8px; min-width: 160px; width:100%; }
     /* push the map to the right so it doesn't sit underneath the fixed left bar */
@@ -149,10 +158,12 @@
       <select id="typeFilter" style="padding:8px;">
         <option value="all">All</option>
         <option value="retailer">Retailers</option>
-        <option value="accessory">Accessories</option>
+        <option value="boutique">Boutiques</option>
+        <option value="mall location">Mall Locations</option>
+        <option value="other">Other</option>
       </select>
       <label for="storeFilter" style="margin-left:12px"><strong>Filter by store:</strong></label>
-      <input id="storeFilter" type="search" placeholder="Store name or handle (handle:asu-test)" style="padding:8px; min-width:260px;" />
+      <input id="storeFilter" type="search" placeholder="Search By Store Name" style="padding:8px; min-width:260px;" />
       <div id="storeCheckboxes" style="margin-top:10px; max-height:200px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px;">
         <!-- Store name checkboxes -->
       </div>      
@@ -243,7 +254,29 @@
       return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}</div>`;
     }
 
+
+    function rebuildStoreCheckboxes(filteredRows) {
+      const storeCheckboxesDiv = document.getElementById('storeCheckboxes');
+      const prevChecked = new Set(
+        Array.from(storeCheckboxesDiv.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value)
+      );
+      storeCheckboxesDiv.innerHTML = '';
+      const storeNames = [...new Set(filteredRows.map(r => r['Name']).filter(Boolean))].sort();
+
+      storeNames.forEach(name => {
+        const label = document.createElement('label');
+        label.style.display = 'block';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = name;
+        cb.addEventListener('change', () => applyFilter(document.getElementById('brandFilter').value));
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(' ' + name));
+        storeCheckboxesDiv.appendChild(label);
+      });
+}
     function applyFilter(brand) {
+      const filteredRows = [];
       clusterGroup.clearLayers();
       const brandValue = (brand || '').trim().toUpperCase();
       const typeValue = (document.getElementById('typeFilter').value || 'all');
@@ -253,7 +286,9 @@
       const checkedStores = Array.from(document.querySelectorAll('#storeCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value.toLowerCase());
       allMarkers.forEach(({ row, marker }) => {
         let show = true;
-
+        if (show) {
+          filteredRows.push(row);
+        }
         // brand filter
         if (brandValue) {
           const brands = (row['Custom Brands'] || '')
@@ -287,6 +322,7 @@
 
         if (show) clusterGroup.addLayer(marker);
       });
+      rebuildStoreCheckboxes(filteredRows);
     }
 
     let radiusCircle = null;
@@ -436,10 +472,20 @@
           // classify row as 'accessory' or 'retailer' using simple heuristics
           // - if any descriptive field contains the word 'accessor' treat as accessory
           // - otherwise default to retailer
-          const descFields = [row['Name'], row['Page Description'], row['Page Title'], row['Meta Description'], row['Tags'], row['Custom Brands']].filter(Boolean).join('\n');
-          const descLower = String(descFields).toLowerCase();
-          row._type = /accessor/.test(descLower) || /accessories/.test(descLower) ? 'accessory' : 'retailer';
+          const descFields = [row['Name'], row['Page Description'], row['Page Title'], row['Meta Description'], row['Tags'], row['Custom Brands']]
+            .filter(Boolean)
+            .join('\n')
+            .toLowerCase();
 
+          if (/boutique/.test(descFields)) {
+            row._type = 'boutique';
+          } else if (/mall|shopping center|plaza/.test(descFields)) {
+            row._type = 'mall location';
+          } else if (/authorized dealer|retailer|store/.test(descFields)) {
+            row._type = 'retailer';
+          } else {
+            row._type = 'other';
+          }
           const lat = parseFloat(String(row.Latitude).trim());
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
@@ -499,6 +545,7 @@
         });
 
         populateBrandSelect(brandSet);
+        rebuildStoreCheckboxes(allRows);
 
         const storeCheckboxesDiv = document.getElementById('storeCheckboxes');
         const storeNames = [...new Set(allRows.map(r => r['Name']).filter(Boolean))].sort();
