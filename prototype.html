@@ -213,7 +213,7 @@
     </div>
 
     <div id="footer">
-      <a href="https://watchdna.com/tools/storelocator/directory">Store Directory</a>
+      <a href="https://watchdna.com/tools/storelocator/directory" style="position: fixed; bottom: 0; left: 0; width: 100%;">Store Directory</a>
     </div>
 
   </header>
@@ -290,7 +290,6 @@
       const storeNames = [...new Set(rowsForList.map(r => (r['Name'] || '').trim()).filter(Boolean))].sort();
 
       storeNames.forEach(name => {
-        // Use label > input + span so we can use sibling selector for styling text when checked
         const label = document.createElement('label');
         label.style.display = 'flex';
         label.style.alignItems = 'center';
@@ -320,7 +319,6 @@
       const typeValue = (document.getElementById('typeFilter').value || 'all');
       const storeInput = (document.getElementById('storeFilter').value || '').trim().toLowerCase();
 
-      // 1) Determine base set of rows that match the non-checkbox filters (brand/type/text)
       const baseRows = [];
       allMarkers.forEach(({ row }) => {
         let passes = true;
@@ -353,15 +351,10 @@
         if (passes) baseRows.push(row);
       });
 
-      // 2) Rebuild the checkbox list from the baseRows (so checking boxes doesn't shrink the list)
       rebuildStoreCheckboxes(baseRows);
 
-      // 3) Collect checked stores (case-sensitive compare to the values we put in the inputs)
       const checkedStores = Array.from(document.querySelectorAll('#storeCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value.toLowerCase());
 
-      // 4) Now apply final filter (baseRows ∩ checkedStores if any checked, else baseRows)
-      // We'll show markers that are in baseRows and, if boxes are checked, whose name is in checkedStores.
-      // Build a Set for faster lookup.
       const baseNameSet = new Set(baseRows.map(r => (r['Name'] || '').trim().toLowerCase()));
 
       allMarkers.forEach(({ row, marker }) => {
