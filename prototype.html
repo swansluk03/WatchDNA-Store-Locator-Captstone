@@ -93,15 +93,37 @@
     padding-left: 18px;
     padding-right: 18px;
   }
+  #storeListContainer {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    width: 100%;
+    box-sizing: border-box;
+    padding-bottom: 0.5rem;
+  }
+  .store {
+    /* Will change colors if necessary */
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    transition: background-color 0.2s, box-shadow 0.2s;
+  }
+  .store:hover {
+    background-color: #f0f8ff;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  }
   #footer {
     /* This fixes the footer div to the bottom of the sidebar */
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    flex: none;
+    width: calc(100% + 36px);
+    margin-left: -18px;
     padding: 18px;
     box-sizing: border-box;
     border-top: 1px solid var(--border);
+    background: var(--card);
   }
   </style>
 </head>
@@ -151,6 +173,10 @@
           Within radius
           </button>
       </div>
+    </div>
+
+    <div id="storeListContainer">
+      <div id="storeListings"></div>
     </div>
 
     <div id="footer">
@@ -434,6 +460,43 @@
 
         map.addLayer(clusterGroup);
         if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
+
+        // Building the sidebar list
+        const storeList = document.getElementById('storeListings');
+        storeList.innerHTML = '';
+
+        allMarkers.forEach(({ row, marker }) => {
+          const item = document.createElement('div');
+          item.className = 'store';
+
+          const addressLine = row['Address Line 1'] || '';
+
+          const locationParts = [
+            row['City'],
+            row['State/Province/Region'],
+            row['Country']
+          ].filter(Boolean); // Will remove undefined or empty strings (mainly for locations that don't have a State/Province/Region)
+
+          // Join the pieces of the address with commas
+          const locationLine = locationParts.join(', ');
+
+          item.innerHTML = `
+          <strong>${row['Name'] || 'Unamed'}</strong><br>
+          ${addressLine}<br>
+          ${locationLine}
+          `;
+
+          item.addEventListener('click', () => {
+            // Pan to location on map and open its associated popup
+            // two lines to add lat and lon to variables but within this function there are already those so just going to use those
+            const latitude = parseFloat(row.Latitude);
+            const longitude = parseFloat(row.Longitude);
+            map.setView([latitude, longitude], 14);
+            marker.openPopup();
+          });
+
+          storeList.appendChild(item);
+        });
 
         populateBrandSelect(brandSet);
         const nearBtn = document.getElementById('nearMeBtn');
