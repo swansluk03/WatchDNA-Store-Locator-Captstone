@@ -29,7 +29,7 @@ export class ValidationService {
   private validatorScriptPath: string;
 
   constructor() {
-    this.pythonPath = process.env.PYTHON_PATH || 'python';
+    this.pythonPath = process.env.PYTHON_PATH || 'python3';
     // Path to validate_csv.py in tools folder
     this.validatorScriptPath = path.join(
       __dirname,
@@ -113,7 +113,7 @@ export class ValidationService {
         }
       });
 
-      process.on('error', (err) => {
+      childProcess.on('error', (err) => {
         console.error('Failed to start validation process:', err);
         reject(new Error(`Failed to start validation: ${err.message}`));
       });
