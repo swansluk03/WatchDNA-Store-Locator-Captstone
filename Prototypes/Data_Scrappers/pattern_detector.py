@@ -426,6 +426,16 @@ def detect_data_pattern(url: str, sample_response: Any) -> Dict[str, Any]:
     
     if not samples:
         pattern["recommendations"].append("❌ Could not extract sample data - check data_path")
+        # Initialize mapping_score with default values to prevent KeyError
+        pattern["mapping_score"] = {
+            "total_score": 0.0,
+            "has_required": [],
+            "missing_required": ["Name", "Address Line 1", "City"],
+            "has_recommended": [],
+            "missing_recommended": [],
+            "confidence": "unknown",
+            "confidence_percentage": 0.0
+        }
         return pattern
     
     # Detect coordinate format

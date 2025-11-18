@@ -160,6 +160,15 @@ def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]
     # Determine best match
     if scores:
         best = max(scores.items(), key=lambda x: x[1]["score"])
+        
+        # Override: If offset parameter exists, prioritize paginated over city_search
+        # (offset is a strong indicator of pagination)
+        if "offset" in result["url_params"] and best[0] == "city_search" and "paginated" in scores:
+            paginated_score = scores["paginated"]["score"]
+            # If paginated has any score, prefer it when offset is present
+            if paginated_score > 0:
+                best = ("paginated", scores["paginated"])
+        
         result["detected_type"] = best[0]
         result["confidence"] = min(best[1]["score"] / 2.0, 1.0)
         result["matched_indicators"] = best[1]["matched"]
@@ -182,6 +191,17 @@ def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]
     if sample_response:
         response_analysis = analyze_response_clues(sample_response)
         result.update(response_analysis)
+        
+        # Check for token-based pagination (pageToken in response)
+        if isinstance(sample_response, dict) and "pageToken" in sample_response:
+            result["has_token_pagination"] = True
+            result["pagination_type"] = "token"
+        elif isinstance(sample_response, dict) and any("token" in str(k).lower() for k in sample_response.keys()):
+            result["has_token_pagination"] = True
+            result["pagination_type"] = "token"
+        else:
+            result["has_token_pagination"] = False
+            result["pagination_type"] = "page_number"
     
     # Get estimates
     estimates = get_scraping_estimates(result["detected_type"])

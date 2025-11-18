@@ -8,6 +8,7 @@ export interface Brand {
   description: string;
   method?: string;
   enabled?: boolean;
+  isViewportBased?: boolean;
 }
 
 export interface ScraperJob {

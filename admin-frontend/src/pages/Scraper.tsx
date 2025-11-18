@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { scraperService, type Brand, type ScraperJob, type ScraperStats } from '../services/scraper.service';
 import '../styles/Scraper.css';
@@ -20,12 +20,26 @@ const Scraper: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('');
 
+  const loadJobs = useCallback(async () => {
+    try {
+      const params = filterStatus ? { status: filterStatus } : {};
+      const { jobs: jobsData } = await scraperService.listJobs(params);
+      setJobs(jobsData);
+    } catch (err) {
+      console.error('Failed to load jobs:', err);
+    }
+  }, [filterStatus]);
+
   useEffect(() => {
     loadData();
-    // Refresh jobs every 5 seconds
+  }, []);
+
+  // Refresh jobs when filter changes or every 5 seconds
+  useEffect(() => {
+    loadJobs();
     const interval = setInterval(loadJobs, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [loadJobs]);
 
   const loadData = async () => {
     setLoading(true);
@@ -41,16 +55,6 @@ const Scraper: React.FC = () => {
       setError(err.response?.data?.error || 'Failed to load data');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadJobs = async () => {
-    try {
-      const params = filterStatus ? { status: filterStatus } : {};
-      const { jobs: jobsData } = await scraperService.listJobs(params);
-      setJobs(jobsData);
-    } catch (err) {
-      console.error('Failed to load jobs:', err);
     }
   };
 
@@ -71,7 +75,7 @@ const Scraper: React.FC = () => {
 
     try {
       await scraperService.createJob({
-        brandName: selectedBrand.name,
+        brandName: selectedBrand.id, // Use ID (e.g., "omega_stores") not formatted name
         url,
         region,
       });
@@ -127,13 +131,48 @@ const Scraper: React.FC = () => {
 
     try {
       const logsData = await scraperService.getJobLogs(jobId);
-      setSelectedJobLogs(logsData.logs);
+      setSelectedJobLogs(logsData.logs || 'No logs available');
     } catch (err: any) {
       setSelectedJobLogs(`Error loading logs: ${err.response?.data?.error || err.message}`);
     } finally {
       setLoadingLogs(false);
     }
   };
+
+  // Auto-refresh logs for running jobs
+  useEffect(() => {
+    if (!showLogsModal || !selectedJobId) return;
+
+    const loadLogs = async () => {
+      try {
+        const logsData = await scraperService.getJobLogs(selectedJobId);
+        setSelectedJobLogs(logsData.logs || 'No logs available');
+        
+        // Stop refreshing if job is completed or failed
+        if (logsData.status !== 'running' && logsData.status !== 'queued') {
+          return false;
+        }
+        return true; // Continue refreshing
+      } catch (err: any) {
+        console.error('Error loading logs:', err);
+        return false; // Stop on error
+      }
+    };
+
+    // Initial load
+    loadLogs();
+
+    // Set up auto-refresh for running jobs
+    const refreshInterval = setInterval(async () => {
+      const shouldContinue = await loadLogs();
+      if (!shouldContinue) {
+        clearInterval(refreshInterval);
+      }
+    }, 1000); // Refresh every 1 second for better real-time viewing
+
+    // Cleanup interval when modal closes or component unmounts
+    return () => clearInterval(refreshInterval);
+  }, [showLogsModal, selectedJobId]);
 
   const getStatusBadge = (status: string) => {
     const badges: { [key: string]: string } = {
@@ -208,7 +247,6 @@ const Scraper: React.FC = () => {
               value={filterStatus} 
               onChange={(e) => {
                 setFilterStatus(e.target.value);
-                setTimeout(loadJobs, 0);
               }}
               className="filter-select"
             >
@@ -347,19 +385,25 @@ const Scraper: React.FC = () => {
                     </small>
                   </div>
 
-                  <div className="form-group">
-                    <label>Region</label>
-                    <select
-                      value={region}
-                      onChange={(e) => setRegion(e.target.value)}
-                      className="form-control"
-                    >
-                      <option value="world">Worldwide</option>
-                      <option value="north_america">North America</option>
-                      <option value="europe">Europe</option>
-                      <option value="asia">Asia</option>
-                    </select>
-                  </div>
+                  {/* Only show region selector for viewport-based scraping */}
+                  {selectedBrand.isViewportBased && (
+                    <div className="form-group">
+                      <label>Region</label>
+                      <select
+                        value={region}
+                        onChange={(e) => setRegion(e.target.value)}
+                        className="form-control"
+                      >
+                        <option value="world">Worldwide</option>
+                        <option value="north_america">North America</option>
+                        <option value="europe">Europe</option>
+                        <option value="asia">Asia</option>
+                      </select>
+                      <small className="form-hint">
+                        Region selection affects viewport-based scraping only
+                      </small>
+                    </div>
+                  )}
 
                   <div className="info-box">
                     <strong>Type:</strong> {selectedBrand.type}<br />
@@ -409,14 +453,30 @@ const Scraper: React.FC = () => {
               {loadingLogs ? (
                 <div className="loading">Loading logs...</div>
               ) : (
-                <pre className="logs-container">{selectedJobLogs}</pre>
+                <pre className="logs-container" style={{ 
+                  maxHeight: '70vh', 
+                  overflow: 'auto',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontSize: '12px',
+                  fontFamily: 'monospace',
+                  backgroundColor: '#1e1e1e',
+                  color: '#d4d4d4',
+                  padding: '1rem',
+                  borderRadius: '4px'
+                }}>
+                  {selectedJobLogs || 'No logs available'}
+                </pre>
               )}
             </div>
 
             <div className="modal-footer">
               <button
                 className="btn btn-secondary"
-                onClick={() => setShowLogsModal(false)}
+                onClick={() => {
+                  setShowLogsModal(false);
+                  setSelectedJobLogs('');
+                }}
               >
                 Close
               </button>

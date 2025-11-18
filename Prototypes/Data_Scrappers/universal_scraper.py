@@ -45,27 +45,93 @@ from data_normalizer import batch_normalize, write_normalized_csv
 from validate_csv import validate_csv
 
 
-def fetch_data(url: str) -> Any:
-    """Fetch data from URL"""
+def fetch_data(url: str, headers: Dict = None, timeout: int = 120, retries: int = 3) -> Any:
+    """
+    Fetch data from URL with retry logic and configurable timeout
+    
+    Args:
+        url: URL to fetch
+        headers: Optional custom headers
+        timeout: Request timeout in seconds (default: 120)
+        retries: Number of retry attempts (default: 3)
+    
+    Returns:
+        Parsed JSON data or HTML/text content
+    """
     import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    
     log_debug(f"Fetching data from: {url[:100]}...", "DEBUG")
     start_time = time.time()
     
-    response = requests.get(url, timeout=30, headers={
+    # Default headers
+    default_headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    })
-    response.raise_for_status()
+    }
     
-    elapsed = time.time() - start_time
-    log_debug(f"Response received: {response.status_code} | Size: {len(response.content)} bytes | Time: {elapsed:.2f}s", "DEBUG")
+    # Merge with custom headers if provided
+    if headers:
+        default_headers.update(headers)
     
-    try:
-        data = response.json()
-        log_debug(f"Response type: JSON | Top-level keys: {list(data.keys()) if isinstance(data, dict) else 'array'}", "DEBUG")
-        return data
-    except:
-        log_debug(f"Response type: HTML/Text | Length: {len(response.text)} chars", "DEBUG")
-        return response.text
+    # Create session with retry strategy
+    session = requests.Session()
+    
+    # Configure retry strategy
+    retry_strategy = Retry(
+        total=retries,
+        backoff_factor=2,  # Wait 2, 4, 8 seconds between retries
+        status_forcelist=[429, 500, 502, 503, 504],  # Retry on these status codes
+        allowed_methods=["GET", "HEAD"]  # Only retry safe methods
+    )
+    
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    # Attempt request with retries
+    last_error = None
+    for attempt in range(retries + 1):
+        try:
+            if attempt > 0:
+                wait_time = 2 ** attempt  # Exponential backoff: 2, 4, 8 seconds
+                log_debug(f"Retry attempt {attempt}/{retries} after {wait_time}s...", "WARN")
+                time.sleep(wait_time)
+            
+            response = session.get(url, timeout=timeout, headers=default_headers)
+            response.raise_for_status()
+            
+            elapsed = time.time() - start_time
+            log_debug(f"Response received: {response.status_code} | Size: {len(response.content)} bytes | Time: {elapsed:.2f}s", "DEBUG")
+            
+            try:
+                data = response.json()
+                log_debug(f"Response type: JSON | Top-level keys: {list(data.keys()) if isinstance(data, dict) else 'array'}", "DEBUG")
+                return data
+            except:
+                log_debug(f"Response type: HTML/Text | Length: {len(response.text)} chars", "DEBUG")
+                return response.text
+                
+        except requests.exceptions.Timeout as e:
+            last_error = e
+            if attempt < retries:
+                log_debug(f"Request timed out after {timeout}s (attempt {attempt + 1}/{retries + 1})", "WARN")
+                continue
+            else:
+                log_debug(f"Request timed out after {retries + 1} attempts", "ERROR")
+                raise
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            if attempt < retries:
+                log_debug(f"Request failed: {str(e)[:100]} (attempt {attempt + 1}/{retries + 1})", "WARN")
+                continue
+            else:
+                raise
+    
+    # If we get here, all retries failed
+    if last_error:
+        raise last_error
+    raise Exception("Failed to fetch data after all retries")
 
 
 def extract_stores_from_html_js(html_content: str) -> List[Dict]:
@@ -107,17 +173,33 @@ def extract_stores_from_html_js(html_content: str) -> List[Dict]:
             if field_match:
                 store[field] = field_match.group(1)
         
-        stores.append(store)
+        # Map to canonical field names that the normalizer expects
+        normalized_store = {
+            'Name': store.get('name', ''),
+            'City': store.get('cityName', ''),
+            'Country': store.get('countryName', ''),
+            'Latitude': store.get('latitude', ''),
+            'Longitude': store.get('longitude', ''),
+            'Address Line 1': store.get('streetAddress') or store.get('address') or store.get('adr', ''),
+            'Postal/ZIP Code': store.get('postalCode') or store.get('zipcode', ''),
+            'State/Province/Region': store.get('stateName', ''),
+            'Phone': store.get('phone', ''),
+            'Email': store.get('email', ''),
+            'Website': store.get('websiteUrl', ''),
+            'Handle': store.get('id', ''),
+        }
+        
+        stores.append(normalized_store)
     
     return stores
 
 
-def scrape_single_call(url: str) -> List[Dict]:
+def scrape_single_call(url: str, custom_headers: Dict = None) -> List[Dict]:
     """Scrape from single endpoint - handles both JSON and HTML"""
     print("📡 Fetching stores...")
     log_debug("Starting single-call scrape strategy", "DEBUG")
     
-    data = fetch_data(url)
+    data = fetch_data(url, headers=custom_headers)
     
     # Try JSON first
     if isinstance(data, (list, dict)):
@@ -125,9 +207,27 @@ def scrape_single_call(url: str) -> List[Dict]:
             log_debug(f"Data is array | Length: {len(data)}", "DEBUG")
             return data
         
-        # Find data array in dict
+        # Find data array in dict (support nested paths like response.entities)
         log_debug(f"Data is object | Searching for store array in keys: {list(data.keys())}", "DEBUG")
-        for key in ["data", "results", "items", "stores", "locations", "dealers", "retailers"]:
+        
+        # Try nested paths first (e.g., response.entities)
+        nested_paths = ["response.entities", "response.data", "response.results", 
+                       "response.stores", "data.stores", "data.results"]
+        for path in nested_paths:
+            keys = path.split('.')
+            value = data
+            for k in keys:
+                if isinstance(value, dict) and k in value:
+                    value = value[k]
+                else:
+                    break
+            else:
+                if isinstance(value, list):
+                    log_debug(f"Found stores array in nested path '{path}' | Length: {len(value)}", "SUCCESS")
+                    return value
+        
+        # Try direct keys
+        for key in ["entities", "data", "results", "items", "stores", "locations", "dealers", "retailers"]:
             if key in data and isinstance(data[key], list):
                 log_debug(f"Found stores array in key '{key}' | Length: {len(data[key])}", "SUCCESS")
                 return data[key]
@@ -138,6 +238,231 @@ def scrape_single_call(url: str) -> List[Dict]:
     # Try HTML with JS
     log_debug("Attempting HTML/JavaScript extraction", "DEBUG")
     return extract_stores_from_html_js(data)
+
+
+def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", custom_headers: Dict = None) -> List[Dict]:
+    """Expand radius-based API using multiple center points worldwide"""
+    import requests
+    
+    print(f"🌍 Radius-based API detected - expanding to {region} using multiple center points")
+    
+    # Major cities worldwide for maximum coverage
+    # These are strategically placed to cover all continents and ensure complete coverage
+    major_cities = [
+        # Europe (expanded for better coverage)
+        ("Paris", 48.8566, 2.3522),
+        ("London", 51.5074, -0.1278),
+        ("Berlin", 52.5200, 13.4050),
+        ("Madrid", 40.4168, -3.7038),
+        ("Rome", 41.9028, 12.4964),
+        ("Amsterdam", 52.3676, 4.9041),
+        ("Vienna", 48.2082, 16.3738),
+        ("Zurich", 47.3769, 8.5417),
+        ("Moscow", 55.7558, 37.6173),
+        ("Stockholm", 59.3293, 18.0686),
+        ("Copenhagen", 55.6761, 12.5683),
+        ("Warsaw", 52.2297, 21.0122),
+        ("Prague", 50.0755, 14.4378),
+        ("Athens", 37.9838, 23.7275),
+        ("Lisbon", 38.7223, -9.1393),
+        ("Dublin", 53.3498, -6.2603),
+        ("Brussels", 50.8503, 4.3517),
+        ("Oslo", 59.9139, 10.7522),
+        ("Helsinki", 60.1699, 24.9384),
+        
+        # Americas (expanded for better coverage)
+        ("New York", 40.7128, -74.0060),
+        ("Los Angeles", 34.0522, -118.2437),
+        ("Chicago", 41.8781, -87.6298),
+        ("San Francisco", 37.7749, -122.4194),
+        ("Houston", 29.7604, -95.3698),
+        ("Toronto", 43.6532, -79.3832),
+        ("Vancouver", 49.2827, -123.1207),
+        ("Mexico City", 19.4326, -99.1332),
+        ("São Paulo", -23.5505, -46.6333),
+        ("Rio de Janeiro", -22.9068, -43.1729),
+        ("Buenos Aires", -34.6037, -58.3816),
+        ("Miami", 25.7617, -80.1918),
+        ("Bogotá", 4.7110, -74.0721),
+        ("Lima", -12.0464, -77.0428),
+        ("Santiago", -33.4489, -70.6693),
+        
+        # Asia-Pacific (expanded for better coverage)
+        ("Tokyo", 35.6762, 139.6503),
+        ("Shanghai", 31.2304, 121.4737),
+        ("Beijing", 39.9042, 116.4074),
+        ("Hong Kong", 22.3193, 114.1694),
+        ("Singapore", 1.3521, 103.8198),
+        ("Bangkok", 13.7563, 100.5018),
+        ("Kuala Lumpur", 3.1390, 101.6869),
+        ("Jakarta", -6.2088, 106.8456),
+        ("Manila", 14.5995, 120.9842),
+        ("Mumbai", 19.0760, 72.8777),
+        ("Delhi", 28.6139, 77.2090),
+        ("Bangalore", 12.9716, 77.5946),
+        ("Dubai", 25.2048, 55.2708),
+        ("Sydney", -33.8688, 151.2093),
+        ("Melbourne", -37.8136, 144.9631),
+        ("Seoul", 37.5665, 126.9780),
+        ("Taipei", 25.0330, 121.5654),
+        
+        # Middle East & Africa (expanded)
+        ("Riyadh", 24.7136, 46.6753),
+        ("Jeddah", 21.4858, 39.1925),
+        ("Cairo", 30.0444, 31.2357),
+        ("Johannesburg", -26.2041, 28.0473),
+        ("Cape Town", -33.9249, 18.4241),
+        ("Lagos", 6.5244, 3.3792),
+        ("Nairobi", -1.2921, 36.8219),
+        ("Tel Aviv", 32.0853, 34.7818),
+        ("Istanbul", 41.0082, 28.9784),
+    ]
+    
+    # Filter by region if specified
+    if region == "north_america":
+        major_cities = [c for c in major_cities if c[0] in ["New York", "Los Angeles", "Chicago", "Toronto", "Miami", "Mexico City"]]
+    elif region == "europe":
+        major_cities = [c for c in major_cities if c[0] in ["Paris", "London", "Berlin", "Madrid", "Rome", "Amsterdam", "Vienna", "Zurich", "Moscow"]]
+    elif region == "asia":
+        major_cities = [c for c in major_cities if c[0] in ["Tokyo", "Shanghai", "Hong Kong", "Singapore", "Bangkok", "Mumbai", "Dubai", "Seoul", "Taipei"]]
+    
+    # Extract radius and other params
+    radius = url_params.get('r', '2000')  # Default 2000km
+    per = url_params.get('per', '50')  # API supports max 50 per page
+    lang = url_params.get('l', 'en')
+    
+    # Remove center point params (q) and pagination params (offset) - we'll add our own
+    base_params = {k: v for k, v in url_params.items() 
+                   if k not in ['q', 'offset', 'qp']}
+    
+    all_stores = []
+    seen_ids = set()
+    
+    print(f"   Using {len(major_cities)} center points with radius={radius}km")
+    print(f"   Starting multi-point radius expansion...")
+    
+    for i, (city_name, lat, lng) in enumerate(major_cities, 1):
+        print(f"   [{i}/{len(major_cities)}] {city_name}...", end=" ", flush=True)
+        
+        # Fetch all pages from this center point
+        offset = 0
+        page = 1
+        stores_from_city = []
+        
+        while True:
+            params = base_params.copy()
+            params['q'] = f"{lat},{lng}"
+            params['r'] = radius
+            params['per'] = per
+            params['offset'] = str(offset)
+            if lang:
+                params['l'] = lang
+            
+            try:
+                response = requests.get(url.split('?')[0], params=params, timeout=15, headers=custom_headers or {})
+                response.raise_for_status()
+                data = response.json()
+                
+                # Extract stores (support nested paths like response.entities)
+                entities = []
+                if isinstance(data, dict):
+                    response_data = data.get('response', data)
+                    entities = response_data.get('entities', []) or response_data.get('data', []) or response_data.get('results', [])
+                elif isinstance(data, list):
+                    entities = data
+                
+                if not entities:
+                    break
+                
+                # Deduplicate using multiple strategies to ensure no duplicates
+                new_stores = []
+                for store in entities:
+                    if not isinstance(store, dict):
+                        continue
+                    
+                    # Strategy 1: Use profile.meta.id (most reliable)
+                    store_id = None
+                    profile = store.get('profile', {})
+                    if isinstance(profile, dict):
+                        meta = profile.get('meta', {})
+                        if isinstance(meta, dict):
+                            store_id = meta.get('id')
+                    
+                    # Strategy 2: Use top-level id
+                    if not store_id:
+                        store_id = store.get('id')
+                    
+                    # Strategy 3: Use name + address + city (most comprehensive fallback)
+                    if not store_id:
+                        name = store.get('name') or (profile.get('name') if isinstance(profile, dict) else '')
+                        addr = ''
+                        city = ''
+                        if isinstance(profile, dict):
+                            addr_obj = profile.get('address', {})
+                            if isinstance(addr_obj, dict):
+                                addr = addr_obj.get('line1', '')
+                                city = addr_obj.get('city', '')
+                        # Normalize for comparison (lowercase, strip whitespace)
+                        name = str(name).lower().strip() if name else ''
+                        addr = str(addr).lower().strip() if addr else ''
+                        city = str(city).lower().strip() if city else ''
+                        if name and addr:
+                            store_id = f"{name}|{addr}|{city}"
+                    
+                    # Strategy 4: Use name + coordinates as last resort
+                    if not store_id:
+                        name = store.get('name') or (profile.get('name') if isinstance(profile, dict) else '')
+                        lat = None
+                        lng = None
+                        if isinstance(profile, dict):
+                            geo = profile.get('geocodedCoordinate', {})
+                            if isinstance(geo, dict):
+                                lat = geo.get('lat')
+                                lng = geo.get('long')
+                        if name and lat and lng:
+                            store_id = f"{str(name).lower().strip()}|{lat}|{lng}"
+                    
+                    # Add store if unique
+                    if store_id:
+                        if store_id not in seen_ids:
+                            seen_ids.add(store_id)
+                            new_stores.append(store)
+                        # else: duplicate detected and skipped
+                    else:
+                        # No ID found - still add it but log warning
+                        log_debug(f"Store without ID found: {store.get('name', 'Unknown')}", "WARN")
+                        new_stores.append(store)
+                
+                stores_from_city.extend(new_stores)
+                
+                # Check if more pages
+                count = data.get('response', {}).get('count', len(entities)) if isinstance(data, dict) else len(entities)
+                # Continue if we got fewer stores than expected (might be more pages)
+                if len(entities) < int(per):
+                    # Last page if we got fewer than per-page limit
+                    break
+                
+                # Check if we've reached the total count
+                if count and len(stores_from_city) >= int(count):
+                    break
+                
+                offset += int(per)
+                page += 1
+                
+                if page > 100:  # Increased safety limit (was 50) to ensure we get all stores
+                    log_debug(f"Reached page limit (100) for {city_name}, stopping", "WARN")
+                    break
+                
+                time.sleep(0.3)
+            except Exception as e:
+                log_debug(f"Error fetching from {city_name}: {e}", "WARN")
+                break
+        
+        all_stores.extend(stores_from_city)
+        print(f"+{len(stores_from_city)} stores (total: {len(all_stores)})")
+    
+    print(f"   ✅ Multi-point expansion complete: {len(all_stores)} unique stores")
+    return all_stores
 
 
 def scrape_viewport_expansion(url: str, url_params: Dict, region: str = "world") -> List[Dict]:
@@ -156,7 +481,9 @@ def scrape_viewport_expansion(url: str, url_params: Dict, region: str = "world")
     additional_params = {k: v for k, v in url_params.items() 
                         if k not in ["northEastLat", "northEastLng", "southWestLat", "southWestLng", "lat", "lng"]}
     
-    grid_size = 10
+    # Use larger grid size to reduce API calls and focus on land areas
+    # 20 degrees = ~180 viewports (much faster than 10 degrees = 648 viewports)
+    grid_size = 20
     grid_type = "world" if region == "world" else "focused"
     focus_region = None if region == "world" else get_region_preset(region)
     
@@ -247,51 +574,108 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world") 
     return all_stores
 
 
-def scrape_paginated(url: str, url_params: Dict) -> List[Dict]:
-    """Expand paginated API by following all pages"""
+def scrape_paginated(url: str, url_params: Dict, is_token_based: bool = False, custom_headers: Dict = None) -> List[Dict]:
+    """Expand paginated API by following all pages (supports both page numbers, tokens, and offset)"""
     import requests
     
     print("📄 Pagination detected - following pages")
     
+    # Check if this is token-based pagination (pageToken) or number-based (page)
+    # Can be passed explicitly or detected from URL params
+    if not is_token_based:
+        is_token_based = any("token" in k.lower() for k in url_params.keys())
+    
     page_param = None
     limit_param = None
+    token_param = None
+    offset_param = None
     
     for key in url_params.keys():
-        if "page" in key.lower():
+        if "page" in key.lower() and "token" not in key.lower():
             page_param = key
-        if "limit" in key.lower() or "per_page" in key.lower():
+        if "token" in key.lower():
+            token_param = key
+            is_token_based = True
+        if "limit" in key.lower() or "per_page" in key.lower() or key.lower() == "per":
             limit_param = key
+        if key.lower() == "offset":
+            offset_param = key
     
-    if not page_param:
+    if not page_param and not is_token_based and not offset_param:
         page_param = "page"
+    if not token_param and is_token_based:
+        token_param = "pageToken"
     if not limit_param:
         limit_param = "limit"
+    if not offset_param and "offset" in str(url_params):
+        offset_param = "offset"
     
-    if limit_param not in url_params:
-        url_params[limit_param] = 100
+    if limit_param and limit_param not in url_params:
+        url_params[limit_param] = 50  # Default limit
+    
+    # Prepare headers
+    request_headers = {"User-Agent": "Mozilla/5.0"}
+    if custom_headers:
+        request_headers.update(custom_headers)
     
     all_stores = []
     page = 1
+    page_token = None
+    offset = 0
     max_pages = 1000
+    seen_ids = set()  # For deduplication
     
     while page <= max_pages:
         params = url_params.copy()
-        params[page_param] = page
+        
+        if is_token_based:
+            # Token-based pagination
+            if page_token:
+                params[token_param] = page_token
+            # Remove page number and offset params if they exist
+            if page_param and page_param in params:
+                del params[page_param]
+            if offset_param and offset_param in params:
+                del params[offset_param]
+        elif offset_param:
+            # Offset-based pagination
+            params[offset_param] = offset
+            # Remove page number param if it exists
+            if page_param and page_param in params:
+                del params[page_param]
+        else:
+            # Number-based pagination
+            params[page_param] = page
+            # Remove token and offset params if they exist
+            if token_param and token_param in params:
+                del params[token_param]
+            if offset_param and offset_param in params:
+                del params[offset_param]
         
         try:
-            response = requests.get(url.split('?')[0], params=params, timeout=10, headers={
-                "User-Agent": "Mozilla/5.0"
-            })
+            response = requests.get(url.split('?')[0], params=params, timeout=15, headers=request_headers)
             response.raise_for_status()
             data = response.json()
             
+            # Extract stores from response (support nested paths like response.entities)
+            stores = []
             if isinstance(data, list):
                 stores = data
             elif isinstance(data, dict):
-                for key in ["data", "results", "items", "stores", "locations"]:
-                    if key in data:
-                        stores = data[key] if isinstance(data[key], list) else []
-                        break
+                # Try common keys for store arrays (including nested paths)
+                for key_path in ["response.entities", "response.data", "response.results", 
+                                "entities", "data", "results", "items", "stores", "locations"]:
+                    keys = key_path.split('.')
+                    value = data
+                    for k in keys:
+                        if isinstance(value, dict) and k in value:
+                            value = value[k]
+                        else:
+                            break
+                    else:
+                        if isinstance(value, list):
+                            stores = value
+                            break
                 else:
                     stores = []
             else:
@@ -300,19 +684,84 @@ def scrape_paginated(url: str, url_params: Dict) -> List[Dict]:
             if not stores:
                 break
             
-            all_stores.extend(stores)
-            print(f"  Page {page}: +{len(stores)} stores (total: {len(all_stores)})")
+            # Deduplicate stores
+            new_stores = []
+            for store in stores:
+                # Try to get unique ID (handle nested structures)
+                store_id = None
+                if isinstance(store, dict):
+                    # Try various ID paths
+                    profile = store.get('profile', {})
+                    if isinstance(profile, dict):
+                        meta = profile.get('meta', {})
+                        if isinstance(meta, dict):
+                            store_id = meta.get('id')
+                    
+                    if not store_id:
+                        store_id = store.get('id')
+                    
+                    if not store_id:
+                        meta = store.get('meta', {})
+                        if isinstance(meta, dict):
+                            store_id = meta.get('id')
+                    
+                    # Fallback to name + address for uniqueness
+                    if not store_id:
+                        name = store.get('name') or (profile.get('name') if isinstance(profile, dict) else '')
+                        address = ''
+                        if isinstance(profile, dict):
+                            addr = profile.get('address', {})
+                            if isinstance(addr, dict):
+                                address = addr.get('line1', '')
+                        elif isinstance(store.get('address'), dict):
+                            address = store.get('address', {}).get('line1', '')
+                        store_id = f"{name}|{address}"
+                
+                if store_id and store_id not in seen_ids:
+                    seen_ids.add(store_id)
+                    new_stores.append(store)
+                elif not store_id:
+                    # If no ID found, still add it (might be first occurrence)
+                    new_stores.append(store)
             
+            all_stores.extend(new_stores)
+            print(f"  Page {page}: +{len(new_stores)} stores (total: {len(all_stores)})")
+            
+            # Check for pagination continuation
             if isinstance(data, dict):
-                if "has_more" in data and not data["has_more"]:
-                    break
-                if "next" in data and not data["next"]:
-                    break
+                # Token-based: check for next token
+                if is_token_based:
+                    page_token = data.get(token_param) if token_param else data.get("pageToken")
+                    if not page_token:
+                        break  # No more pages
+                elif offset_param:
+                    # Offset-based: check total count
+                    response_data = data.get('response', data)
+                    total = response_data.get('count') or response_data.get('total') or response_data.get('totalCount')
+                    if total and len(all_stores) >= int(total):
+                        break
+                    # Get limit value (handle string/int conversion)
+                    limit_val = 50
+                    if limit_param:
+                        limit_val = int(url_params.get(limit_param, 50))
+                    if len(new_stores) < limit_val:
+                        break  # Last page
+                    offset += limit_val
+                else:
+                    # Number-based: check for has_more, next, or total
+                    if "has_more" in data and not data["has_more"]:
+                        break
+                    if "next" in data and not data["next"]:
+                        break
+                    total = data.get("total") or data.get("count")
+                    if total and len(all_stores) >= total:
+                        break
             
             page += 1
-            time.sleep(0.2)
-        
+            time.sleep(0.3)
+            
         except Exception as e:
+            log_debug(f"Pagination error on page {page}: {e}", "WARN")
             break
     
     return all_stores
@@ -323,7 +772,8 @@ def universal_scrape(
     output_file: str = "output/stores.csv",
     region: str = "world",
     force_type: Optional[str] = None,
-    validate_output: bool = True
+    validate_output: bool = True,
+    brand_config: Optional[Dict] = None
 ) -> Dict[str, Any]:
     """
     Universal scraper - auto-detects and handles everything
@@ -360,9 +810,14 @@ def universal_scrape(
     print("🔍 Analyzing endpoint...")
     log_debug("PHASE 1: Endpoint Analysis", "INFO")
     
+    # Check if custom headers are needed for initial fetch (e.g., Bell & Ross requires Accept: application/json)
+    initial_headers = None
+    if "bellross.com" in url or "stores.bellross.com" in url:
+        initial_headers = {"Accept": "application/json"}
+    
     try:
         log_debug("Fetching sample data for detection...", "DEBUG")
-        sample_data = fetch_data(url)
+        sample_data = fetch_data(url, headers=initial_headers)
         log_debug(f"Sample data retrieved successfully", "SUCCESS")
     except Exception as e:
         log_debug(f"Failed to fetch sample data: {e}", "ERROR")
@@ -387,13 +842,29 @@ def universal_scrape(
     print(f"   Type: {detected_type}")
     print(f"   Region-specific: {is_region_specific}")
     
-    # Detect field mapping
+    # Detect field mapping (use brand config if provided, otherwise auto-detect)
     log_debug("Running field mapping detection...", "DEBUG")
-    pattern = detect_data_pattern(url, sample_data)
-    field_mapping = pattern["field_mapping"]
-    log_debug(f"Field mapping confidence: {pattern['mapping_score']['confidence']}", "DEBUG")
-    log_debug(f"Mapped fields: {len(field_mapping)} | Fields: {list(field_mapping.keys())[:5]}...", "DEBUG")
-    print(f"   Field mapping: {pattern['mapping_score']['confidence'].upper()} confidence")
+    
+    if brand_config and brand_config.get("field_mapping"):
+        # Use field mapping from brand config
+        field_mapping = brand_config.get("field_mapping", {})
+        log_debug(f"Using field mapping from brand config: {len(field_mapping)} fields", "DEBUG")
+        print(f"   Field mapping: From brand config ({len(field_mapping)} fields)")
+    else:
+        # Auto-detect field mapping
+        pattern = detect_data_pattern(url, sample_data)
+        field_mapping = pattern.get("field_mapping", {})
+        
+        # Handle HTML pages where pattern detection may not work
+        is_html_page = isinstance(sample_data, str) and not isinstance(sample_data, (list, dict))
+        if is_html_page and not field_mapping:
+            log_debug("HTML page detected - pattern detection skipped (will use HTML extraction)", "DEBUG")
+            print(f"   Field mapping: HTML/JavaScript extraction (auto-detected)")
+        else:
+            confidence = pattern.get('mapping_score', {}).get('confidence', 'unknown')
+            log_debug(f"Field mapping confidence: {confidence}", "DEBUG")
+            log_debug(f"Mapped fields: {len(field_mapping)} | Fields: {list(field_mapping.keys())[:5]}...", "DEBUG")
+            print(f"   Field mapping: {confidence.upper()} confidence")
     print()
     
     # Step 2: Scrape with appropriate strategy
@@ -402,11 +873,35 @@ def universal_scrape(
     scrape_start = time.time()
     
     try:
-        if not is_region_specific or detected_type == "single_call":
-            # Single call
-            log_debug("Strategy: Single API call", "INFO")
-            stores = scrape_single_call(url)
-            results["expansion_used"] = False
+        if detected_type == "paginated":
+            # Pagination (check this first before single_call)
+            log_debug("Strategy: Paginated scraping", "INFO")
+            
+            # Check if this is actually a radius-based API that needs multi-point expansion
+            # (Bell & Ross uses pagination but needs multiple center points for worldwide coverage)
+            url_params = locator_analysis["url_params"]
+            is_radius_based = "r" in url_params and "q" in url_params and ("bellross.com" in url or "stores.bellross.com" in url)
+            
+            if is_radius_based:
+                # Use radius expansion instead of simple pagination
+                log_debug("Radius-based pagination detected - using multi-point expansion", "INFO")
+                custom_headers = {"Accept": "application/json"} if "bellross.com" in url else None
+                stores = scrape_radius_expansion(url, url_params, region, custom_headers=custom_headers)
+                results["expansion_used"] = True
+            else:
+                # Standard pagination
+                is_token_based = locator_analysis.get("has_token_pagination", False) or "pageToken" in str(sample_data)
+                if is_token_based:
+                    log_debug("Token-based pagination detected (using pageToken)", "DEBUG")
+                
+                # Check if custom headers are needed (e.g., Accept: application/json for Bell & Ross)
+                custom_headers = None
+                if "bellross.com" in url or "stores.bellross.com" in url:
+                    custom_headers = {"Accept": "application/json"}
+                    log_debug("Adding Accept: application/json header for Bell & Ross API", "DEBUG")
+                
+                stores = scrape_paginated(url, url_params, is_token_based=is_token_based, custom_headers=custom_headers)
+                results["expansion_used"] = True
         
         elif detected_type == "viewport":
             # Viewport expansion
@@ -420,16 +915,24 @@ def universal_scrape(
             stores = scrape_country_expansion(url, locator_analysis["url_params"], region)
             results["expansion_used"] = True
         
-        elif detected_type == "paginated":
-            # Pagination
-            log_debug("Strategy: Paginated scraping", "INFO")
-            stores = scrape_paginated(url, locator_analysis["url_params"])
-            results["expansion_used"] = True
+        elif not is_region_specific or detected_type == "single_call":
+            # Single call
+            log_debug("Strategy: Single API call", "INFO")
+            # Check if custom headers are needed
+            custom_headers = None
+            if "bellross.com" in url or "stores.bellross.com" in url:
+                custom_headers = {"Accept": "application/json"}
+            stores = scrape_single_call(url, custom_headers=custom_headers)
+            results["expansion_used"] = False
         
         else:
             # Default to single call
             log_debug("Strategy: Default single call", "INFO")
-            stores = scrape_single_call(url)
+            # Check if custom headers are needed
+            custom_headers = None
+            if "bellross.com" in url or "stores.bellross.com" in url:
+                custom_headers = {"Accept": "application/json"}
+            stores = scrape_single_call(url, custom_headers=custom_headers)
             results["expansion_used"] = False
         
         scrape_time = time.time() - scrape_start
@@ -493,10 +996,17 @@ def universal_scrape(
         print("📋 Validating...")
         try:
             valid = validate_csv(output_file)
+            results["validation_performed"] = True
+            results["validation_passed"] = valid
             print(f"   {'✅ Valid' if valid else '⚠️  Has warnings'}")
         except Exception as e:
+            results["validation_performed"] = True
+            results["validation_passed"] = False
+            results["validation_error"] = str(e)
             print(f"   ⚠️  Validation error: {e}")
         print()
+    else:
+        results["validation_performed"] = False
     
     results["success"] = True
     
@@ -550,8 +1060,18 @@ Auto-detects everything and uses the right strategy!
                        help='Force specific scraper type (auto-detects if not specified)')
     parser.add_argument('--no-validate', action='store_true', help='Skip validation')
     parser.add_argument('--json-output', help='Also save results as JSON')
+    parser.add_argument('--brand-config', help='Brand configuration JSON string (for field mapping)')
     
     args = parser.parse_args()
+    
+    # Parse brand config if provided
+    brand_config = None
+    if args.brand_config:
+        try:
+            brand_config = json.loads(args.brand_config)
+        except json.JSONDecodeError:
+            print(f"⚠️  Warning: Invalid brand-config JSON, ignoring")
+            brand_config = None
     
     # Run universal scraper
     results = universal_scrape(
@@ -559,7 +1079,8 @@ Auto-detects everything and uses the right strategy!
         output_file=args.output,
         region=args.region,
         force_type=args.type,
-        validate_output=not args.no_validate
+        validate_output=not args.no_validate,
+        brand_config=brand_config
     )
     
     # Summary

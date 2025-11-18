@@ -127,6 +127,57 @@ export class UploadController {
       res.status(500).json({ error: error.message });
     }
   }
+
+  async downloadUpload(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const upload = await uploadService.getUpload(id);
+
+      if (!upload) {
+        return res.status(404).json({ error: 'Upload not found' });
+      }
+
+      const filePath = await uploadService.getFilePath(upload.filename);
+      
+      if (!filePath || !fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'File not found' });
+      }
+
+      // Set headers for file download
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${upload.originalFilename}"`);
+      
+      // Send file
+      res.sendFile(filePath);
+    } catch (error: any) {
+      console.error('Download upload error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  async downloadMasterCSV(req: Request, res: Response) {
+    try {
+      const filePath = await uploadService.getMasterCSVPath();
+      
+      if (!filePath || !fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'Master CSV file not found. Run a scraping job first.' });
+      }
+
+      // Get file stats
+      const stats = fs.statSync(filePath);
+      
+      // Set headers for file download
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="master_stores.csv"');
+      res.setHeader('Content-Length', stats.size.toString());
+      
+      // Send file
+      res.sendFile(filePath);
+    } catch (error: any) {
+      console.error('Download master CSV error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
 }
 
 export default new UploadController();

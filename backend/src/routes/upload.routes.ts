@@ -17,11 +17,17 @@ router.get('/', uploadController.listUploads);
 // GET /api/uploads/stats - Get statistics
 router.get('/stats', uploadController.getStats);
 
+// GET /api/uploads/master/download - Download master CSV file (must be before /:id routes)
+router.get('/master/download', uploadController.downloadMasterCSV);
+
 // GET /api/uploads/:id - Get single upload details
 router.get('/:id', uploadController.getUpload);
 
 // GET /api/uploads/:id/logs - Get validation logs for upload
 router.get('/:id/logs', uploadController.getValidationLogs);
+
+// GET /api/uploads/:id/download - Download upload CSV file
+router.get('/:id/download', uploadController.downloadUpload);
 
 // DELETE /api/uploads/:id - Delete upload (admin only)
 router.delete('/:id', requireRole(['admin']), uploadController.deleteUpload);

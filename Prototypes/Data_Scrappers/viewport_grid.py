@@ -45,12 +45,12 @@ def log_debug(message: str, level: str = "INFO"):
     print(f"[{timestamp}] {prefix} {message}", flush=True)
 
 
-def generate_world_grid(grid_size: int = 10) -> List[Dict[str, float]]:
+def generate_world_grid(grid_size: int = 20) -> List[Dict[str, float]]:
     """
     Generate a grid of viewport coordinates covering the entire world
     
     Args:
-        grid_size: Size of each grid box in degrees (default: 10)
+        grid_size: Size of each grid box in degrees (default: 20)
                   Smaller = more boxes = more API calls = more complete data
                   Larger = fewer boxes = faster but might miss stores
     
@@ -58,10 +58,11 @@ def generate_world_grid(grid_size: int = 10) -> List[Dict[str, float]]:
         List of viewport dictionaries with ne_lat, ne_lng, sw_lat, sw_lng
     
     Grid size recommendations:
-        - 20 degrees: ~180 boxes, fast but sparse (good for testing)
-        - 10 degrees: ~720 boxes, balanced (default)
-        - 5 degrees:  ~2880 boxes, thorough (recommended for complete data)
-        - 3 degrees:  ~8000 boxes, very thorough (use for dense regions only)
+        - 30 degrees: ~108 boxes, very fast, focuses on major land areas
+        - 20 degrees: ~180 boxes, fast, good balance (default)
+        - 10 degrees: ~720 boxes, thorough but slower
+        - 5 degrees:  ~2880 boxes, very thorough (use for dense regions only)
+        - 3 degrees:  ~8000 boxes, exhaustive (use for specific regions only)
     """
     viewports = []
     
@@ -321,7 +322,7 @@ def scrape_viewport_api(
     base_url: str,
     viewport_params: Dict[str, str],
     grid_type: str = "world",
-    grid_size: int = 10,
+    grid_size: int = 20,
     data_path: str = "",
     additional_params: Optional[Dict[str, str]] = None,
     delay_between_requests: float = 0.5,
@@ -336,7 +337,7 @@ def scrape_viewport_api(
         viewport_params: Mapping of standard names to API param names
                         Example: {"northEastLat": "ne_lat", "southWestLat": "sw_lat", ...}
         grid_type: "world" (entire world), "focused" (specific region), "country" (country bounds)
-        grid_size: Size of each grid box in degrees (10 = balanced, 5 = thorough)
+        grid_size: Size of each grid box in degrees (20 = fast/focused on land, 10 = balanced, 5 = thorough)
         data_path: Path to stores array in JSON response
         additional_params: Extra query params (brand, language, etc.)
         delay_between_requests: Seconds to wait between requests (be nice to APIs!)

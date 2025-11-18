@@ -83,7 +83,13 @@
   border-radius: 4px;
   font-size: 0.9rem;
   background: white;
+  color: #1a1a1a;
   cursor: pointer;
+}
+
+.filter-select option {
+  color: #1a1a1a;
+  background: white;
 }
 
 .filter-select:focus {

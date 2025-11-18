@@ -218,6 +218,45 @@ export class UploadService {
       totalLocations
     };
   }
+
+  /**
+   * Get the full file path for an upload
+   */
+  async getFilePath(filename: string): Promise<string | null> {
+    try {
+      const uploadDir = path.join(__dirname, '..', '..', process.env.UPLOAD_DIR || 'uploads');
+      const filePath = path.join(uploadDir, filename);
+      
+      // Resolve to absolute path
+      const absolutePath = path.resolve(filePath);
+      
+      // Security check: ensure file is within uploads directory
+      const uploadsDirAbsolute = path.resolve(uploadDir);
+      if (!absolutePath.startsWith(uploadsDirAbsolute)) {
+        console.error('Security: Attempted to access file outside uploads directory');
+        return null;
+      }
+      
+      return absolutePath;
+    } catch (error) {
+      console.error('Error getting file path:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get the path to the master CSV file
+   */
+  async getMasterCSVPath(): Promise<string | null> {
+    try {
+      const uploadDir = path.join(__dirname, '..', '..', process.env.UPLOAD_DIR || 'uploads');
+      const masterCsvPath = path.join(uploadDir, 'master_stores.csv');
+      return path.resolve(masterCsvPath);
+    } catch (error) {
+      console.error('Error getting master CSV path:', error);
+      return null;
+    }
+  }
 }
 
 export default new UploadService();

@@ -96,6 +96,46 @@ const Uploads: React.FC = () => {
     }
   };
 
+  const handleDownload = async (id: string, filename: string) => {
+    try {
+      const response = await api.get(`/uploads/${id}/download`, {
+        responseType: 'blob',
+      });
+
+      // Create a blob URL and trigger download
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Download failed');
+    }
+  };
+
+  const handleDownloadMasterCSV = async () => {
+    try {
+      const response = await api.get('/uploads/master/download', {
+        responseType: 'blob',
+      });
+
+      // Create a blob URL and trigger download
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'master_stores.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Download failed. Make sure you have run at least one scraping job.');
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     const badges: Record<string, string> = {
       valid: 'badge-success',
@@ -114,7 +154,14 @@ const Uploads: React.FC = () => {
     <div className="uploads-page">
       <div className="page-header">
         <h1>CSV Uploads</h1>
-        <div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button
+            onClick={handleDownloadMasterCSV}
+            className="button button-secondary"
+            title="Download the master CSV file containing all scraped stores"
+          >
+            Download Master CSV
+          </button>
           <input
             ref={fileInputRef}
             type="file"
@@ -173,7 +220,14 @@ const Uploads: React.FC = () => {
                 <td>{new Date(upload.uploadedAt).toLocaleString()}</td>
                 <td className="actions">
                   <Link to={`/uploads/${upload.id}`} className="link">View</Link>
-                  <button onClick={() => handleDelete(upload.id)} className="link link-danger">
+                  <button 
+                    onClick={() => handleDownload(upload.id, upload.originalFilename)} 
+                    className="link link-primary"
+                    style={{ marginLeft: '8px' }}
+                  >
+                    Download
+                  </button>
+                  <button onClick={() => handleDelete(upload.id)} className="link link-danger" style={{ marginLeft: '8px' }}>
                     Delete
                   </button>
                 </td>

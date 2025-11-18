@@ -19,15 +19,58 @@ export const scraperController = {
         .filter(([key, value]: [string, any]) => {
           return key !== '_README' && value.enabled !== false;
         })
-        .map(([key, value]: [string, any]) => ({
-          id: key,
-          name: key,
-          type: value.type,
-          url: value.url,
-          description: value.description || '',
-          method: value.method || 'GET',
-          enabled: true
-        }));
+        .map(([key, value]: [string, any]) => {
+          // Format name: convert snake_case to Title Case
+          let formattedName = key
+            .split('_')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+          
+          // Check if this is a US-only brand (check URL or description)
+          const brandUrl = value.url || '';
+          const description = value.description || '';
+          
+          // Check for US-only indicators, but exclude language codes like /us-en, /us-es, /us/en/, etc.
+          // Language codes can be: /us-en (dash) or /us/en/ (slash)
+          const hasUSPathDash = brandUrl.includes('/us-');
+          const hasUSPathSlash = /\/us\/[a-z]{2,5}(\/|$|\?)/.test(brandUrl);
+          const isLanguageCode = (hasUSPathDash && /\/us-[a-z]{2,5}(\/|$|\?)/.test(brandUrl)) || hasUSPathSlash;
+          
+          // If /us- or /us/ exists but it's a language code, don't treat it as US-only
+          // Otherwise, check all US-only indicators
+          const isUSOnly = ((hasUSPathDash || hasUSPathSlash) && !isLanguageCode) || 
+                          brandUrl.includes('.us/') || 
+                          brandUrl.includes('us.alpina') ||
+                          description.toLowerCase().includes('us only') ||
+                          description.toLowerCase().includes('united states');
+          
+          if (isUSOnly) {
+            formattedName += ' (U.S.)';
+          }
+          
+          // Check if this is a viewport-based scraper (check URL for viewport indicators)
+          const isViewportBased = brandUrl.includes('viewport') || 
+                                 brandUrl.includes('by_viewport') ||
+                                 brandUrl.includes('bounds') ||
+                                 brandUrl.includes('bbox') ||
+                                 brandUrl.includes('northEast') ||
+                                 brandUrl.includes('southWest');
+          
+          return {
+            id: key,
+            name: formattedName,
+            type: value.type,
+            url: value.url,
+            description: value.description || '',
+            method: value.method || 'GET',
+            enabled: true,
+            isViewportBased: isViewportBased
+          };
+        })
+        .sort((a, b) => {
+          // Sort alphabetically by name (case-insensitive)
+          return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+        });
 
       res.json({ brands });
     } catch (error: any) {

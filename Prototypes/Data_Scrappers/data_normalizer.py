@@ -280,6 +280,34 @@ def generate_handle(name: str, city: str = "", existing_handles: set = None) -> 
 # FIELD MAPPING AND EXTRACTION
 # =============================================================================
 
+def get_nested_value(obj: Dict, path: str) -> Any:
+    """
+    Extract nested value from dict using dot notation path
+    
+    Args:
+        obj: Dictionary to extract from
+        path: Dot-notation path (e.g., "address.city" or "yextDisplayCoordinate.latitude")
+    
+    Returns:
+        Value at path or None if not found
+    """
+    if not path or not obj:
+        return None
+    
+    keys = path.split('.')
+    value = obj
+    
+    for key in keys:
+        if isinstance(value, dict):
+            value = value.get(key)
+            if value is None:
+                return None
+        else:
+            return None
+    
+    return value
+
+
 def extract_field(raw_data: Dict, field_config: Any) -> Any:
     """
     Extract a field value from raw data using various accessor methods
@@ -287,21 +315,46 @@ def extract_field(raw_data: Dict, field_config: Any) -> Any:
     Args:
         raw_data: Raw scraped data dictionary
         field_config: Can be:
-            - str: Direct key lookup
+            - str: Direct key lookup or dot-notation path (e.g., "address.city")
             - list: Try multiple keys in order, return first non-empty
             - dict: {"key": "field_name", "default": "value", "transform": func}
     
     Returns:
         Extracted value or empty string
     """
-    # Simple string key
+    # Simple string key (supports dot notation for nested paths and array indices)
     if isinstance(field_config, str):
-        return raw_data.get(field_config, "")
+        if '.' in field_config:
+            # Use dot notation for nested paths (supports array indices like "emails.0")
+            parts = field_config.split('.')
+            value = raw_data
+            for part in parts:
+                if value is None:
+                    return ""
+                if isinstance(value, dict):
+                    value = value.get(part)
+                elif isinstance(value, list):
+                    try:
+                        idx = int(part)
+                        if 0 <= idx < len(value):
+                            value = value[idx]
+                        else:
+                            return ""
+                    except ValueError:
+                        return ""
+                else:
+                    return ""
+            return value if value is not None else ""
+        else:
+            return raw_data.get(field_config, "")
     
-    # List of alternative keys (try in order)
+    # List of alternative keys (try in order, supports dot notation)
     if isinstance(field_config, list):
         for key in field_config:
-            value = raw_data.get(key, "")
+            if '.' in key:
+                value = get_nested_value(raw_data, key)
+            else:
+                value = raw_data.get(key, "")
             if value:
                 return value
         return ""
@@ -311,7 +364,11 @@ def extract_field(raw_data: Dict, field_config: Any) -> Any:
         key = field_config.get("key", "")
         default = field_config.get("default", "")
         
-        value = raw_data.get(key, default)
+        if '.' in key:
+            value = get_nested_value(raw_data, key)
+            value = value if value is not None else default
+        else:
+            value = raw_data.get(key, default)
         
         # Apply transformation if provided
         transform = field_config.get("transform")
@@ -464,21 +521,36 @@ def batch_normalize(
     deduplicate: bool = True
 ) -> List[Dict[str, str]]:
     """
-    Normalize a batch of locations
+    Normalize a batch of locations with comprehensive deduplication
     
     Args:
         raw_data_list: List of raw data dictionaries
         field_mapping: Optional field mapping
-        deduplicate: If True, ensures unique handles
+        deduplicate: If True, ensures unique handles and removes duplicates by name+address+city
     
     Returns:
-        List of normalized location dictionaries
+        List of normalized location dictionaries (deduplicated)
     """
     existing_handles = set() if deduplicate else None
     normalized_list = []
+    seen_combinations = set()  # Track name+address+city combinations
     
     for raw_data in raw_data_list:
         normalized = normalize_location(raw_data, field_mapping, existing_handles)
+        
+        # Additional deduplication by name+address+city (even if handles differ)
+        if deduplicate:
+            name = normalized.get("Name", "").strip().lower()
+            addr = normalized.get("Address Line 1", "").strip().lower()
+            city = normalized.get("City", "").strip().lower()
+            
+            if name and addr:  # Only deduplicate if we have name and address
+                combo_key = f"{name}|{addr}|{city}"
+                if combo_key in seen_combinations:
+                    # Duplicate found - skip this store
+                    continue
+                seen_combinations.add(combo_key)
+        
         normalized_list.append(normalized)
     
     return normalized_list
