@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import locationService from './location.service';
 
 const prisma = new PrismaClient();
 
@@ -264,6 +265,34 @@ class ScraperService {
               });
             }
 
+            // Auto-import master CSV to database
+            let importInfo = '';
+            if (fs.existsSync(masterCsvFile)) {
+              console.log(`🔄 Importing master CSV to database...`);
+              try {
+                const importResult = await locationService.importFromCSV(masterCsvFile);
+
+                importInfo = `\n\n=== DATABASE IMPORT ===\n`;
+                importInfo += `✅ Import completed\n`;
+                importInfo += `  • New locations: ${importResult.newCount}\n`;
+                importInfo += `  • Updated locations: ${importResult.updatedCount}\n`;
+                importInfo += `  • Skipped: ${importResult.skippedCount}\n`;
+                importInfo += `  • Errors: ${importResult.errorCount}\n`;
+
+                if (importResult.errors.length > 0 && importResult.errors.length <= 5) {
+                  importInfo += `\nErrors:\n${importResult.errors.slice(0, 5).join('\n')}`;
+                } else if (importResult.errors.length > 5) {
+                  importInfo += `\nShowing first 5 errors:\n${importResult.errors.slice(0, 5).join('\n')}`;
+                  importInfo += `\n... and ${importResult.errors.length - 5} more errors`;
+                }
+
+                console.log(`✅ Database import complete: ${importResult.newCount} new, ${importResult.updatedCount} updated`);
+              } catch (importError: any) {
+                console.error(`❌ Database import failed:`, importError);
+                importInfo = `\n\n=== DATABASE IMPORT ===\n❌ Import failed: ${importError.message}`;
+              }
+            }
+
             // Update job with logs
             const mergeInfo = mergeStdout ? `\n\n=== MASTER CSV MERGE ===\n${mergeStdout}` : '';
             await prisma.scraperJob.update({
@@ -273,7 +302,7 @@ class ScraperService {
                 completedAt: new Date(),
                 recordsScraped,
                 uploadId: individualUpload.id,
-                logs: fullLogs + mergeInfo
+                logs: fullLogs + mergeInfo + importInfo
               }
             });
 

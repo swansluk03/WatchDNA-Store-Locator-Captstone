@@ -11,6 +11,7 @@ dotenv.config();
 import authRoutes from './routes/auth.routes';
 import uploadRoutes from './routes/upload.routes';
 import scraperRoutes from './routes/scraper.routes';
+import locationRoutes from './routes/location.routes';
 
 const app: Express = express();
 const PORT = process.env.PORT || 3001;
@@ -39,10 +40,20 @@ app.get('/health', (req: Request, res: Response) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/scraper', scraperRoutes);
+app.use('/api/locations', locationRoutes);
 
-// 404 handler
-app.use((req: Request, res: Response) => {
-  res.status(404).json({ error: 'Route not found' });
+// Serve static files (prototype.html and locations.csv)
+const staticDir = path.join(__dirname, '..', '..');
+app.use(express.static(staticDir));
+
+// Redirect root to prototype.html
+app.get('/', (req: Request, res: Response) => {
+  res.redirect('/prototype.html');
+});
+
+// 404 handler for API routes only
+app.use('/api/*', (req: Request, res: Response) => {
+  res.status(404).json({ error: 'API route not found' });
 });
 
 // Error handler

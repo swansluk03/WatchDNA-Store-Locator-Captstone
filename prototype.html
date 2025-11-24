@@ -242,18 +242,55 @@
     };
     console.log('[proto] initial filters:', INITIAL);
 
-    // --- CSV loader (with cache-busting to avoid stale results) ---
-    function loadCSV(path) {
-      const url = `${path}?v=${Date.now()}`;
-      return new Promise((resolve, reject) => {
-        Papa.parse(url, {
-          download: true,
-          header: true,
-          skipEmptyLines: true,
-          complete: res => resolve(res.data),
-          error: err => reject(err)
-        });
-      });
+    // --- API Configuration ---
+    const API_BASE_URL = window.location.origin;
+
+    // --- Load locations from API ---
+    async function loadLocations() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/locations?limit=10000`);
+        if (!response.ok) {
+          throw new Error(`API request failed: ${response.status}`);
+        }
+        const result = await response.json();
+
+        // Convert API response to CSV-like format for compatibility
+        return result.data.map(location => ({
+          Handle: location.handle,
+          Name: location.name,
+          Status: location.status ? 'Active' : 'Inactive',
+          'Address Line 1': location.addressLine1,
+          'Address Line 2': location.addressLine2 || '',
+          'Postal/ZIP Code': location.postalCode || '',
+          City: location.city,
+          'State/Province/Region': location.stateProvinceRegion || '',
+          Country: location.country,
+          Phone: location.phone || '',
+          Email: location.email || '',
+          Website: location.website || '',
+          'Image URL': location.imageUrl || '',
+          Latitude: location.latitude,
+          Longitude: location.longitude,
+          Monday: location.monday || '',
+          Tuesday: location.tuesday || '',
+          Wednesday: location.wednesday || '',
+          Thursday: location.thursday || '',
+          Friday: location.friday || '',
+          Saturday: location.saturday || '',
+          Sunday: location.sunday || '',
+          'Page Title': location.pageTitle || '',
+          'Page Description': location.pageDescription || '',
+          'Meta Title': location.metaTitle || '',
+          'Meta Description': location.metaDescription || '',
+          Priority: location.priority || '',
+          Tags: location.tags || '',
+          'Custom Brands': location.customBrands || ''
+        }));
+      } catch (error) {
+        console.error('Error loading locations from API:', error);
+        alert('Failed to load store locations. Please try again later.');
+        return [];
+      }
     }
 
     // --- small hamburger toggle (left) ---
@@ -581,9 +618,9 @@
     }
 
     // --- Load data & render (with helpful logs) ---
-    loadCSV('locations.csv')
+    loadLocations()
       .then(rows => {
-        console.log('CSV rows (raw):', rows.length);
+        console.log('Locations loaded from API:', rows.length);
         const brandSet = new Set();
 
         // Keep only rows that *have something* in lat/lon
