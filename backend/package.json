@@ -10,6 +10,8 @@
     "create-admin": "ts-node src/scripts/create-admin.ts",
     "seed-admin": "ts-node src/scripts/seed-admin.ts",
     "import-data": "ts-node src/scripts/import-initial-data.ts",
+    "export-data": "ts-node src/scripts/export-sqlite-data.ts",
+    "import-postgres": "ts-node src/scripts/import-to-postgres.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"
