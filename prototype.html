@@ -35,9 +35,13 @@
   />
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
+  <!-- Cormorant font -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant:wght@400;500;600;700&display=swap">
+
+
   <style>
     :root { --card:#fff; --border:#d0d7de; }
-    body { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; margin: 0; }
+    body { font-family: "Cormorant", sans-serif; margin: 0; }
     /* Layout: left vertical control bar + map content to the right. */
     body { display: flex; }
     header {
@@ -125,16 +129,20 @@
     box-shadow: 0 2px 6px rgba(0,0,0,0.1);
   }
 
+  .hidden {
+    display: none !important;
+  }
+
   #footer {
     /* This fixes the footer div to the bottom of the sidebar */
-    /*flex: none;*/
-    position: absolute;
-    bottom: 0;
-    left: 400px;
-    width: calc(100% + 400px);
-    padding: 18px;
-    box-sizing: border-box;
+    flex: none;
+    margin-top: auto;   
+    margin-left: -10px;
+    /* padding: top right bottom left */
+    padding: 10px 10px 5px 10px;
     border-top: 1px solid var(--border);
+    box-sizing: border-box;
+    width: calc(100% + 36px);
     background: var(--card);
   }
 
@@ -216,7 +224,7 @@
     </div>
 
     <div id="footer">
-      <a href="https://watchdna.com/tools/storelocator/directory" style="position: fixed; bottom: 0; left: 0; width: 100%; background-color: white;">Store Directory</a>
+      <a href="https://watchdna.com/tools/storelocator/directory">Store Directory</a>
     </div>
 
   </header>
@@ -260,16 +268,50 @@
     (function(){
       const btn = document.getElementById('hamburger');
       const panel = document.getElementById('filtersPanel');
-      if (!btn || !panel) return;
+      const storeListContainer = document.getElementById('storeListContainer'); 
+
+      if (!btn || !panel || !storeListContainer) {
+        console.warn('Toggle init aborted, missing elements:', {btn, panel, storeListContainer});
+        return;
+      }
+
+      function setStoreListHidden(hidden) {
+        // keep a class for CSS transitions or style hooks
+        if(hidden) {
+          storeListContainer.classList.add('hidden');
+          //set inline style to be extra sure
+          storeListContainer.style.display = 'none';
+        }
+        else {
+          storeListContainer.classList.remove('hidden');
+          storeListContainer.style.display = '';
+        }
+        console.log('[storeList] set hidden =', hidden, 'classList:', storeListContainer.className);
+      }
+
       btn.addEventListener('click', (e) => {
         const wasHidden = panel.hasAttribute('hidden');
-        if (wasHidden) { panel.removeAttribute('hidden'); btn.setAttribute('aria-expanded','true'); }
-        else { panel.setAttribute('hidden',''); btn.setAttribute('aria-expanded','false'); }
+
+        if (wasHidden) { 
+          //opening the Filters panel
+          panel.removeAttribute('hidden'); 
+          btn.setAttribute('aria-expanded','true'); 
+          setStoreListHidden(true); //hide the store list
+        }
+        else { 
+          //closing the Filters panel
+          panel.setAttribute('hidden',''); 
+          btn.setAttribute('aria-expanded','false'); 
+          setStoreListHidden(false); //show the store list
+        }
         e.stopPropagation();
       });
       document.addEventListener('click', (ev) => {
         if (!panel.hasAttribute('hidden') && !panel.contains(ev.target) && ev.target !== btn) {
-          panel.setAttribute('hidden',''); btn.setAttribute('aria-expanded','false');
+          panel.setAttribute('hidden',''); 
+          btn.setAttribute('aria-expanded','false');
+          setStoreListHidden(false);
+          console.log('[document] closed filters by click outside');
         }
       });
     })();
