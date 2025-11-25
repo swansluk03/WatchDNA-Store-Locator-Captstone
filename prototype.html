@@ -661,6 +661,13 @@
             .forEach(b => brandSet.add(b));
           // also expose type values for debugging / UI
           // (we don't include types in the brand list)
+
+          //Premium Location Detection (Not fully accurate for now)
+          //Checks if vendor has email value
+          row._isPremium =
+            row['Email'] &&
+            row['Email'].trim() !== '' &&
+            !row['Email'].toLowerCase().includes('noreply');
         });
 
         map.addLayer(clusterGroup);
