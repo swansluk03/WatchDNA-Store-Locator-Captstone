@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <title>Prototype Map for 485</title>
@@ -9,44 +10,65 @@
 
 
   <!-- Leaflet core -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""
-  />
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-    crossorigin=""
-  ></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
   <!-- PapaParse for CSV -->
   <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
 
   <!-- MarkerCluster plugin -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
-  />
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
+  <!-- Cormorant font -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant:wght@400;500;600;700&display=swap">
+
+
   <style>
-    :root { --card:#fff; --border:#d0d7de; }
-    body { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; margin: 0; }
+    :root {
+      --card:  #fff9e8;
+      --card2:#ffffff;
+      --border: #c8bfb2;
+      --accent: #6e4b3a;
+      --hover-bg: #f9f5e9;
+      --hover-bg2: #bea24d;
+      --text: #2e2b28;
+      --link: #3a4a5e;
+    }
+    
+    header, #footer, .banner {
+      color: black;
+    }
+    
+    #footer a {
+      color: black;
+    }
+    
+    body {
+      font-family: "Cormorant", serif;
+      color: var(--text);
+      margin: 0;
+    }
+
     /* Layout: left vertical control bar + map content to the right. */
-    body { display: flex; }
+    body {
+      display: flex;
+    }
+
     header {
       box-sizing: border-box;
-      width: 400px; /* width of the left control bar */
+      background: var(--card);
+      width: 400px;
+      /* width of the left control bar */
       min-width: 240px;
       height: 100vh;
       position: fixed;
-      left: 0; top: 0; bottom: 0;
+      left: 0;
+      top: 0;
+      bottom: 0;
       padding: 18px;
       display: flex;
       flex-direction: column;
@@ -58,114 +80,201 @@
       overflow-y: auto;
       overflow-x: hidden;
     }
+
     header::-webkit-scrollbar {
       width: 8px;
     }
+
     header::-webkit-scrollbar-thumb {
       background-color: rgba(0, 0, 0, 0.2);
       border-radius: 4px;
     }
-    #brandFilter { padding: 8px; min-width: 160px; width:100%; }
+
+    #brandFilter {
+      padding: 8px;
+      min-width: 160px;
+      width: 100%;
+    }
+
     /* push the map to the right so it doesn't sit underneath the fixed left bar */
-    #map { margin-left: 400px; width: calc(100% - 400px); height: 100vh; }
-    .popup { font-size: 1.05rem; line-height: 1.35; }
-   
-   #filtersPanel[hidden] { display: none !important; }
-    #hamburger { font-size: 20px; background: var(--card); border: 1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer }
-    #filtersPanel { display:flex; gap:12px; align-items:center; }
-    .filters-panel { /* default: make the controls look like a card inside the left bar */
-      position: relative; left: 0; top: 0; background:transparent; border:0; padding:0; box-shadow:none;
-      display: flex; flex-direction: column; gap:10px; width:100%;
+    #map {
+      margin-left: 400px;
+      width: calc(100% - 400px);
+      height: 100vh;
     }
+
+    .popup {
+      font-size: 1.05rem;
+      line-height: 1.35;
+    }
+
+    #filtersPanel[hidden] {
+      display: none !important;
+    }
+
+    #hamburger {
+      font-size: 20px;
+      font-family: "Cormorant", serif;
+      background: var(--card2);
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer
+    }
+
+    #filtersPanel {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .filters-panel {
+      /* default: make the controls look like a card inside the left bar */
+      position: relative;
+      left: 0;
+      top: 0;
+      background: transparent;
+      border: 0;
+      padding: 0;
+      box-shadow: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 100%;
+    }
+
     /* On small screens keep the original top-header behavior: make the header a normal top bar */
-    @media(max-width:899px){
-      body { display: block; }
-      header {
-        position: static; width:100%; height:auto; border-right: none; padding: 12px 16px; display:flex; flex-direction:row; align-items:center;
+    @media(max-width:899px) {
+      body {
+        display: block;
       }
-      #map { margin-left: 0; width: 100%; height: 640px; }
-      .filters-panel { flex-direction: row; align-items: center; gap:12px; }
+
+      header {
+        position: static;
+        width: 100%;
+        height: auto;
+        border-right: none;
+        padding: 12px 16px;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        background: var(--card);
+        color: #fff;
+      }
+
+      #map {
+        margin-left: 0;
+        width: 100%;
+        height: 640px;
+      }
+
+      .filters-panel {
+        flex-direction: row;
+        align-items: center;
+        gap: 12px;
+      }
     }
-  .banner {
-      position: absolute; top: 10px; right: 10px; background: var(--card);
-      border: 1px solid var(--border); padding: 8px 12px; border-radius: 8px;
-      box-shadow: 0 2px 6px rgba(0,0,0,.06); z-index: 1000;
+
+    .banner {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, .06);
+      z-index: 1000;
     }
-  #top {
-    /* This is for making the border-bottom span the entire width of the sidebar */
-    margin-left: -18px;
-    margin-right: -18px;
-    border-bottom: 1px solid var(--border);
-  }
-  #top #inner {
-    /* This allows the text within the top div to maintain the same padding as the rest of the sidebar */
-    padding-left: 18px;
-    padding-right: 18px;
-  }
-  #storeListContainer {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    width: 100%;
-    box-sizing: border-box;
-    padding-bottom: 0.5rem;
-  }
-  .store {
-    /* Will change colors if necessary */
-    background-color: #fff;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-    padding: 0.5rem;
-    margin-bottom: 0.5rem;
-    cursor: pointer;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    transition: background-color 0.2s, box-shadow 0.2s;
-  }
-  .store:hover {
-    background-color: #f0f8ff;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-  }
 
-  #footer {
-    /* This fixes the footer div to the bottom of the sidebar */
-    /*flex: none;*/
-    position: absolute;
-    bottom: 0;
-    left: 400px;
-    width: calc(100% + 400px);
-    padding: 18px;
-    box-sizing: border-box;
-    border-top: 1px solid var(--border);
-    background: var(--card);
-  }
+    #top {
+      /* This is for making the border-bottom span the entire width of the sidebar */
+      margin-left: -18px;
+      margin-right: -18px;
+      border-bottom: 1px solid var(--border);
+    }
 
-  #storeCheckboxes input[type="checkbox"] {
-    accent-color: #007bff; /* bright blue */
-    cursor: pointer;
-    margin-right: 6px;
-  }
+    #top #inner {
+      /* This allows the text within the top div to maintain the same padding as the rest of the sidebar */
+      padding-left: 18px;
+      padding-right: 18px;
+    }
 
-  #storeCheckboxes label {
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    padding: 2px 0;
-  }
+    #storeListContainer {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      width: 100%;
+      box-sizing: border-box;
+      padding-bottom: 0.5rem;
+    }
 
-  #storeCheckboxes input[type="checkbox"]:checked + label,
-  #storeCheckboxes input[type="checkbox"]:checked {
-    color: #007bff;
-    font-weight: 600;
-  }
+    .store {
+      /* Will change colors if necessary */
+      background-color: var(--card2);
+      border: 1px solid var(--border);
+      color: var(--text);
+
+      border-radius: 6px;
+      padding: 0.5rem;
+      margin-bottom: 0.5rem;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      transition: background-color 0.2s, box-shadow 0.2s;
+    }
+
+    .store:hover {
+      background-color: var(--hover-bg);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    #footer {
+      /* This fixes the footer div to the bottom of the sidebar */
+      flex: none;
+      margin-top: auto;
+      margin-left: -10px;
+      /* padding: top right bottom left */
+      padding: 10px 10px 5px 10px;
+      border-top: 1px solid var(--border);
+      box-sizing: border-box;
+      width: calc(100% + 36px);
+      background: var(--card);
+    }
+
+    #storeCheckboxes input[type="checkbox"] {
+      accent-color: var(--accent);
+      cursor: pointer;
+      margin-right: 6px;
+    }
+
+    #storeCheckboxes label {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      padding: 2px 0;
+    }
+
+    #storeCheckboxes input[type="checkbox"]:checked+label,
+    #storeCheckboxes input[type="checkbox"]:checked {
+      color: var(--accent);
+      font-weight: 600;
+    }
   </style>
 </head>
-<body> 
-<header>
-  
+
+<body>
+  <header>
+
     <div id="top">
       <div id="inner">
         <h2>WatchDNA's Network | Find jewellers in your area</h2>
         <p>As your trusted directory for brands and authorized dealers, we make it easy to find and reach out to
-        Authorized Dealers. (Please note that only select authorized dealers will be featured under our brand filters.)
+          Authorized Dealers. (Please note that only select authorized dealers will be featured under our brand
+          filters.)
         </p>
       </div>
     </div>
@@ -188,15 +297,17 @@
       </select>
       <label for="storeFilter" style="margin-left:12px"><strong>Filter by store:</strong></label>
       <input id="storeFilter" type="search" placeholder="Search By Store Name" style="padding:8px; min-width:260px;" />
-      <div id="storeCheckboxes" style="margin-top:10px; max-height:200px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px;">
+      <div id="storeCheckboxes"
+        style="margin-top:10px; max-height:200px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px;">
         <!-- Store name checkboxes -->
-      </div>      
+      </div>
       <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
-        <button id="nearMeBtn" title="Share your location to find the closest store" style="padding:8px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer;">
+        <button id="nearMeBtn" title="Share your location to find the closest store"
+          style="padding:8px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer;">
           📍 Near me
-          </button>
-          <span id="nearMeStatus" style="font-size:.9rem; opacity:.8;"></span>
-        </div>
+        </button>
+        <span id="nearMeStatus" style="font-size:.9rem; opacity:.8;"></span>
+      </div>
       <div style="display:flex; gap:8px; align-items:center;">
         <select id="nearMeRadius" style="padding:6px; border:1px solid var(--border); border-radius:6px;">
           <option value="5">5 mi</option>
@@ -204,10 +315,10 @@
           <option value="25">25 mi</option>
           <option value="50">50 mi</option>
         </select>
-          <button id="nearMeWithinBtn" title="Show stores within radius"
-                  style="padding:8px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer;">
+        <button id="nearMeWithinBtn" title="Show stores within radius"
+          style="padding:8px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer;">
           Within radius
-          </button>
+        </button>
       </div>
     </div>
 
@@ -216,7 +327,7 @@
     </div>
 
     <div id="footer">
-      <a href="https://watchdna.com/tools/storelocator/directory" style="position: fixed; bottom: 0; left: 0; width: 100%; background-color: white;">Store Directory</a>
+      <a href="https://watchdna.com/tools/storelocator/directory">Store Directory</a>
     </div>
 
   </header>
@@ -237,76 +348,73 @@
     const params = new URLSearchParams(window.location.search);
     const INITIAL = {
       brand: params.get('brand') || '',
-      type:  params.get('type')  || 'all',
+      type: params.get('type') || 'all',
       store: params.get('store') || ''
     };
     console.log('[proto] initial filters:', INITIAL);
 
-    // --- API Configuration ---
-    const API_BASE_URL = window.location.origin;
-
-    // --- Load locations from API ---
-    async function loadLocations() {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/locations?limit=10000`);
-        if (!response.ok) {
-          throw new Error(`API request failed: ${response.status}`);
-        }
-        const result = await response.json();
-
-        // Convert API response to CSV-like format for compatibility
-        return result.data.map(location => ({
-          Handle: location.handle,
-          Name: location.name,
-          Status: location.status ? 'Active' : 'Inactive',
-          'Address Line 1': location.addressLine1,
-          'Address Line 2': location.addressLine2 || '',
-          'Postal/ZIP Code': location.postalCode || '',
-          City: location.city,
-          'State/Province/Region': location.stateProvinceRegion || '',
-          Country: location.country,
-          Phone: location.phone || '',
-          Email: location.email || '',
-          Website: location.website || '',
-          'Image URL': location.imageUrl || '',
-          Latitude: location.latitude,
-          Longitude: location.longitude,
-          Monday: location.monday || '',
-          Tuesday: location.tuesday || '',
-          Wednesday: location.wednesday || '',
-          Thursday: location.thursday || '',
-          Friday: location.friday || '',
-          Saturday: location.saturday || '',
-          Sunday: location.sunday || '',
-          'Page Title': location.pageTitle || '',
-          'Page Description': location.pageDescription || '',
-          'Meta Title': location.metaTitle || '',
-          'Meta Description': location.metaDescription || '',
-          Priority: location.priority || '',
-          Tags: location.tags || '',
-          'Custom Brands': location.customBrands || ''
-        }));
-      } catch (error) {
-        console.error('Error loading locations from API:', error);
-        alert('Failed to load store locations. Please try again later.');
-        return [];
-      }
+    // --- CSV loader (with cache-busting to avoid stale results) ---
+    function loadCSV(path) {
+      const url = `${path}?v=${Date.now()}`;
+      return new Promise((resolve, reject) => {
+        Papa.parse(url, {
+          download: true,
+          header: true,
+          skipEmptyLines: true,
+          complete: res => resolve(res.data),
+          error: err => reject(err)
+        });
+      });
     }
 
     // --- small hamburger toggle (left) ---
-    (function(){
+    (function () {
       const btn = document.getElementById('hamburger');
       const panel = document.getElementById('filtersPanel');
-      if (!btn || !panel) return;
+      const storeListContainer = document.getElementById('storeListContainer');
+
+      if (!btn || !panel || !storeListContainer) {
+        console.warn('Toggle init aborted, missing elements:', { btn, panel, storeListContainer });
+        return;
+      }
+
+      function setStoreListHidden(hidden) {
+        // keep a class for CSS transitions or style hooks
+        if (hidden) {
+          storeListContainer.classList.add('hidden');
+          //set inline style to be extra sure
+          storeListContainer.style.display = 'none';
+        }
+        else {
+          storeListContainer.classList.remove('hidden');
+          storeListContainer.style.display = '';
+        }
+        console.log('[storeList] set hidden =', hidden, 'classList:', storeListContainer.className);
+      }
+
       btn.addEventListener('click', (e) => {
         const wasHidden = panel.hasAttribute('hidden');
-        if (wasHidden) { panel.removeAttribute('hidden'); btn.setAttribute('aria-expanded','true'); }
-        else { panel.setAttribute('hidden',''); btn.setAttribute('aria-expanded','false'); }
+
+        if (wasHidden) {
+          //opening the Filters panel
+          panel.removeAttribute('hidden');
+          btn.setAttribute('aria-expanded', 'true');
+          setStoreListHidden(true); //hide the store list
+        }
+        else {
+          //closing the Filters panel
+          panel.setAttribute('hidden', '');
+          btn.setAttribute('aria-expanded', 'false');
+          setStoreListHidden(false); //show the store list
+        }
         e.stopPropagation();
       });
       document.addEventListener('click', (ev) => {
         if (!panel.hasAttribute('hidden') && !panel.contains(ev.target) && ev.target !== btn) {
-          panel.setAttribute('hidden',''); btn.setAttribute('aria-expanded','false');
+          panel.setAttribute('hidden', '');
+          btn.setAttribute('aria-expanded', 'false');
+          setStoreListHidden(false);
+          console.log('[document] closed filters by click outside');
         }
       });
     })();
@@ -365,16 +473,16 @@
     function syncStoreCheckboxes(filteredRows) {
       const allowed = new Set(
         filteredRows.map(r => (r['Name'] || '').trim().toLowerCase())
-    );
+      );
 
-     const q = (document.getElementById('storeFilter').value || '')
-              .trim().toLowerCase();
-      
+      const q = (document.getElementById('storeFilter').value || '')
+        .trim().toLowerCase();
+
       // Walk all checkbox rows in the list
       document.querySelectorAll('#storeCheckboxes label').forEach(label => {
         const cb = label.querySelector('input[type="checkbox"]');
         const name = (label.querySelector('span')?.textContent || cb.value || '')
-                   .trim().toLowerCase();
+          .trim().toLowerCase();
 
         const inFiltered = allowed.has(name);
 
@@ -472,7 +580,7 @@
         if (d <= radiusMeters) { clusterGroup.addLayer(m); kept++; }
       });
 
-      setNearMeStatus(`Showing ${kept} location(s) within ${(radiusMeters/1609.344).toFixed(0)} mi`);
+      setNearMeStatus(`Showing ${kept} location(s) within ${(radiusMeters / 1609.344).toFixed(0)} mi`);
       if (kept > 0) map.fitBounds(radiusCircle.getBounds().pad(0.2));
     }
 
@@ -536,8 +644,8 @@
     function showUserMarker(ll) {
       if (userMarker) userMarker.setLatLng(ll);
       else userMarker = L.marker(ll, { title: 'You are here' })
-      .bindPopup('<b>You are here</b>')
-      .addTo(map);
+        .bindPopup('<b>You are here</b>')
+        .addTo(map);
 
       L.circle(ll, { radius: 25, stroke: false, fillOpacity: 0.15 }).addTo(map);
     }
@@ -583,7 +691,7 @@
           emphasizeNearest(userLL, { ...best, row: getRowForMarker(best.marker) });
         },
         (err) => {
-          const m = {1:'Permission denied.',2:'Position unavailable.',3:'Request timed out.'};
+          const m = { 1: 'Permission denied.', 2: 'Position unavailable.', 3: 'Request timed out.' };
           setNearMeStatus(m[err.code] || 'Unable to get location.');
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
@@ -618,9 +726,9 @@
     }
 
     // --- Load data & render (with helpful logs) ---
-    loadLocations()
+    loadCSV('locations.csv')
       .then(rows => {
-        console.log('Locations loaded from API:', rows.length);
+        console.log('CSV rows (raw):', rows.length);
         const brandSet = new Set();
 
         // Keep only rows that *have something* in lat/lon
@@ -662,46 +770,48 @@
           // also expose type values for debugging / UI
           // (we don't include types in the brand list)
 
-          //Premium Location Detection (Not fully accurate for now)
-          //Checks if vendor has email value
-          row._isPremium =
-            row['Email'] &&
-            row['Email'].trim() !== '' &&
-            !row['Email'].toLowerCase().includes('noreply');
+          // A vendor is premium if it has an image OR any custom buttons (website, email, instagram, etc.)row._isPremium =
+          row._isPremium = !!(row['Email'] && row['Email'].trim() !== '');
+          
+          // For debugging (you can remove later)
+          if (row._isPremium) {
+          console.log("PREMIUM:", row['Name']);
+          }
+
         });
 
         map.addLayer(clusterGroup);
 
         const NearMeControl = L.Control.extend({
-        options: { position: 'bottomright' },
+          options: { position: 'bottomright' },
 
-        onAdd: function(map) {
-          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
-          container.style.backgroundColor = 'white';
-          container.style.border = '1px solid #ccc';
-          container.style.borderRadius = '6px';
-          container.style.cursor = 'pointer';
-          container.style.boxShadow = '0 2px 6px rgba(0,0,0,0.2)';
-          container.style.padding = '6px 10px';
-          container.style.fontSize = '16px';
-          container.style.display = 'flex';
-          container.style.alignItems = 'center';
-          container.style.justifyContent = 'center';
-          container.title = 'Find stores near me';
-          container.innerHTML = '📍 Near Me';
+          onAdd: function (map) {
+            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
+            container.style.backgroundColor = 'white';
+            container.style.border = '1px solid #ccc';
+            container.style.borderRadius = '6px';
+            container.style.cursor = 'pointer';
+            container.style.boxShadow = '0 2px 6px rgba(0,0,0,0.2)';
+            container.style.padding = '6px 10px';
+            container.style.fontSize = '16px';
+            container.style.display = 'flex';
+            container.style.alignItems = 'center';
+            container.style.justifyContent = 'center';
+            container.title = 'Find stores near me';
+            container.innerHTML = '📍 Near Me';
 
-          // Prevent map from zooming when clicking the control
-          L.DomEvent.disableClickPropagation(container);
+            // Prevent map from zooming when clicking the control
+            L.DomEvent.disableClickPropagation(container);
 
-          container.addEventListener('click', () => {
-            locateAndJumpToNearest();
-          });
+            container.addEventListener('click', () => {
+              locateAndJumpToNearest();
+            });
 
-          return container;
-        }
-      });
+            return container;
+          }
+        });
 
-      map.addControl(new NearMeControl());
+        map.addControl(new NearMeControl());
 
         if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
 
@@ -743,81 +853,81 @@
         });
 
         const RadiusControl = L.Control.extend({
-        options: { position: 'bottomright' },
+          options: { position: 'bottomright' },
 
-        onAdd: function(map) {
-          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
-          container.style.backgroundColor = 'white';
-          container.style.border = '1px solid #ccc';
-          container.style.borderRadius = '6px';
-          container.style.boxShadow = '0 2px 6px rgba(0,0,0,0.2)';
-          container.style.padding = '8px';
-          container.style.display = 'flex';
-          container.style.flexDirection = 'column';
-          container.style.gap = '6px';
-          container.style.fontSize = '14px';
-          container.title = 'Show stores within a radius of your location';
+          onAdd: function (map) {
+            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
+            container.style.backgroundColor = 'white';
+            container.style.border = '1px solid #ccc';
+            container.style.borderRadius = '6px';
+            container.style.boxShadow = '0 2px 6px rgba(0,0,0,0.2)';
+            container.style.padding = '8px';
+            container.style.display = 'flex';
+            container.style.flexDirection = 'column';
+            container.style.gap = '6px';
+            container.style.fontSize = '14px';
+            container.title = 'Show stores within a radius of your location';
 
-          // Prevent clicks from affecting map zoom/pan
-          L.DomEvent.disableClickPropagation(container);
+            // Prevent clicks from affecting map zoom/pan
+            L.DomEvent.disableClickPropagation(container);
 
-          // Radius dropdown
-          const select = L.DomUtil.create('select', '', container);
-          select.style.padding = '4px';
-          select.style.borderRadius = '4px';
-          select.style.border = '1px solid #ccc';
-          select.style.cursor = 'pointer';
+            // Radius dropdown
+            const select = L.DomUtil.create('select', '', container);
+            select.style.padding = '4px';
+            select.style.borderRadius = '4px';
+            select.style.border = '1px solid #ccc';
+            select.style.cursor = 'pointer';
 
-          [5, 10, 25, 50].forEach(mi => {
-            const opt = document.createElement('option');
-            opt.value = mi;
-            opt.textContent = `${mi} mi`;
-            if (mi === 10) opt.selected = true;
-            select.appendChild(opt);
-          });
+            [5, 10, 25, 50].forEach(mi => {
+              const opt = document.createElement('option');
+              opt.value = mi;
+              opt.textContent = `${mi} mi`;
+              if (mi === 10) opt.selected = true;
+              select.appendChild(opt);
+            });
 
-          // "Within radius" button
-          const button = L.DomUtil.create('button', '', container);
-          button.textContent = 'Within radius';
-          button.style.padding = '6px 8px';
-          button.style.border = '1px solid #ccc';
-          button.style.borderRadius = '4px';
-          button.style.cursor = 'pointer';
-          button.style.background = 'white';
+            // "Within radius" button
+            const button = L.DomUtil.create('button', '', container);
+            button.textContent = 'Within radius';
+            button.style.padding = '6px 8px';
+            button.style.border = '1px solid #ccc';
+            button.style.borderRadius = '4px';
+            button.style.cursor = 'pointer';
+            button.style.background = 'white';
 
-          // Click handler
-          button.addEventListener('click', () => {
-            const mi = parseFloat(select.value || '10');
-            const radiusMeters = mi * 1609.344;
+            // Click handler
+            button.addEventListener('click', () => {
+              const mi = parseFloat(select.value || '10');
+              const radiusMeters = mi * 1609.344;
 
-            if (!navigator.geolocation) {
-              setNearMeStatus('Geolocation not supported.');
-              return;
-            }
+              if (!navigator.geolocation) {
+                setNearMeStatus('Geolocation not supported.');
+                return;
+              }
 
-            setNearMeStatus(`Locating...`);
-            navigator.geolocation.getCurrentPosition(
-              pos => {
-                const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
-                showUserMarker(ll);
-                applyRadiusToCurrent(ll, radiusMeters);
-              },
-              () => setNearMeStatus('Unable to get location.'),
-              { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-            );
-          });
+              setNearMeStatus(`Locating...`);
+              navigator.geolocation.getCurrentPosition(
+                pos => {
+                  const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+                  showUserMarker(ll);
+                  applyRadiusToCurrent(ll, radiusMeters);
+                },
+                () => setNearMeStatus('Unable to get location.'),
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+              );
+            });
 
-          return container;
-        }
-      });
+            return container;
+          }
+        });
 
-      map.addControl(new RadiusControl());
+        map.addControl(new RadiusControl());
         populateBrandSelect(brandSet);
         rebuildStoreCheckboxes(allRows);
 
         // Preload filters from URL, then apply once
         document.getElementById('brandFilter').value = INITIAL.brand;
-        document.getElementById('typeFilter').value  = INITIAL.type;
+        document.getElementById('typeFilter').value = INITIAL.type;
         document.getElementById('storeFilter').value = INITIAL.store;
         applyFilter(INITIAL.brand);
 
@@ -847,4 +957,5 @@
       });
   </script>
 </body>
+
 </html>
