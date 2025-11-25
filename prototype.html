@@ -774,8 +774,10 @@
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-          const iconToUse = row._isPremium ? premiumIcon : regularIcon;
+          row._isPremium = !!(row['Email'] && row['Email'].trim() !== '');
 
+          const iconToUse = row._isPremium ? premiumIcon : regularIcon;
+          
           const marker = L.marker([lat, lon], { icon: iconToUse })
             .bindPopup(buildPopup(row));
           allMarkers.push({ row, marker });
