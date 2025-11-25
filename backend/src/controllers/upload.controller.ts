@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
 import uploadService from '../services/upload.service';
 
 export class UploadController {
@@ -139,19 +141,37 @@ export class UploadController {
 
       const filePath = await uploadService.getFilePath(upload.filename);
       
-      if (!filePath || !fs.existsSync(filePath)) {
-        return res.status(404).json({ error: 'File not found' });
+      if (!filePath) {
+        return res.status(404).json({ error: 'File path could not be resolved' });
       }
 
+      if (!fs.existsSync(filePath)) {
+        console.error(`File not found at path: ${filePath}`);
+        return res.status(404).json({ error: 'File not found on server' });
+      }
+
+      // Get file stats for Content-Length header
+      const stats = fs.statSync(filePath);
+      
       // Set headers for file download
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${upload.originalFilename}"`);
+      res.setHeader('Content-Length', stats.size.toString());
       
-      // Send file
-      res.sendFile(filePath);
+      // Send file with error handling (filePath is already absolute from service)
+      res.sendFile(filePath, (err) => {
+        if (err) {
+          console.error('Error sending file:', err);
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to send file' });
+          }
+        }
+      });
     } catch (error: any) {
       console.error('Download upload error:', error);
-      res.status(500).json({ error: error.message });
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message });
+      }
     }
   }
 
@@ -159,7 +179,12 @@ export class UploadController {
     try {
       const filePath = await uploadService.getMasterCSVPath();
       
-      if (!filePath || !fs.existsSync(filePath)) {
+      if (!filePath) {
+        return res.status(404).json({ error: 'Master CSV path could not be resolved' });
+      }
+
+      if (!fs.existsSync(filePath)) {
+        console.error(`Master CSV not found at path: ${filePath}`);
         return res.status(404).json({ error: 'Master CSV file not found. Run a scraping job first.' });
       }
 
@@ -171,11 +196,20 @@ export class UploadController {
       res.setHeader('Content-Disposition', 'attachment; filename="master_stores.csv"');
       res.setHeader('Content-Length', stats.size.toString());
       
-      // Send file
-      res.sendFile(filePath);
+      // Send file with error handling (filePath is already absolute from service)
+      res.sendFile(filePath, (err) => {
+        if (err) {
+          console.error('Error sending master CSV:', err);
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to send file' });
+          }
+        }
+      });
     } catch (error: any) {
       console.error('Download master CSV error:', error);
-      res.status(500).json({ error: error.message });
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message });
+      }
     }
   }
 }

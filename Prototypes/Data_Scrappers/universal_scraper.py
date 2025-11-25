@@ -135,12 +135,14 @@ def fetch_data(url: str, headers: Dict = None, timeout: int = 120, retries: int 
 
 
 def extract_stores_from_html_js(html_content: str) -> List[Dict]:
-    """Extract stores from HTML pages with embedded JavaScript"""
+    """Extract stores from HTML pages with embedded JavaScript or structured HTML"""
     import re
     
+    stores = []
+    
+    # Method 1: Try to find JSON patterns in HTML (original method)
     pattern = r'"name":"([^"]+)"[^}]*?"cityName":"([^"]*)"[^}]*?"countryName":"([^"]+)"[^}]*?"latitude":([^,]+),"longitude":([^,}]+)'
     matches = re.finditer(pattern, html_content)
-    stores = []
     
     for match in matches:
         start = max(0, match.start() - 500)
@@ -190,6 +192,161 @@ def extract_stores_from_html_js(html_content: str) -> List[Dict]:
         }
         
         stores.append(normalized_store)
+    
+    # Method 2: Try to extract JSON from script tags (e.g., Drupal JSON data)
+    if not stores:
+        try:
+            import json
+            from bs4 import BeautifulSoup
+            
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Look for script tags with JSON data (e.g., Drupal settings)
+            script_tags = soup.find_all('script', type='application/json')
+            
+            for script_tag in script_tags:
+                try:
+                    script_data = json.loads(script_tag.string)
+                    
+                    # Check for Blancpain points of sale data
+                    if isinstance(script_data, dict):
+                        # Look for points_of_sale in various possible locations
+                        pos_data = None
+                        if 'blancpain_points_of_sale' in script_data:
+                            pos_data = script_data['blancpain_points_of_sale']
+                        elif 'points_of_sale' in script_data:
+                            pos_data = script_data['points_of_sale']
+                        elif 'data' in script_data and 'points_of_sale' in script_data['data']:
+                            pos_data = script_data['data']['points_of_sale']
+                        
+                        if pos_data and isinstance(pos_data, dict) and 'points_of_sale' in pos_data:
+                            pos_list = pos_data['points_of_sale']
+                        elif isinstance(pos_data, list):
+                            pos_list = pos_data
+                        else:
+                            continue
+                        
+                        # Extract stores from the JSON array
+                        for pos in pos_list:
+                            if not isinstance(pos, dict):
+                                continue
+                            
+                            store = {}
+                            
+                            # Map fields from JSON to canonical format
+                            store['Name'] = pos.get('title', '')
+                            store['Address Line 1'] = pos.get('address_1', '')
+                            store['Address Line 2'] = pos.get('address_2', '')
+                            store['City'] = pos.get('city', '')
+                            store['State/Province/Region'] = pos.get('state', '')
+                            store['Country'] = pos.get('country', '')
+                            store['Postal/ZIP Code'] = pos.get('zip', '')
+                            store['Phone'] = pos.get('phone', '')
+                            store['Email'] = pos.get('email', '')
+                            store['Website'] = pos.get('website', '')
+                            
+                            # Handle URL (might be relative)
+                            url = pos.get('url', '')
+                            if url and not url.startswith('http'):
+                                url = 'https://www.blancpain.com' + url
+                            if url and not store.get('Website'):
+                                store['Website'] = url
+                            
+                            # Handle coordinates (array format: [lng, lat])
+                            coords = pos.get('coordinates', [])
+                            if isinstance(coords, list) and len(coords) >= 2:
+                                store['Longitude'] = str(coords[0])
+                                store['Latitude'] = str(coords[1])
+                            
+                            # Handle ID as handle
+                            if pos.get('id'):
+                                store['Handle'] = str(pos.get('id'))
+                            
+                            # Only add if we have at least a name
+                            if store.get('Name'):
+                                stores.append(store)
+                        
+                        if stores:
+                            log_debug(f"Extracted {len(stores)} stores from JSON script tag", "SUCCESS")
+                            break
+                            
+                except (json.JSONDecodeError, AttributeError, KeyError) as e:
+                    continue
+            
+            # Method 3: If still no stores, try parsing structured HTML (fallback)
+            if not stores:
+                # Look for headings with boutique/store names
+                headings = soup.find_all(['h2', 'h3'], string=re.compile(r'Boutique|Store|Retailer', re.I))
+                
+                for heading in headings:
+                    store = {}
+                    
+                    # Get name from heading
+                    name_link = heading.find('a')
+                    if name_link:
+                        name = name_link.get_text().strip()
+                        store['Name'] = name
+                        href = name_link.get('href', '')
+                        if href and not href.startswith('http'):
+                            href = 'https://www.blancpain.com' + href
+                        store['Website'] = href
+                    else:
+                        name = heading.get_text().strip()
+                        store['Name'] = name
+                    
+                    # Extract city and country from name (e.g., "Blancpain Boutique Zürich, Switzerland")
+                    name_parts = re.match(r'.*?Boutique\s+([^,]+),?\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)$', name, re.I)
+                    if name_parts:
+                        store['City'] = name_parts.group(1).strip()
+                        store['Country'] = name_parts.group(2).strip()
+                    
+                    # Get parent container
+                    parent = heading.find_parent(['div', 'section', 'article'])
+                    if parent:
+                        # Get text content, but exclude the heading itself
+                        heading_text = heading.get_text()
+                        text = parent.get_text()
+                        # Remove heading text from parent text to avoid duplication
+                        text = text.replace(heading_text, '', 1).strip()
+                        
+                        # Extract address (look for street patterns, exclude store name)
+                        address_patterns = [
+                            r'([A-Z][a-z]+.*?(?:Road|Street|Avenue|Rue|Boulevard|Building|Shop|Floor|No-).*?)(?:\n|,|$)',
+                            r'(Building No-[0-9]+.*?)(?:\n|,|$)',
+                            r'(Shop [A-Z0-9]+.*?)(?:\n|,|$)',
+                        ]
+                        
+                        for pattern in address_patterns:
+                            addr_match = re.search(pattern, text, re.MULTILINE)
+                            if addr_match:
+                                addr = addr_match.group(1).strip()
+                                # Clean up address (remove store name if present)
+                                addr = re.sub(r'^.*?Boutique\s+', '', addr, flags=re.I)
+                                if addr and len(addr) > 5:  # Only use if meaningful
+                                    store['Address Line 1'] = addr
+                                    break
+                        
+                        # If city/country not extracted from name, try from text
+                        if not store.get('City'):
+                            city_country_match = re.search(r'([A-Z][a-z]+(?: [A-Z][a-z]+)?),?\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)', text)
+                            if city_country_match:
+                                store['City'] = city_country_match.group(1).strip()
+                                store['Country'] = city_country_match.group(2).strip()
+                        
+                        # Extract postal code (4-6 digits)
+                        postal_match = re.search(r'\b(\d{4,6})\b', text)
+                        if postal_match:
+                            store['Postal/ZIP Code'] = postal_match.group(1)
+                    
+                    # Only add if we have at least a name
+                    if store.get('Name'):
+                        stores.append(store)
+                    
+        except ImportError:
+            # BeautifulSoup not available, skip HTML parsing
+            pass
+        except Exception as e:
+            log_debug(f"HTML parsing error: {e}", "WARN")
     
     return stores
 
@@ -501,75 +658,221 @@ def scrape_viewport_expansion(url: str, url_params: Dict, region: str = "world")
     return stores
 
 
-def scrape_country_expansion(url: str, url_params: Dict, region: str = "world") -> List[Dict]:
-    """Expand country-filter API by iterating through countries"""
+def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", countries_dict: Dict = None, brand_config: Dict = None, use_watch_countries: bool = False) -> List[Dict]:
+    """Expand country-filter API by iterating through countries, with optional pagination support"""
     import requests
     
-    all_countries = [
-        "US", "CA", "GB", "FR", "DE", "IT", "ES", "CH", "AT", "BE", "NL", "SE", "NO", "DK", "FI",
-        "IE", "PT", "GR", "PL", "CZ", "HU", "RO", "BG", "HR", "SI", "SK", "EE", "LV", "LT",
-        "JP", "CN", "KR", "TW", "HK", "SG", "MY", "TH", "ID", "PH", "VN", "IN", "AU", "NZ",
-        "AE", "SA", "QA", "KW", "BH", "OM", "IL", "TR", "ZA", "EG", "BR", "MX", "AR", "CL", "CO"
-    ]
+    # Try to load comprehensive watch store countries list
+    watch_countries_file = os.path.join(os.path.dirname(__file__), "watch_store_countries.json")
+    watch_countries_data = None
+    if os.path.exists(watch_countries_file):
+        try:
+            with open(watch_countries_file, 'r') as f:
+                watch_countries_data = json.load(f)
+        except:
+            pass
     
-    if region == "north_america":
-        countries = ["US", "CA", "MX"]
-    elif region == "europe":
-        countries = ["GB", "FR", "DE", "IT", "ES", "CH", "AT", "BE", "NL", "SE", "NO", "DK"]
+    # Priority: custom countries > watch_store_countries > fallback
+    # Use countries from brand config if provided (and not using watch_store_countries)
+    if countries_dict and not use_watch_countries:
+        countries_list = list(countries_dict.keys())
+        country_names = countries_dict
+        print(f"🌍 Country filter detected - iterating {len(countries_list)} countries (from brand config)")
+    elif use_watch_countries and watch_countries_data and watch_countries_data.get("countries"):
+        # Use comprehensive watch store countries list
+        all_watch_countries = watch_countries_data["countries"]
+        countries_list = list(all_watch_countries.keys())
+        country_names = all_watch_countries
+        
+        # Filter by region if specified
+        if region != "world" and watch_countries_data.get("regions") and region in watch_countries_data["regions"]:
+            region_codes = watch_countries_data["regions"][region]
+            countries_list = [code for code in countries_list if code in region_codes]
+            country_names = {code: all_watch_countries[code] for code in countries_list if code in all_watch_countries}
+        
+        print(f"🌍 Country filter detected - iterating {len(countries_list)} countries (from watch_store_countries.json)")
     else:
-        countries = all_countries
-    
-    print(f"🌍 Country filter detected - iterating {len(countries)} countries")
+        # Fallback to hardcoded list
+        all_countries = [
+            "US", "CA", "GB", "FR", "DE", "IT", "ES", "CH", "AT", "BE", "NL", "SE", "NO", "DK", "FI",
+            "IE", "PT", "GR", "PL", "CZ", "HU", "RO", "BG", "HR", "SI", "SK", "EE", "LV", "LT",
+            "JP", "CN", "KR", "TW", "HK", "SG", "MY", "TH", "ID", "PH", "VN", "IN", "AU", "NZ",
+            "AE", "SA", "QA", "KW", "BH", "OM", "IL", "TR", "ZA", "EG", "BR", "MX", "AR", "CL", "CO"
+        ]
+        
+        if region == "north_america":
+            countries_list = ["US", "CA", "MX"]
+        elif region == "europe":
+            countries_list = ["GB", "FR", "DE", "IT", "ES", "CH", "AT", "BE", "NL", "SE", "NO", "DK"]
+        else:
+            countries_list = all_countries
+        
+        country_names = {code: code for code in countries_list}
+        print(f"🌍 Country filter detected - iterating {len(countries_list)} countries")
     
     country_param = None
+    qp_param = None
     for key in url_params.keys():
         if "country" in key.lower():
             country_param = key
-            break
+        if key.lower() == "qp":
+            qp_param = key
     if not country_param:
         country_param = "country"
+    
+    # Check if pagination is needed (has offset or per parameter)
+    has_pagination = "offset" in url_params or "per" in url_params or "per_page" in url_params
+    per_page = int(url_params.get("per", url_params.get("per_page", 50)))
     
     all_stores = []
     seen_ids = set()
     
-    for i, country_code in enumerate(countries, 1):
-        params = url_params.copy()
-        params[country_param] = country_code
+    for i, country_code in enumerate(countries_list, 1):
+        country_name = country_names.get(country_code, country_code)
         
-        try:
-            response = requests.get(url.split('?')[0], params=params, timeout=10, headers={
-                "User-Agent": "Mozilla/5.0"
-            })
-            response.raise_for_status()
-            data = response.json()
+        # Handle pagination for this country
+        if has_pagination:
+            offset = 0
+            country_stores = []
             
-            if isinstance(data, list):
-                stores = data
-            elif isinstance(data, dict):
-                for key in ["data", "results", "items", "stores", "locations"]:
-                    if key in data:
-                        stores = data[key] if isinstance(data[key], list) else []
-                        break
-                else:
+            while True:
+                params = url_params.copy()
+                params[country_param] = country_code
+                if qp_param:
+                    params[qp_param] = country_name
+                if "offset" in url_params:
+                    params["offset"] = str(offset)
+                
+                try:
+                    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+                    if brand_config and brand_config.get("headers"):
+                        headers.update(brand_config["headers"])
+                    
+                    response = requests.get(url.split('?')[0], params=params, timeout=30, headers=headers)
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    # Extract stores using data_path from brand_config if available
                     stores = []
-            else:
-                stores = []
+                    if brand_config and brand_config.get("data_path"):
+                        data_path = brand_config["data_path"].split(".")
+                        current = data
+                        for key in data_path:
+                            if isinstance(current, dict):
+                                current = current.get(key)
+                            else:
+                                current = None
+                                break
+                        if isinstance(current, list):
+                            stores = current
+                    else:
+                        # Fallback: try common paths
+                        if isinstance(data, list):
+                            stores = data
+                        elif isinstance(data, dict):
+                            response_data = data.get('response', data)
+                            stores = response_data.get('entities', []) or response_data.get('results', []) or response_data.get('data', [])
+                    
+                    if not stores:
+                        break
+                    
+                    country_stores.extend(stores)
+                    
+                    # Check if we've reached the end
+                    total_count = data.get('response', {}).get('count', 0) if isinstance(data, dict) else 0
+                    if len(stores) < per_page or (total_count > 0 and len(country_stores) >= total_count):
+                        break
+                    
+                    offset += per_page
+                    time.sleep(0.5)  # Rate limiting
+                    
+                except Exception as e:
+                    log_debug(f"Error fetching {country_code} offset {offset}: {e}", "WARN")
+                    break
             
+            # Deduplicate stores for this country
             new_stores = 0
-            for store in stores:
-                store_id = store.get("id") or store.get("store_id") or str(store)
-                if store_id not in seen_ids:
+            for store in country_stores:
+                store_id = None
+                if isinstance(store, dict):
+                    # Try multiple ID extraction strategies
+                    profile = store.get('profile', {})
+                    if isinstance(profile, dict):
+                        meta = profile.get('meta', {})
+                        if isinstance(meta, dict):
+                            store_id = meta.get('id')
+                    if not store_id:
+                        store_id = store.get('id') or store.get('uid') or store.get('entityId')
+                    if not store_id:
+                        # Use name + address as fallback
+                        name = store.get('name') or (profile.get('name') if isinstance(profile, dict) else '')
+                        addr = ''
+                        if isinstance(profile, dict):
+                            addr_obj = profile.get('address', {})
+                            if isinstance(addr_obj, dict):
+                                addr = addr_obj.get('line1', '')
+                        if name and addr:
+                            store_id = f"{name}|{addr}"
+                
+                if store_id and store_id not in seen_ids:
                     all_stores.append(store)
                     seen_ids.add(store_id)
                     new_stores += 1
             
             if new_stores > 0:
-                print(f"  [{i}/{len(countries)}] {country_code}: +{new_stores} stores (total: {len(all_stores)})")
+                print(f"  [{i}/{len(countries_list)}] {country_code}: +{new_stores} stores (total: {len(all_stores)})")
+        else:
+            # No pagination - single request per country
+            params = url_params.copy()
+            params[country_param] = country_code
+            if qp_param:
+                params[qp_param] = country_name
             
-            time.sleep(0.3)
-        
-        except Exception as e:
-            continue
+            try:
+                headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+                if brand_config and brand_config.get("headers"):
+                    headers.update(brand_config["headers"])
+                
+                response = requests.get(url.split('?')[0], params=params, timeout=30, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                
+                # Extract stores
+                stores = []
+                if brand_config and brand_config.get("data_path"):
+                    data_path = brand_config["data_path"].split(".")
+                    current = data
+                    for key in data_path:
+                        if isinstance(current, dict):
+                            current = current.get(key)
+                        else:
+                            current = None
+                            break
+                    if isinstance(current, list):
+                        stores = current
+                else:
+                    if isinstance(data, list):
+                        stores = data
+                    elif isinstance(data, dict):
+                        response_data = data.get('response', data)
+                        stores = response_data.get('entities', []) or response_data.get('results', []) or response_data.get('data', [])
+                
+                new_stores = 0
+                for store in stores:
+                    store_id = store.get("id") or store.get("store_id") or str(store)
+                    if store_id not in seen_ids:
+                        all_stores.append(store)
+                        seen_ids.add(store_id)
+                        new_stores += 1
+                
+                if new_stores > 0:
+                    print(f"  [{i}/{len(countries_list)}] {country_code}: +{new_stores} stores (total: {len(all_stores)})")
+                
+                time.sleep(0.3)
+            
+            except Exception as e:
+                log_debug(f"Error fetching {country_code}: {e}", "WARN")
+                continue
     
     return all_stores
 
@@ -912,7 +1215,33 @@ def universal_scrape(
         elif detected_type == "country_filter":
             # Country expansion
             log_debug(f"Strategy: Country iteration (region={region})", "INFO")
-            stores = scrape_country_expansion(url, locator_analysis["url_params"], region)
+            
+            # Priority order for country list:
+            # 1. Brand config with use_watch_store_countries: true -> use comprehensive list
+            # 2. Brand config with custom countries -> use custom list
+            # 3. Auto-detect: use comprehensive list by default for country-based endpoints
+            countries_dict = None
+            use_watch_countries = False
+            
+            if brand_config:
+                # Check if brand config explicitly wants comprehensive list
+                if brand_config.get("use_watch_store_countries", False):
+                    use_watch_countries = True
+                    log_debug("Using comprehensive watch store countries (from brand config)", "DEBUG")
+                # Or if custom countries provided
+                elif brand_config.get("countries"):
+                    countries_dict = brand_config.get("countries")
+                    log_debug(f"Using countries from brand config: {len(countries_dict)} countries", "DEBUG")
+            
+            # Auto-apply comprehensive list if no brand config preference and country_filter detected
+            if not countries_dict and not use_watch_countries:
+                use_watch_countries = True
+                log_debug("Auto-applying comprehensive watch store countries (country_filter detected)", "DEBUG")
+                print("   💡 Auto-detected country-based endpoint - using comprehensive 88-country list")
+            
+            stores = scrape_country_expansion(url, locator_analysis["url_params"], region, 
+                                             countries_dict=countries_dict, brand_config=brand_config,
+                                             use_watch_countries=use_watch_countries)
             results["expansion_used"] = True
         
         elif not is_region_specific or detected_type == "single_call":
