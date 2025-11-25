@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { scraperService } from '../services/scraper.service';
+import uploadService from '../services/upload.service';
 import fs from 'fs';
 import path from 'path';
 
@@ -263,17 +264,28 @@ export const scraperController = {
   // GET /api/scraper/stats - Get scraper statistics
   async getStats(req: Request, res: Response) {
     try {
-      const [totalJobs, runningJobs, completedJobs, failedJobs, totalRecordsResult] = await Promise.all([
+      const [totalJobs, runningJobs, completedJobs, failedJobs] = await Promise.all([
         prisma.scraperJob.count(),
         prisma.scraperJob.count({ where: { status: 'running' } }),
         prisma.scraperJob.count({ where: { status: 'completed' } }),
-        prisma.scraperJob.count({ where: { status: 'failed' } }),
-        prisma.scraperJob.aggregate({
-          _sum: { recordsScraped: true }
-        })
+        prisma.scraperJob.count({ where: { status: 'failed' } })
       ]);
       
-      const totalRecords = totalRecordsResult._sum.recordsScraped || 0;
+      // Count unique records from master CSV (already deduplicated)
+      let totalRecords = 0;
+      try {
+        const masterCsvPath = await uploadService.getMasterCSVPath();
+        if (masterCsvPath && fs.existsSync(masterCsvPath)) {
+          totalRecords = await scraperService.countCsvRows(masterCsvPath);
+        }
+      } catch (error: any) {
+        console.error('Error counting master CSV rows:', error);
+        // Fallback to sum of individual job records if master CSV can't be read
+        const totalRecordsResult = await prisma.scraperJob.aggregate({
+          _sum: { recordsScraped: true }
+        });
+        totalRecords = totalRecordsResult._sum.recordsScraped || 0;
+      }
 
       // Get recent jobs
       const recentJobs = await prisma.scraperJob.findMany({

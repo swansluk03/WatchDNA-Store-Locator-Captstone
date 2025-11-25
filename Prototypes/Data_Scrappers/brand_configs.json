@@ -2,7 +2,12 @@
   "_README": {
     "description": "Brand configurations for store locator scraping",
     "usage": "Select a brand, modify the URL if needed, and start scraping",
-    "add_new_brand": "Copy a similar 'type' configuration and update the URL and field mappings"
+    "add_new_brand": "Copy a similar 'type' configuration and update the URL and field mappings",
+    "country_configuration": {
+      "use_watch_store_countries": "Set to true to use comprehensive 88-country list from watch_store_countries.json",
+      "countries": "Provide custom countries object if you want to override the comprehensive list",
+      "see": "COUNTRY_CONFIG_GUIDE.md for details on country configuration"
+    }
   },
 
   "rolex_retailers": {
@@ -269,5 +274,37 @@
       "Longitude": "data-lng",
       "Name": "data-title"
     }
+  },
+
+  "blancpain_stores": {
+    "type": "html",
+    "url": "https://www.blancpain.com/en-us/service/points-sale",
+    "description": "Blancpain Store Locator - HTML page with structured store information ✅",
+    "method": "GET"
+  },
+
+  "breitling_stores": {
+    "type": "json",
+    "url": "https://store.breitling.com/en?country=US&qp=United+States&r=1000&l=en&per=50&offset=0",
+    "description": "Breitling Store Locator - JSON API with country-based search and offset pagination. URL returns JSON directly. Use country parameter to get stores for different countries. Large radius (1000) gets all stores per country. Scraper handles offset pagination automatically ✅",
+    "method": "GET",
+    "data_path": "response.entities",
+    "field_mapping": {
+      "Handle": "profile.meta.id",
+      "Name": "profile.name",
+      "Address Line 1": "profile.address.line1",
+      "Address Line 2": "profile.address.line2",
+      "City": "profile.address.city",
+      "State/Province/Region": "profile.address.region",
+      "Country": "profile.address.countryCode",
+      "Postal/ZIP Code": "profile.address.postalCode",
+      "Phone": "profile.mainPhone.display",
+      "Email": "profile.emails.0",
+      "Website": "profile.websiteUrl.url",
+      "Latitude": "profile.geocodedCoordinate.latitude",
+      "Longitude": "profile.geocodedCoordinate.longitude"
+    },
+    "use_watch_store_countries": true,
+    "_note": "When use_watch_store_countries is true, scraper uses comprehensive list from watch_store_countries.json. Set to false and provide 'countries' object to use custom list."
   }
 }
