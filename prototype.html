@@ -769,6 +769,19 @@
             .forEach(b => brandSet.add(b));
           // also expose type values for debugging / UI
           // (we don't include types in the brand list)
+
+          // A vendor is premium if it has an image OR any custom buttons (website, email, instagram, etc.)row._isPremium =
+          (row['Featured Image'] && row['Featured Image'].trim() !== '') ||
+          (row['Custom Button URL 1'] && row['Custom Button URL 1'].trim() !== '') ||
+          (row['Custom Button URL 2'] && row['Custom Button URL 2'].trim() !== '') ||
+          (row['Custom Button URL 3'] && row['Custom Button URL 3'].trim() !== '') ||
+          (row['Custom Button URL 4'] && row['Custom Button URL 4'].trim() !== '');
+          
+          // For debugging (you can remove later)
+          if (row._isPremium) {
+          console.log("PREMIUM:", row['Name']);
+          }
+
         });
 
         map.addLayer(clusterGroup);
