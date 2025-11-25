@@ -425,6 +425,23 @@
     let allRows = [];
     let allMarkers = [];
 
+    //Icons for regular and premium vendors
+    const regularIcon = L.icon({
+      iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34]
+    });
+
+    const premiumIcon = L.icon({
+      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-gold.png',
+      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34]
+    });
+
     function buildPopup(row) {
       const addr = [row['Address Line 1'], row['City'], row['State/Province/Region'], row['Country']]
         .filter(Boolean).join(', ');
@@ -757,7 +774,10 @@
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-          const marker = L.marker([lat, lon]).bindPopup(buildPopup(row));
+          const iconToUse = row._isPremium ? premiumIcon : regularIcon;
+
+          const marker = L.marker([lat, lon], { icon: iconToUse })
+            .bindPopup(buildPopup(row));
           allMarkers.push({ row, marker });
           clusterGroup.addLayer(marker);
           bounds.extend([lat, lon]);
@@ -770,7 +790,7 @@
           // also expose type values for debugging / UI
           // (we don't include types in the brand list)
 
-          // A vendor is premium if it has an image OR any custom buttons (website, email, instagram, etc.)row._isPremium =
+          // A vendor is premium if it has an email attached to it (temporary logic)
           row._isPremium = !!(row['Email'] && row['Email'].trim() !== '');
           
           // For debugging (you can remove later)
