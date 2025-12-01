@@ -212,6 +212,28 @@ export class UploadController {
       }
     }
   }
+
+  async revalidateUpload(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { autoFix, checkUrls } = req.body;
+
+      const result = await uploadService.revalidateUpload(id, {
+        autoFix: autoFix !== undefined ? Boolean(autoFix) : true,
+        checkUrls: checkUrls !== undefined ? Boolean(checkUrls) : false
+      });
+
+      res.json({
+        success: true,
+        message: 'Re-validation completed',
+        ...result
+      });
+
+    } catch (error: any) {
+      console.error('Re-validate upload error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
 }
 
 export default new UploadController();

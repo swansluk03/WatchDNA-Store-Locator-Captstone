@@ -41,13 +41,27 @@ export class ValidationService {
     );
   }
 
-  async validateCSV(filePath: string): Promise<ValidationResult> {
+  async validateCSV(
+    filePath: string, 
+    options?: {
+      autoFix?: boolean;
+      checkUrls?: boolean;
+    }
+  ): Promise<ValidationResult> {
     return new Promise((resolve, reject) => {
       const args = [
         this.validatorScriptPath,
         filePath,
         '--json' // Get JSON output
       ];
+
+      // Add optional flags
+      if (options?.autoFix) {
+        args.push('--fix');
+      }
+      if (options?.checkUrls) {
+        args.push('--check-urls');
+      }
 
       console.log(`Running validation: ${this.pythonPath} ${args.join(' ')}`);
 

@@ -53,7 +53,6 @@ class ScraperService {
         '--url', url,
         '--output', individualCsvFile,
         '--region', region,
-        '--no-validate',
         '--brand-config', JSON.stringify(config) // Pass brand config for field mapping
       ], {
         cwd: scraperPath,

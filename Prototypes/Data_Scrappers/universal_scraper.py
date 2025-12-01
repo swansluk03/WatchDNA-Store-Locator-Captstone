@@ -42,7 +42,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from locator_type_detector import detect_locator_type
 from pattern_detector import detect_data_pattern
 from data_normalizer import batch_normalize, write_normalized_csv
-from validate_csv import validate_csv
+from validate_csv import validate_csv, CSVValidator, DEFAULT_REQUIRED
 
 
 def fetch_data(url: str, headers: Dict = None, timeout: int = 120, retries: int = 3) -> Any:
@@ -1320,14 +1320,48 @@ def universal_scrape(
     print(f"   ✅ Saved {len(normalized)} records ({file_size:.1f} KB)")
     print()
     
-    # Step 5: Validate
+    # Step 5: Validate and Auto-Fix Data Quality Issues
     if validate_output:
-        print("📋 Validating...")
+        print("📋 Validating and fixing data quality issues...")
         try:
-            valid = validate_csv(output_file)
+            # Use CSVValidator with auto-fix enabled to clean up common issues
+            validator = CSVValidator(
+                required_headers=DEFAULT_REQUIRED,
+                warn_duplicates=True,
+                fail_duplicates=False,
+                show_bad=False
+            )
+            
+            # Auto-fix data quality issues (backslashes, control characters, etc.)
+            exit_code = validator.validate_file(output_file, auto_fix=True)
+            
+            # Remove duplicates if any were found
+            duplicates_removed = validator.remove_duplicates_from_file(output_file)
+            if duplicates_removed > 0:
+                print(f"   🔧 Removed {duplicates_removed} duplicate row(s)")
+            
+            # Re-validate after fixes
+            validator = CSVValidator(
+                required_headers=DEFAULT_REQUIRED,
+                warn_duplicates=True,
+                fail_duplicates=False,
+                show_bad=False
+            )
+            exit_code = validator.validate_file(output_file, auto_fix=False)
+            
             results["validation_performed"] = True
-            results["validation_passed"] = valid
-            print(f"   {'✅ Valid' if valid else '⚠️  Has warnings'}")
+            results["validation_passed"] = len(validator.errors) == 0
+            results["validation_warnings"] = len(validator.warnings)
+            results["duplicates_removed"] = duplicates_removed
+            results["validation_errors"] = len(validator.errors)
+            
+            if len(validator.errors) == 0:
+                if len(validator.warnings) > 0:
+                    print(f"   ✅ Valid (with {len(validator.warnings)} warning(s))")
+                else:
+                    print(f"   ✅ Valid")
+            else:
+                print(f"   ⚠️  Has {len(validator.errors)} error(s), {len(validator.warnings)} warning(s)")
         except Exception as e:
             results["validation_performed"] = True
             results["validation_passed"] = False
