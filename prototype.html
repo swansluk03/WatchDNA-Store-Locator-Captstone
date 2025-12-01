@@ -450,7 +450,18 @@
       const addr = [row['Address Line 1'], row['City'], row['State/Province/Region'], row['Country']]
         .filter(Boolean).join(', ');
       const phone = row['Phone'] ? `<br>${row['Phone']}` : '';
-      return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}</div>`;
+      
+      // Get brands from Brands column first, fallback to Custom Brands if empty
+      let brands = (row['Brands'] || '').trim();
+      if (!brands && row['Custom Brands']) {
+        // Extract brand names from HTML Custom Brands column
+        const customBrandsHtml = row['Custom Brands'];
+        const brandMatches = customBrandsHtml.match(/>([^<]+)<\/A>/gi) || [];
+        brands = brandMatches.map(m => m.replace(/>|<\/A>/gi, '').trim()).filter(Boolean).join(', ');
+      }
+      
+      const brandsDisplay = brands ? `<br><br><strong>Brands:</strong> ${brands}` : '';
+      return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}${brandsDisplay}</div>`;
     }
 
 
@@ -539,9 +550,9 @@
       allMarkers.forEach(({ row }) => {
         let passes = true;
 
-        // brand filter
+        // brand filter - check Brands column (plain text, comma-separated)
         if (brandValue) {
-          const brands = (row['Custom Brands'] || '')
+          const brands = (row['Brands'] || '')
             .toUpperCase()
             .split(',')
             .map(s => s.trim())
@@ -775,7 +786,7 @@
     }
 
     // --- Load data & render (with helpful logs) ---
-    loadCSV('locations.csv')
+    loadCSV('backend/uploads/master_stores.csv')
       .then(rows => {
         console.log('CSV rows (raw):', rows.length);
         const brandSet = new Set();
@@ -816,7 +827,8 @@
           clusterGroup.addLayer(marker);
           bounds.extend([lat, lon]);
 
-          (row['Custom Brands'] || '')
+          // Extract brands from Brands column (plain text, comma-separated)
+          (row['Brands'] || '')
             .split(',')
             .map(s => s.trim())
             .filter(Boolean)
@@ -1008,12 +1020,12 @@
 
         console.log('Markers added:', allMarkers.length);
         if (allMarkers.length === 0) {
-          showBanner('No markers loaded — check that locations.csv has data rows with numeric Latitude/Longitude.');
+          showBanner('No markers loaded — check that master_stores.csv has data rows with numeric Latitude/Longitude.');
         }
       })
       .catch(err => {
         console.error('Error loading CSV:', err);
-        alert('Failed to load locations.csv. Serve via http://localhost and ensure the CSV sits next to prototype.html.');
+        alert('Failed to load master_stores.csv. Serve via http://localhost and ensure the CSV file exists at backend/uploads/master_stores.csv.');
       });
   </script>
 </body>

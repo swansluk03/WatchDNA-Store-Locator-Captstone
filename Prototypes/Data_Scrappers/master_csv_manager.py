@@ -104,6 +104,35 @@ def extract_brands_from_custom_brands(custom_brands_str: str) -> Set[str]:
     return normalized_brands
 
 
+def extract_all_brands_from_store(store: Dict[str, str]) -> Set[str]:
+    """
+    Extract all brands from a store record, checking both Custom Brands and Brands columns
+    
+    Args:
+        store: Store dictionary
+    
+    Returns:
+        Set of brand names (uppercase)
+    """
+    brands = set()
+    
+    # Extract from Custom Brands column (HTML format)
+    custom_brands_str = store.get('Custom Brands', '').strip()
+    if custom_brands_str:
+        brands.update(extract_brands_from_custom_brands(custom_brands_str))
+    
+    # Extract from Brands column (plain text, comma-separated)
+    brands_str = store.get('Brands', '').strip()
+    if brands_str:
+        # Split by comma and clean
+        for brand in brands_str.split(','):
+            brand = brand.strip().upper()
+            if brand:
+                brands.add(brand)
+    
+    return brands
+
+
 def format_brands_for_custom_brands(brands: Set[str]) -> str:
     """
     Format brand names as HTML links for Custom Brands column
@@ -373,31 +402,37 @@ def find_matching_store(
     return None
 
 
-def merge_store_data(existing_store: Dict[str, str], new_store: Dict[str, str], new_brand: str) -> Dict[str, str]:
+def merge_store_data(existing_store: Dict[str, str], new_store: Dict[str, str], new_brand: str = None) -> Dict[str, str]:
     """
     Merge two store records, combining brands and keeping most complete data
     
     Args:
         existing_store: Existing store from master CSV
         new_store: New store being added
-        new_brand: Brand name for the new store
+        new_brand: Optional brand name for the new store (if None, extracts from new_store)
     
     Returns:
         Merged store dictionary
     """
     merged = existing_store.copy()
     
-    # Extract existing brands
-    existing_brands_str = existing_store.get('Custom Brands', '') or existing_store.get('Brands', '')
-    existing_brands = extract_brands_from_custom_brands(existing_brands_str)
+    # Extract existing brands from both columns
+    existing_brands = extract_all_brands_from_store(existing_store)
     
-    # Add new brand
-    new_brand_normalized = normalize_brand_name(new_brand)
-    existing_brands.add(new_brand_normalized)
+    # Extract brands from new store
+    new_store_brands = extract_all_brands_from_store(new_store)
     
-    # Update brands column
-    merged['Custom Brands'] = format_brands_for_custom_brands(existing_brands)
-    merged['Brands'] = ', '.join(sorted(existing_brands))  # Simple comma-separated for easy reading
+    # If new_brand is provided, add it
+    if new_brand:
+        new_brand_normalized = normalize_brand_name(new_brand)
+        new_store_brands.add(new_brand_normalized)
+    
+    # Combine all brands
+    all_brands = existing_brands.union(new_store_brands)
+    
+    # Update brands columns
+    merged['Custom Brands'] = format_brands_for_custom_brands(all_brands)
+    merged['Brands'] = ', '.join(sorted(all_brands))  # Simple comma-separated for easy reading
     
     # Merge other fields: prefer non-empty values, new store takes precedence for conflicts
     for key, new_value in new_store.items():
@@ -652,12 +687,291 @@ def append_to_master_csv(
     log_sync(f"  Master stores after: {master_stores_after}", "INFO")
     log_sync("=" * 80, "INFO")
     
+    # Automatically validate and deduplicate after merging
+    log_sync("", "INFO")  # Empty line for spacing
+    validate_result = validate_and_deduplicate_master_csv(master_csv)
+    
+    # Update return stats with validation results
+    final_stores_count = validate_result.get("stores_after", master_stores_after)
+    
     return {
         "master_stores_before": master_stores_before,
         "new_stores": new_stores_count,
         "stores_merged": stores_merged,
         "stores_added": stores_added,
-        "master_stores_after": master_stores_after
+        "master_stores_after": master_stores_after,
+        "validation": {
+            "stores_before_validation": validate_result.get("stores_before", master_stores_after),
+            "duplicates_by_location": validate_result.get("duplicates_by_location", 0),
+            "duplicates_by_name": validate_result.get("duplicates_by_name", 0),
+            "stores_after_validation": final_stores_count
+        }
+    }
+
+
+def validate_and_deduplicate_master_csv(master_csv: str) -> Dict[str, any]:
+    """
+    Validate and deduplicate the master CSV file
+    
+    This function:
+    1. Deduplicates by location (same lat/lon) - keeps one per location, preferring entries with phone numbers
+    2. Deduplicates by store name - prefers entries with phone numbers and more complete data
+    3. Logs all deduplication actions
+    
+    Args:
+        master_csv: Path to master CSV file
+    
+    Returns:
+        Dictionary with statistics:
+        {
+            "stores_before": int,
+            "duplicates_by_location": int,
+            "duplicates_by_name": int,
+            "stores_after": int
+        }
+    """
+    if not os.path.exists(master_csv):
+        log_sync(f"Master CSV file not found: {master_csv}", "WARN")
+        return {
+            "stores_before": 0,
+            "duplicates_by_location": 0,
+            "duplicates_by_name": 0,
+            "stores_after": 0
+        }
+    
+    log_sync("=" * 80, "INFO")
+    log_sync("Starting master CSV validation and deduplication", "INFO")
+    log_sync(f"Master CSV: {master_csv}", "INFO")
+    
+    # Read master CSV
+    stores = read_csv_to_dict_list(master_csv)
+    stores_before = len(stores)
+    log_sync(f"Stores before validation: {stores_before}", "INFO")
+    
+    if not stores:
+        log_sync("No stores to validate", "WARN")
+        return {
+            "stores_before": 0,
+            "duplicates_by_location": 0,
+            "duplicates_by_name": 0,
+            "stores_after": 0
+        }
+    
+    # First pass: Deduplicate by location (lat/lon)
+    log_sync("-" * 80, "INFO")
+    log_sync("Step 1: Deduplicating by location (coordinates)", "INFO")
+    location_map = {}
+    duplicates_by_location = 0
+    
+    for store in stores:
+        lat_str = store.get('Latitude', '').strip()
+        lon_str = store.get('Longitude', '').strip()
+        
+        if not lat_str or not lon_str:
+            # Store without coordinates - will handle in name deduplication
+            continue
+        
+        try:
+            lat = float(lat_str)
+            lon = float(lon_str)
+            # Round to 6 decimals (~10cm precision) for matching
+            loc_key = f"{lat:.6f},{lon:.6f}"
+            
+            existing = location_map.get(loc_key)
+            
+            if not existing:
+                location_map[loc_key] = store
+            else:
+                duplicates_by_location += 1
+                existing_name = existing.get('Name', '').strip()
+                current_name = store.get('Name', '').strip()
+                
+                # Extract brands from both stores
+                existing_brands_before = extract_all_brands_from_store(existing)
+                current_brands = extract_all_brands_from_store(store)
+                combined_brands = existing_brands_before.union(current_brands)
+                
+                # Merge the stores, combining brands
+                merged_store = merge_store_data(existing, store)
+                
+                # Prefer entry with phone number for base data
+                existing_has_phone = bool(existing.get('Phone', '').strip())
+                current_has_phone = bool(store.get('Phone', '').strip())
+                
+                if current_has_phone and not existing_has_phone:
+                    # Use current store as base, but keep merged brands
+                    merged_store = merge_store_data(store, existing)
+                    log_sync(
+                        f"  Location duplicate: Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - has phone)",
+                        "INFO"
+                    )
+                elif not current_has_phone and existing_has_phone:
+                    # Use existing store as base (already merged above)
+                    log_sync(
+                        f"  Location duplicate: Merging '{existing_name}' + '{current_name}' (keeping '{existing_name}' as base - has phone)",
+                        "INFO"
+                    )
+                else:
+                    # Both have phone or both don't - prefer one with more complete data
+                    existing_addr = len(existing.get('Address Line 1', '').strip())
+                    current_addr = len(store.get('Address Line 1', '').strip())
+                    
+                    if current_addr > existing_addr:
+                        merged_store = merge_store_data(store, existing)
+                        log_sync(
+                            f"  Location duplicate: Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - more complete)",
+                            "INFO"
+                        )
+                    else:
+                        log_sync(
+                            f"  Location duplicate: Merging '{existing_name}' + '{current_name}' (keeping '{existing_name}' as base - more complete)",
+                            "INFO"
+                        )
+                
+                # Log brand merge
+                existing_brands_str = ', '.join(sorted(existing_brands_before)) if existing_brands_before else 'None'
+                current_brands_str = ', '.join(sorted(current_brands)) if current_brands else 'None'
+                merged_brands_str = ', '.join(sorted(combined_brands)) if combined_brands else 'None'
+                
+                log_sync(
+                    f"    Brands merged: [{existing_brands_str}] + [{current_brands_str}] → [{merged_brands_str}]",
+                    "SUCCESS"
+                )
+                
+                location_map[loc_key] = merged_store
+        except (ValueError, TypeError):
+            # Invalid coordinates - skip location deduplication for this store
+            continue
+    
+    deduplicated_by_location = list(location_map.values())
+    # Add stores without coordinates to the list
+    for store in stores:
+        lat_str = store.get('Latitude', '').strip()
+        lon_str = store.get('Longitude', '').strip()
+        if not lat_str or not lon_str:
+            deduplicated_by_location.append(store)
+    
+    log_sync(f"  Removed {duplicates_by_location} duplicate(s) by location", "SUCCESS")
+    log_sync(f"  Stores after location deduplication: {len(deduplicated_by_location)}", "INFO")
+    
+    # Second pass: Deduplicate by store name
+    log_sync("-" * 80, "INFO")
+    log_sync("Step 2: Deduplicating by store name", "INFO")
+    name_map = {}
+    duplicates_by_name = 0
+    
+    for store in deduplicated_by_location:
+        name = (store.get('Name', '') or '').strip().lower()
+        if not name:
+            continue
+        
+        existing = name_map.get(name)
+        
+        if not existing:
+            name_map[name] = store
+        else:
+            duplicates_by_name += 1
+            existing_name = existing.get('Name', '').strip()
+            current_name = store.get('Name', '').strip()
+            
+            # Extract brands from both stores
+            existing_brands_before = extract_all_brands_from_store(existing)
+            current_brands = extract_all_brands_from_store(store)
+            combined_brands = existing_brands_before.union(current_brands)
+            
+            # Merge the stores, combining brands
+            merged_store = merge_store_data(existing, store)
+            
+            # Prefer entry with phone number for base data
+            existing_has_phone = bool(existing.get('Phone', '').strip())
+            current_has_phone = bool(store.get('Phone', '').strip())
+            
+            if current_has_phone and not existing_has_phone:
+                # Use current store as base, but keep merged brands
+                merged_store = merge_store_data(store, existing)
+                log_sync(
+                    f"  Name duplicate: Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - has phone)",
+                    "INFO"
+                )
+            elif not current_has_phone and existing_has_phone:
+                # Use existing store as base (already merged above)
+                log_sync(
+                    f"  Name duplicate: Merging '{existing_name}' + '{current_name}' (keeping '{existing_name}' as base - has phone)",
+                    "INFO"
+                )
+            else:
+                # Both have phone or both don't - prefer one with more complete data
+                existing_addr = len(existing.get('Address Line 1', '').strip())
+                current_addr = len(store.get('Address Line 1', '').strip())
+                
+                if current_addr > existing_addr:
+                    merged_store = merge_store_data(store, existing)
+                    log_sync(
+                        f"  Name duplicate: Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - more complete)",
+                        "INFO"
+                    )
+                else:
+                    log_sync(
+                        f"  Name duplicate: Merging '{existing_name}' + '{current_name}' (keeping '{existing_name}' as base - more complete)",
+                        "INFO"
+                    )
+            
+            # Log brand merge
+            existing_brands_str = ', '.join(sorted(existing_brands_before)) if existing_brands_before else 'None'
+            current_brands_str = ', '.join(sorted(current_brands)) if current_brands else 'None'
+            merged_brands_str = ', '.join(sorted(combined_brands)) if combined_brands else 'None'
+            
+            log_sync(
+                f"    Brands merged: [{existing_brands_str}] + [{current_brands_str}] → [{merged_brands_str}]",
+                "SUCCESS"
+            )
+            
+            name_map[name] = merged_store
+    
+    final_stores = list(name_map.values())
+    stores_after = len(final_stores)
+    
+    log_sync(f"  Removed {duplicates_by_name} duplicate(s) by name", "SUCCESS")
+    log_sync(f"  Stores after name deduplication: {stores_after}", "INFO")
+    
+    # Write deduplicated CSV back
+    if stores_after < stores_before:
+        log_sync("-" * 80, "INFO")
+        log_sync("Writing validated master CSV...", "INFO")
+        
+        # Get fieldnames
+        if final_stores:
+            fieldnames = list(final_stores[0].keys())
+            if 'Custom Brands' not in fieldnames:
+                fieldnames.append('Custom Brands')
+            if 'Brands' not in fieldnames:
+                fieldnames.append('Brands')
+        else:
+            from data_normalizer import SCHEMA
+            fieldnames = SCHEMA.copy()
+            if 'Custom Brands' not in fieldnames:
+                fieldnames.append('Custom Brands')
+            if 'Brands' not in fieldnames:
+                fieldnames.append('Brands')
+        
+        write_dict_list_to_csv(final_stores, master_csv, fieldnames)
+        log_sync("Validated master CSV written successfully", "SUCCESS")
+    
+    # Log summary
+    log_sync("=" * 80, "INFO")
+    log_sync("VALIDATION COMPLETE", "SUCCESS")
+    log_sync(f"  Stores before: {stores_before}", "INFO")
+    log_sync(f"  Duplicates by location: {duplicates_by_location}", "INFO")
+    log_sync(f"  Duplicates by name: {duplicates_by_name}", "INFO")
+    log_sync(f"  Stores after: {stores_after}", "INFO")
+    log_sync(f"  Total duplicates removed: {stores_before - stores_after}", "SUCCESS")
+    log_sync("=" * 80, "INFO")
+    
+    return {
+        "stores_before": stores_before,
+        "duplicates_by_location": duplicates_by_location,
+        "duplicates_by_name": duplicates_by_name,
+        "stores_after": stores_after
     }
 
 
@@ -665,19 +979,46 @@ if __name__ == "__main__":
     # Test the function
     import sys
     
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 2:
         print("Usage: python3 master_csv_manager.py <new_stores.csv> <master_stores.csv> [brand_name]")
+        print("  or:   python3 master_csv_manager.py --validate-only <master_stores.csv>")
         sys.exit(1)
     
-    new_csv = sys.argv[1]
-    master_csv = sys.argv[2]
-    brand_name = sys.argv[3] if len(sys.argv) > 3 else "unknown"
-    
-    result = append_to_master_csv(new_csv, master_csv, brand_name)
-    
-    print(f"Master CSV Update Results:")
-    print(f"  Master stores before: {result['master_stores_before']}")
-    print(f"  New stores: {result['new_stores']}")
-    print(f"  Stores merged: {result['stores_merged']}")
-    print(f"  Stores added: {result['stores_added']}")
-    print(f"  Master stores after: {result['master_stores_after']}")
+    # Check if this is a validation-only call
+    if sys.argv[1] == '--validate-only':
+        if len(sys.argv) < 3:
+            print("Usage: python3 master_csv_manager.py --validate-only <master_stores.csv>")
+            sys.exit(1)
+        master_csv = sys.argv[2]
+        result = validate_and_deduplicate_master_csv(master_csv)
+        print(f"\nValidation Results Summary:")
+        print(f"  Stores before: {result['stores_before']}")
+        print(f"  Duplicates by location: {result['duplicates_by_location']}")
+        print(f"  Duplicates by name: {result['duplicates_by_name']}")
+        print(f"  Stores after: {result['stores_after']}")
+    else:
+        if len(sys.argv) < 3:
+            print("Usage: python3 master_csv_manager.py <new_stores.csv> <master_stores.csv> [brand_name]")
+            sys.exit(1)
+        
+        new_csv = sys.argv[1]
+        master_csv = sys.argv[2]
+        brand_name = sys.argv[3] if len(sys.argv) > 3 else "unknown"
+        
+        result = append_to_master_csv(new_csv, master_csv, brand_name)
+        
+        print(f"\nMaster CSV Update Results Summary:")
+        print(f"  Master stores before: {result['master_stores_before']}")
+        print(f"  New stores: {result['new_stores']}")
+        print(f"  Stores merged: {result['stores_merged']}")
+        print(f"  Stores added: {result['stores_added']}")
+        print(f"  Master stores after merge: {result['master_stores_after']}")
+        
+        # Validation results are included in the return value
+        if 'validation' in result:
+            val = result['validation']
+            print(f"\nValidation Results Summary:")
+            print(f"  Stores before validation: {val['stores_before_validation']}")
+            print(f"  Duplicates by location: {val['duplicates_by_location']}")
+            print(f"  Duplicates by name: {val['duplicates_by_name']}")
+            print(f"  Stores after validation: {val['stores_after_validation']}")
