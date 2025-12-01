@@ -301,6 +301,10 @@
         style="margin-top:10px; max-height:200px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px;">
         <!-- Store name checkboxes -->
       </div>
+        <input type="checkbox" id="premiumOnlyToggle" style="cursor:pointer; transform: scale(1.2);" />
+        <label for="premiumOnlyToggle" style="cursor:pointer;"><strong>Show Premium Only</strong></label>
+      </div>
+      <div style="margin-top:10px; display:flex; align-items:center; gap:8px;"></div>
       <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
         <button id="nearMeBtn" title="Share your location to find the closest store"
           style="padding:8px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer;">
@@ -463,7 +467,14 @@
 
       const storeNames = [...new Set(rowsForList.map(r => (r['Name'] || '').trim()).filter(Boolean))].sort();
 
+      const premiumOnly = document.getElementById('premiumOnlyToggle')?.checked;
+
       storeNames.forEach(name => {
+        const rowMatch = rowsForList.find(r => (r['Name'] || '').trim() === name);
+
+        // Skip non-premium rows entirely in checkbox list
+        if (premiumOnly && !rowMatch?._isPremium) return;
+
         const label = document.createElement('label');
         label.style.display = 'flex';
         label.style.alignItems = 'center';
@@ -473,7 +484,7 @@
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.value = name;
-        cb.checked = prevChecked.has(name); // preserve previous checked state
+        cb.checked = prevChecked.has(name);
         cb.addEventListener('change', () => applyFilter(document.getElementById('brandFilter').value));
 
         const span = document.createElement('span');
@@ -521,6 +532,8 @@
       const brandValue = (brand || '').trim().toUpperCase();
       const typeValue = (document.getElementById('typeFilter').value || 'all');
       const storeInput = (document.getElementById('storeFilter').value || '').trim().toLowerCase();
+      // Premium-only filter
+      const premiumOnly = document.getElementById('premiumOnlyToggle').checked;
 
       const baseRows = [];
       allMarkers.forEach(({ row }) => {
@@ -549,6 +562,11 @@
         // type filter
         if (passes && typeValue && typeValue !== 'all') {
           passes = (String(row._type || 'retailer') === typeValue);
+        }
+
+        // Premium-only logic
+        if (passes && premiumOnly) {
+          passes = row._isPremium === true;
         }
 
         if (passes) baseRows.push(row);
@@ -742,6 +760,20 @@
       document.body.appendChild(div);
     }
 
+    function isValidEmail(val) {
+      if (!val) return false;
+
+      const bad = new Set([
+        '', ' ', '-', '--', '---', '.', 'n/a', 'na', 'none', 'null',
+        'not provided', 'not available', 'no email', '0'
+    ]);
+
+    const cleaned = val.trim().toLowerCase();
+    if (bad.has(cleaned)) return false;
+
+    return cleaned.includes('@') && cleaned.includes('.');
+    }
+
     // --- Load data & render (with helpful logs) ---
     loadCSV('locations.csv')
       .then(rows => {
@@ -774,7 +806,7 @@
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-          row._isPremium = !!(row['Email'] && row['Email'].trim() !== '');
+          row._isPremium = isValidEmail(row['Email']);
 
           const iconToUse = row._isPremium ? premiumIcon : regularIcon;
 
@@ -791,7 +823,7 @@
             .forEach(b => brandSet.add(b));
           // also expose type values for debugging / UI
           // (we don't include types in the brand list)
-          
+
         });
 
         map.addLayer(clusterGroup);
@@ -938,6 +970,20 @@
         map.addControl(new RadiusControl());
         populateBrandSelect(brandSet);
         rebuildStoreCheckboxes(allRows);
+        // Premium Only Toggle Listener
+        document.getElementById('premiumOnlyToggle')
+          .addEventListener('change', () => {
+            const premiumOnly = document.getElementById('premiumOnlyToggle').checked;
+
+            // Clear all checkboxes when premium-only is enabled
+            if (premiumOnly) {
+              document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => {
+                cb.checked = false;
+              });
+            }
+
+            applyFilter(document.getElementById('brandFilter').value);
+          });
 
         // Preload filters from URL, then apply once
         document.getElementById('brandFilter').value = INITIAL.brand;
