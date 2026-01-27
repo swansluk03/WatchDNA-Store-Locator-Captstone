@@ -343,6 +343,19 @@
     const map = L.map('map');
     map.setView([20, 0], 2); // will be replaced by fitBounds if we have data
 
+    // This will be used when returning to the original zoom level when a popup is closed
+    const defaultView = {
+      center: [20,0],
+      zoom: 2
+    };
+
+    // Using the logic right above to return the map to its original view when a popup is closed
+    map.on('popupclose', () => {
+      map.flyTo(defaultView.center, defaultView.zoom, {
+        duration: 0.6
+      });
+    }); 
+
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -903,7 +916,10 @@
             // two lines to add lat and lon to variables but within this function there are already those so just going to use those
             const latitude = parseFloat(row.Latitude);
             const longitude = parseFloat(row.Longitude);
-            map.setView([latitude, longitude], 14);
+            map.flyTo([latitude, longitude], 14, {
+              animate: true,
+              duration: 2.5
+            }); //Gives it a smooth pan and zoom in to the location on the map
             marker.openPopup();
           });
 
