@@ -366,11 +366,23 @@
     word-break: break-word;
   }
 
+  /* Makes it so that when viewing a single store, everything else in the sidebar gets hidden */
+  #sidebar.store-focused #top,
+  #sidebar.store-focused #hamburger,
+  #sidebar.store-focused #filtersPanel,
+  #sidebar.store-focused #nearMeWithinBtn,
+  #sidebar.store-focused #nearMeRadius,
+  #sidebar.store-focused #nearMeBtn,
+  #sidebar.store-focused #storeListContainer,
+  #sidebar.store-focused #footer {
+    display: none;
+  }
+
   </style>
 </head>
 
 <body>
-  <header>
+  <header id="sidebar">
 
     <div id="top">
       <div id="inner">
@@ -642,20 +654,23 @@
     }
 
     function setDetailPanelVisible(visible) {
+      const sidebar = document.getElementById('sidebar');
       const panel = document.getElementById('storeDetailPanel');
       const listContainer = document.getElementById('storeListContainer');
-      if (!panel || !listContainer) return;
+      if (!sidebar || !panel || !listContainer) return;
 
       if (visible) {
+      sidebar.classList.add('store-focused');
       panel.classList.remove('hidden');
       panel.setAttribute('aria-hidden', 'false');
-      listContainer.classList.add('hidden');
-      listContainer.style.display = 'none';
+      //listContainer.classList.add('hidden');
+      //listContainer.style.display = 'none';
     } else {
+      sidebar.classList.remove('store-focused');
       panel.classList.add('hidden');
       panel.setAttribute('aria-hidden', 'true');
-      listContainer.classList.remove('hidden');
-      listContainer.style.display = '';
+      //listContainer.classList.remove('hidden');
+      //listContainer.style.display = '';
     }
   }
 
@@ -714,7 +729,7 @@
 
     // Optional: keep the map movement consistent
     if (marker && hasCoords) {
-      map.flyTo([lat, lon], 14, { animate: true, duration: 0.8 });
+      map.flyTo([lat, lon], 14, { animate: true, duration: 2.5 });
     }
   }
 
@@ -725,7 +740,7 @@
     if(originalCenter && originalZoom !== undefined) {
       map.flyTo(originalCenter, originalZoom, {
         animate: true,
-        duration: 0.8
+        duration: 2.5
       });
     }
   }
@@ -734,7 +749,7 @@
   const closeBtn = document.getElementById('detailCloseBtn');
   if(closeBtn) {
     closeBtn.addEventListener('click', () => {
-      map.closePopup();
+      resetFocusedStore();
     });
   }
 
