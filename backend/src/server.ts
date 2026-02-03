@@ -15,6 +15,7 @@ validateConfig();
 
 // Import middleware
 import { authLimiter, publicLimiter, uploadLimiter, scraperLimiter } from './middleware/rateLimiter';
+import { securityHeaders } from './middleware/security';
 
 // Import routes
 import authRoutes from './routes/auth.routes';
@@ -25,8 +26,38 @@ import locationRoutes from './routes/location.routes';
 const app: Express = express();
 const PORT = config.port;
 
-// Middleware
-app.use(cors());
+// Trust proxy (required for Railway/Render to get real client IP)
+app.set('trust proxy', 1);
+
+// CORS Configuration
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Allow requests with no origin (mobile apps, Postman, curl, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // Check if origin is in allowed list
+    if (config.cors.allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Origin ${origin} not allowed by CORS policy`));
+    }
+  },
+  credentials: true, // Allow cookies and Authorization headers
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
+  maxAge: 600, // Cache preflight requests for 10 minutes
+};
+
+// Apply CORS middleware
+app.use(cors(corsOptions));
+
+// Apply security headers
+app.use(securityHeaders);
+
+// Body parsing middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -89,6 +120,7 @@ app.listen(PORT, () => {
   console.log(`🔐 JWT expires in: ${config.auth.jwtExpiresIn}`);
   console.log(`🌍 CORS allowed origins: ${config.cors.allowedOrigins.join(', ')}`);
   console.log(`⚡ Rate limiting: ${config.isDevelopment ? 'DISABLED (dev mode)' : 'ENABLED'}`);
+  console.log(`🛡️  Security headers: ${config.isProduction ? 'FULL' : 'BASIC'}`);
 });
 
 export default app;
