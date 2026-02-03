@@ -478,6 +478,14 @@
     const map = L.map('map');
     map.setView([20, 0], 2); // will be replaced by fitBounds if we have data
 
+    // For zoom out logic
+    const originalCenter = map.getCenter();
+    const originalZoom = map.getZoom();
+
+    map.on('popupclose', () => {
+      resetFocusedStore();
+    });
+
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -710,7 +718,25 @@
     }
   }
 
+  //Zooms the map out to full view
+  function resetFocusedStore() {
+    setDetailPanelVisible(false);
 
+    if(originalCenter && originalZoom !== undefined) {
+      map.flyTo(originalCenter, originalZoom, {
+        animate: true,
+        duration: 0.8
+      });
+    }
+  }
+
+  // When the close store detail button is clicked, it will close itself, the popup, and zoom the map back out to full view
+  const closeBtn = document.getElementById('detailCloseBtn');
+  if(closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      map.closePopup();
+    });
+  }
 
     function rebuildStoreCheckboxes(rowsForList) {
       // rowsForList should be the rows after applying non-checkbox filters
