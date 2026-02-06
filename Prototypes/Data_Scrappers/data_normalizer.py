@@ -124,6 +124,49 @@ def clean_html_tags(text: Any) -> str:
     return text_str.strip()
 
 
+def clean_address(address: Any) -> str:
+    """
+    Clean and normalize address strings by fixing common backslash issues
+    
+    Fixes:
+    - Backslash before forward slash (\\/ -> /)
+    - Double backslashes (\\\\ -> , ) for address separators
+    - Spanish Calle abbreviation (C\\/ -> C/)
+    
+    Args:
+        address: Address string that may contain backslash issues
+    
+    Returns:
+        Cleaned address string
+    """
+    if not address:
+        return ""
+    
+    address_str = str(address).strip()
+    
+    # Fix backslash before forward slash (\/ -> /)
+    # This is the most common issue: 1\/F -> 1/F, C\/ -> C/, MA-66\/103 -> MA-66/103, etc.
+    address_str = address_str.replace('\\/', '/')
+    
+    # Fix Spanish Calle abbreviation (C\/ -> C/)
+    # This handles cases where C\/ wasn't caught by the above (shouldn't happen, but safe)
+    address_str = re.sub(r'\bC\\/', 'C/', address_str)
+    
+    # Fix double backslashes (\\ -> , ) for address separators
+    # Common pattern: "Mall \\ Location" should be "Mall, Location"
+    # Replace \\ with comma and space, but preserve single \ that might be part of Unicode escapes
+    # We'll do a simple replacement: \\ -> , 
+    # Note: In the CSV string, \\ represents a literal backslash, so we need to match literal \\
+    address_str = re.sub(r'\\\\+', ', ', address_str)
+    
+    # Clean up any double spaces or spaces before commas that might have been created
+    address_str = re.sub(r'\s+', ' ', address_str)
+    address_str = re.sub(r'\s*,', ',', address_str)  # Remove space before comma
+    address_str = re.sub(r',\s*,', ',', address_str)  # Remove double commas
+    
+    return address_str.strip()
+
+
 def validate_coordinate(value: Any, coord_type: str = "latitude") -> Optional[str]:
     """
     Validate and normalize a coordinate value
@@ -800,8 +843,9 @@ def normalize_location(
     
     # Basic fields (direct copy with cleaning - also clean HTML tags)
     normalized["Name"] = clean_html_tags(mapped_data.get("Name", ""))
-    normalized["Address Line 1"] = clean_html_tags(mapped_data.get("Address Line 1", ""))
-    normalized["Address Line 2"] = clean_html_tags(mapped_data.get("Address Line 2", ""))
+    # Address fields need special cleaning for backslash issues
+    normalized["Address Line 1"] = clean_address(clean_html_tags(mapped_data.get("Address Line 1", "")))
+    normalized["Address Line 2"] = clean_address(clean_html_tags(mapped_data.get("Address Line 2", "")))
     normalized["Postal/ZIP Code"] = clean_html_tags(mapped_data.get("Postal/ZIP Code", ""))
     normalized["City"] = clean_html_tags(mapped_data.get("City", ""))
     normalized["State/Province/Region"] = clean_html_tags(mapped_data.get("State/Province/Region", ""))

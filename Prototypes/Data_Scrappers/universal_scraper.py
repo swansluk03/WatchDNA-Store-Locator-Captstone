@@ -40,6 +40,30 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools"))
 
 from locator_type_detector import detect_locator_type
+
+
+def _collect_data_quality_warnings(stores: List[Dict[str, Any]]) -> List[str]:
+    """Scan normalized stores for data-quality issues and return warning messages."""
+    if not stores:
+        return []
+    no_name = sum(1 for s in stores if not (s.get("Name") or "").strip())
+    no_coords = sum(
+        1
+        for s in stores
+        if not (s.get("Latitude") or "").strip() or not (s.get("Longitude") or "").strip()
+    )
+    no_address = sum(1 for s in stores if not (s.get("Address Line 1") or "").strip())
+    no_phone = sum(1 for s in stores if not (s.get("Phone") or "").strip())
+    warnings = []
+    if no_name:
+        warnings.append(f"{no_name} store(s) have no name")
+    if no_coords:
+        warnings.append(f"{no_coords} store(s) have missing or invalid coordinates")
+    if no_address:
+        warnings.append(f"{no_address} store(s) have no address")
+    if no_phone:
+        warnings.append(f"{no_phone} store(s) have no phone number")
+    return warnings
 from pattern_detector import detect_data_pattern
 from data_normalizer import batch_normalize, write_normalized_csv
 from validate_csv import validate_csv, CSVValidator, DEFAULT_REQUIRED
@@ -488,9 +512,9 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
     per = url_params.get('per', '50')  # API supports max 50 per page
     lang = url_params.get('l', 'en')
     
-    # Remove center point params (q) and pagination params (offset) - we'll add our own
+    # Remove center point params (q, lat, long) and pagination params (offset) - we'll add our own
     base_params = {k: v for k, v in url_params.items() 
-                   if k not in ['q', 'offset', 'qp']}
+                   if k not in ['q', 'offset', 'qp', 'lat', 'long', 'latitude', 'longitude']}
     
     all_stores = []
     seen_ids = set()
@@ -1175,15 +1199,21 @@ def universal_scrape(
     log_debug("PHASE 2: Data Collection", "INFO")
     scrape_start = time.time()
     
+    # Check URL params for radius-based detection (used in multiple branches)
+    url_params = locator_analysis["url_params"]
+    has_radius = "r" in url_params or "radius" in url_params or "distance" in url_params
+    has_center = "q" in url_params or "lat" in url_params or "latitude" in url_params
+    
     try:
         if detected_type == "paginated":
             # Pagination (check this first before single_call)
             log_debug("Strategy: Paginated scraping", "INFO")
             
             # Check if this is actually a radius-based API that needs multi-point expansion
-            # (Bell & Ross uses pagination but needs multiple center points for worldwide coverage)
-            url_params = locator_analysis["url_params"]
-            is_radius_based = "r" in url_params and "q" in url_params and ("bellross.com" in url or "stores.bellross.com" in url)
+            # Some APIs use pagination but need multiple center points for worldwide coverage
+            # Support both q=... and lat/long=... center point formats
+            # If paginated endpoint has radius and center params, treat it as radius-based
+            is_radius_based = has_radius and has_center
             
             if is_radius_based:
                 # Use radius expansion instead of simple pagination
@@ -1210,6 +1240,13 @@ def universal_scrape(
             # Viewport expansion
             log_debug(f"Strategy: Viewport expansion (region={region})", "INFO")
             stores = scrape_viewport_expansion(url, locator_analysis["url_params"], region)
+            results["expansion_used"] = True
+        
+        elif detected_type == "radius" or (has_radius and has_center):
+            # Radius-based API - use multi-point expansion
+            log_debug("Strategy: Radius-based multi-point expansion", "INFO")
+            custom_headers = {"Accept": "application/json"} if "bellross.com" in url or "stores.bellross.com" in url else None
+            stores = scrape_radius_expansion(url, url_params, region, custom_headers=custom_headers)
             results["expansion_used"] = True
         
         elif detected_type == "country_filter":
@@ -1362,6 +1399,32 @@ def universal_scrape(
                     print(f"   ✅ Valid")
             else:
                 print(f"   ⚠️  Has {len(validator.errors)} error(s), {len(validator.warnings)} warning(s)")
+                # Print detailed validation errors so users can see what's wrong
+                print(f"\n   📋 Validation Error Details:")
+                # Group errors by type for better readability
+                error_groups = {}
+                for error in validator.errors:
+                    error_type = error.issue
+                    if error_type not in error_groups:
+                        error_groups[error_type] = []
+                    error_groups[error_type].append(error)
+                
+                # Show first 10 errors of each type
+                for error_type, errors in error_groups.items():
+                    print(f"      • {error_type.upper().replace('_', ' ')}: {len(errors)} occurrence(s)")
+                    for error in errors[:10]:
+                        value_preview = f" (value: {error.value})" if error.value else ""
+                        print(f"        - Row {error.row}: {error.field}{value_preview}")
+                    if len(errors) > 10:
+                        print(f"        ... and {len(errors) - 10} more")
+                
+                if len(validator.warnings) > 0:
+                    print(f"\n   ⚠️  Warnings: {len(validator.warnings)} warning(s)")
+                    # Show first 5 warnings
+                    for warning in validator.warnings[:5]:
+                        print(f"      - {warning}")
+                    if len(validator.warnings) > 5:
+                        print(f"      ... and {len(validator.warnings) - 5} more")
         except Exception as e:
             results["validation_performed"] = True
             results["validation_passed"] = False
@@ -1373,6 +1436,10 @@ def universal_scrape(
     
     results["success"] = True
     
+    # Collect data-quality warnings from normalized output
+    warnings_summary = _collect_data_quality_warnings(normalized)
+    results["warnings"] = warnings_summary
+    
     # Final summary with performance metrics
     total_time = time.time() - scrape_start
     log_debug("=" * 60, "INFO")
@@ -1383,6 +1450,11 @@ def universal_scrape(
     log_debug(f"Strategy: {detected_type} (expansion={results['expansion_used']})", "INFO")
     log_debug(f"Records: {results['stores_found']} found → {results['stores_normalized']} normalized", "INFO")
     log_debug(f"Output: {output_file} ({file_size:.1f} KB)", "INFO")
+    if warnings_summary:
+        log_debug("", "INFO")
+        log_debug("WARNINGS (data quality):", "INFO")
+        for msg in warnings_summary:
+            log_debug(f"  ⚠️  {msg}", "INFO")
     log_debug("=" * 60, "INFO")
     
     return results
@@ -1454,6 +1526,12 @@ Auto-detects everything and uses the right strategy!
         print(f"   Expansion: {'Yes' if results['expansion_used'] else 'No'}")
         print(f"   Stores: {results['stores_found']} found, {results['stores_normalized']} normalized")
         print(f"   Output: {results['output_file']}")
+        warnings = results.get("warnings", [])
+        if warnings:
+            print()
+            print("⚠️  WARNINGS (data quality):")
+            for msg in warnings:
+                print(f"   • {msg}")
     else:
         print("❌ FAILED")
     print("=" * 80)

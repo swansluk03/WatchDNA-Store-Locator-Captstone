@@ -7,6 +7,113 @@ import path from 'path';
 
 const prisma = new PrismaClient();
 
+// Helper functions for brand config similarity detection
+function calculateSimilarity(str1: string, str2: string): number {
+  const s1 = str1.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const s2 = str2.toLowerCase().replace(/[^a-z0-9]/g, '');
+  
+  if (s1 === s2) return 1.0;
+  if (s1.length === 0 || s2.length === 0) return 0.0;
+  
+  // Check if one contains the other (e.g., "audemars_piguet" vs "audemars_piguet_stores")
+  if (s1.includes(s2) || s2.includes(s1)) {
+    return 0.85; // High similarity for substring matches
+  }
+  
+  // Simple Levenshtein distance-based similarity
+  const longer = s1.length > s2.length ? s1 : s2;
+  const shorter = s1.length > s2.length ? s2 : s1;
+  const editDistance = levenshteinDistance(s1, s2);
+  return (longer.length - editDistance) / longer.length;
+}
+
+function levenshteinDistance(str1: string, str2: string): number {
+  // Initialize matrix with dimensions (str2.length + 1) x (str1.length + 1)
+  const matrix: number[][] = [];
+  
+  // Initialize first column: matrix[i][0] = i for all i
+  for (let i = 0; i <= str2.length; i++) {
+    matrix[i] = [i];
+  }
+  
+  // Initialize first row: matrix[0][j] = j for all j
+  // Note: matrix[0][0] is already set to 0, so start from j = 1
+  for (let j = 1; j <= str1.length; j++) {
+    matrix[0][j] = j;
+  }
+  
+  // Fill the rest of the matrix
+  for (let i = 1; i <= str2.length; i++) {
+    for (let j = 1; j <= str1.length; j++) {
+      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+  return matrix[str2.length][str1.length];
+}
+
+function normalizeUrlForComparison(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    // Keep only hostname and pathname, remove query params and fragments
+    return `${urlObj.hostname}${urlObj.pathname}`.toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+type SimilarBrandConfig = { brandId: string; config: any; similarity: number; reason: string };
+
+function findSimilarBrandConfigs(
+  brandId: string,
+  endpointUrl: string,
+  configs: Record<string, any>
+): SimilarBrandConfig[] {
+  const similar: SimilarBrandConfig[] = [];
+  const normalizedNewUrl = normalizeUrlForComparison(endpointUrl);
+  
+  for (const [existingBrandId, existingConfig] of Object.entries(configs)) {
+    // Skip exact match (handled separately)
+    if (existingBrandId === brandId) continue;
+    
+    let similarity = 0;
+    let reason = '';
+    
+    // Check name similarity
+    const nameSimilarity = calculateSimilarity(brandId, existingBrandId);
+    if (nameSimilarity >= 0.7) {
+      similarity = nameSimilarity;
+      reason = `Similar brand name (${(nameSimilarity * 100).toFixed(0)}% match)`;
+    }
+    
+    // Check URL similarity
+    if (existingConfig.url) {
+      const normalizedExistingUrl = normalizeUrlForComparison(existingConfig.url);
+      if (normalizedExistingUrl === normalizedNewUrl) {
+        similarity = Math.max(similarity, 0.95);
+        reason = reason ? `${reason} + Same endpoint URL` : 'Same endpoint URL';
+      } else if (normalizedExistingUrl.includes(normalizedNewUrl) || normalizedNewUrl.includes(normalizedExistingUrl)) {
+        similarity = Math.max(similarity, 0.8);
+        reason = reason ? `${reason} + Similar endpoint URL` : 'Similar endpoint URL';
+      }
+    }
+    
+    if (similarity >= 0.7) {
+      similar.push({ brandId: existingBrandId, config: existingConfig, similarity, reason });
+    }
+  }
+  
+  // Sort by similarity (highest first)
+  return similar.sort((a, b) => b.similarity - a.similarity);
+}
+
 export const scraperController = {
   // GET /api/scraper/brands - List available brand configs
   async getBrands(req: Request, res: Response) {
@@ -331,6 +438,323 @@ export const scraperController = {
       }
     } catch (error: any) {
       console.error('Error cancelling scraper job:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // POST /api/scraper/discover - Discover endpoints from store locator page
+  async discoverEndpoints(req: Request, res: Response) {
+    try {
+      const { url } = req.body;
+
+      if (!url) {
+        return res.status(400).json({ error: 'URL is required' });
+      }
+
+      // Create a temporary output file for JSON results
+      const outputDir = path.join(__dirname, '..', '..', '..', 'tmp');
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+      const outputFile = path.join(outputDir, `discovery_${Date.now()}.json`);
+
+      // Call the endpoint discoverer Python script
+      const { spawn } = require('child_process');
+      const discovererPath = path.join(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'Prototypes',
+        'Data_Scrappers',
+        'endpoint_discoverer',
+        'endpoint_discoverer.py'
+      );
+
+      return new Promise((resolve, reject) => {
+        let responseSent = false;
+        
+        const sendResponse = (statusCode: number, data: any) => {
+          if (!responseSent) {
+            responseSent = true;
+            res.status(statusCode).json(data);
+            // Resolve the Promise after sending response to prevent hanging in Express v5+
+            if (statusCode >= 200 && statusCode < 300) {
+              resolve(data);
+            } else {
+              reject(new Error(data.error || 'Request failed'));
+            }
+          }
+        };
+
+        const pythonProcess = spawn('python3', [
+          discovererPath,
+          '--url',
+          url,
+          '--headless',
+          '--output',
+          outputFile
+        ], {
+          cwd: path.dirname(discovererPath),
+          env: { ...process.env, PYTHONUNBUFFERED: '1' }
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        pythonProcess.stdout.on('data', (data: Buffer) => {
+          stdout += data.toString();
+        });
+
+        pythonProcess.stderr.on('data', (data: Buffer) => {
+          stderr += data.toString();
+        });
+
+        pythonProcess.on('close', (code: number) => {
+          // Try to read the output file
+          try {
+            if (fs.existsSync(outputFile)) {
+              const resultData = fs.readFileSync(outputFile, 'utf-8');
+              const result = JSON.parse(resultData);
+              
+              // Clean up temp file
+              fs.unlinkSync(outputFile);
+              
+              sendResponse(200, result);
+            } else {
+              // If output file doesn't exist, try to parse stdout for JSON
+              // Find the last complete JSON object (endpoint discoverer outputs final result at the end)
+              // This handles cases where stdout contains multiple JSON objects or mixed text/JSON
+              let jsonMatch: RegExpMatchArray | null = null;
+              const lastBraceIndex = stdout.lastIndexOf('}');
+              if (lastBraceIndex !== -1) {
+                // Find the matching opening brace by counting braces backwards
+                let braceCount = 1;
+                let startIndex = lastBraceIndex - 1;
+                while (startIndex >= 0 && braceCount > 0) {
+                  if (stdout[startIndex] === '}') braceCount++;
+                  else if (stdout[startIndex] === '{') braceCount--;
+                  startIndex--;
+                }
+                if (braceCount === 0) {
+                  // Found balanced braces - extract the JSON object
+                  const jsonString = stdout.substring(startIndex + 1, lastBraceIndex + 1);
+                  jsonMatch = [jsonString];
+                }
+              }
+              
+              // Fallback: if brace matching failed, try non-greedy regex for first JSON object
+              if (!jsonMatch) {
+                jsonMatch = stdout.match(/\{[\s\S]*?\}/);
+              }
+              
+              if (jsonMatch) {
+                try {
+                  const result = JSON.parse(jsonMatch[0]);
+                  sendResponse(200, result);
+                } catch {
+                  sendResponse(500, {
+                    error: 'Endpoint discovery completed but failed to parse results',
+                    details: stderr || 'No error details available',
+                    raw_output: stdout.substring(0, 1000)
+                  });
+                }
+              } else {
+                sendResponse(500, {
+                  error: 'Endpoint discovery failed',
+                  details: stderr || 'No output file created and no JSON found in stdout',
+                  raw_output: stdout.substring(0, 1000)
+                });
+              }
+            }
+          } catch (fileError: any) {
+            // Clean up temp file if it exists
+            if (fs.existsSync(outputFile)) {
+              try {
+                fs.unlinkSync(outputFile);
+              } catch {}
+            }
+            
+            sendResponse(500, {
+              error: 'Failed to read discovery results',
+              details: fileError.message,
+              raw_output: stdout.substring(0, 1000)
+            });
+          }
+        });
+
+        // Set timeout (2 minutes for discovery)
+        const timeoutId = setTimeout(() => {
+          if (!pythonProcess.killed && !responseSent) {
+            pythonProcess.kill();
+            sendResponse(500, {
+              error: 'Endpoint discovery timed out after 2 minutes'
+            });
+          }
+        }, 120000);
+
+        pythonProcess.on('error', (error: Error) => {
+          // Clear timeout when process fails to start
+          clearTimeout(timeoutId);
+          sendResponse(500, {
+            error: 'Failed to start endpoint discoverer',
+            details: error.message
+          });
+        });
+
+        // Clear timeout if process completes before timeout
+        pythonProcess.on('close', () => {
+          clearTimeout(timeoutId);
+        });
+      });
+    } catch (error: any) {
+      console.error('Error discovering endpoints:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // GET /api/scraper/brands/:id - Get a specific brand configuration
+  async getBrandConfig(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+
+      const configPath = path.join(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'Prototypes',
+        'Data_Scrappers',
+        'brand_configs.json'
+      );
+      const configData = fs.readFileSync(configPath, 'utf-8');
+      const configs = JSON.parse(configData);
+
+      if (!configs[id]) {
+        return res.status(404).json({ error: `Brand configuration "${id}" not found` });
+      }
+
+      res.json({ brandId: id, config: configs[id] });
+    } catch (error: any) {
+      console.error('Error getting brand config:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // POST /api/scraper/brands - Save discovered endpoint as brand configuration
+  async saveBrandConfig(req: Request, res: Response) {
+    try {
+      const { brandId, brandName, endpoint, suggestedConfig, overwrite, oldBrandId } = req.body;
+
+      if (!brandId || !endpoint || !endpoint.url) {
+        return res.status(400).json({ error: 'brandId and endpoint.url are required' });
+      }
+
+      // Load existing brand configs
+      const configPath = path.join(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'Prototypes',
+        'Data_Scrappers',
+        'brand_configs.json'
+      );
+      const configData = fs.readFileSync(configPath, 'utf-8');
+      const configs = JSON.parse(configData);
+
+      // Check for exact match first
+      if (configs[brandId] && overwrite !== true) {
+        // Return existing config so frontend can show comparison
+        return res.status(409).json({ 
+          error: `Brand configuration "${brandId}" already exists`,
+          existingConfig: configs[brandId],
+          brandId
+        });
+      }
+
+      // Check for similar brand configs (by name similarity or URL match)
+      const similarConfigs: SimilarBrandConfig[] = findSimilarBrandConfigs(brandId, endpoint.url, configs);
+      if (similarConfigs.length > 0 && overwrite !== true) {
+        // Return the most similar config (highest similarity)
+        const mostSimilar: SimilarBrandConfig = similarConfigs[0];
+        return res.status(409).json({
+          error: `Similar brand configuration found: "${mostSimilar.brandId}"`,
+          existingConfig: mostSimilar.config,
+          brandId: mostSimilar.brandId,
+          similarity: mostSimilar.similarity,
+          reason: mostSimilar.reason,
+          allSimilar: similarConfigs.map((s: SimilarBrandConfig) => ({
+            brandId: s.brandId,
+            similarity: s.similarity,
+            reason: s.reason
+          }))
+        });
+      }
+      
+      // If overwrite is true, we'll proceed to overwrite below
+      // If overwrite is false/undefined and config exists, we already returned above
+
+      // Build brand configuration from discovered endpoint
+      // Use suggested_config as base if available, otherwise build from endpoint
+      const baseConfig = suggestedConfig || {};
+      const brandConfig: any = {
+        type: endpoint.type || baseConfig.type || 'json',
+        url: endpoint.url,
+        method: baseConfig.method || 'GET',
+        description: baseConfig.description || `Discovered endpoint for ${brandName || brandId}`,
+        enabled: true
+      };
+
+      // Add data_path if available (from verified endpoint or suggested config)
+      // Priority: endpoint.data_path > baseConfig.data_path
+      // This is critical for the scraper to find stores in the JSON response
+      if (endpoint.data_path && endpoint.data_path.trim()) {
+        brandConfig.data_path = endpoint.data_path;
+      } else if (baseConfig.data_path && baseConfig.data_path.trim()) {
+        brandConfig.data_path = baseConfig.data_path;
+      }
+      
+      // Log warning if data_path is missing (helps debug)
+      if (!brandConfig.data_path) {
+        console.warn(`⚠️  Warning: No data_path detected for brand ${brandId}. The scraper may not be able to find stores in the JSON response.`);
+      }
+
+      // Add field_mapping if available
+      // Priority: baseConfig.field_mapping (from pattern detector) > endpoint.field_mapping (from verifier)
+      // The pattern detector has more accurate detection, so prefer it
+      if (baseConfig.field_mapping && Object.keys(baseConfig.field_mapping).length > 0) {
+        brandConfig.field_mapping = baseConfig.field_mapping;
+      } else if (endpoint.field_mapping && Object.keys(endpoint.field_mapping).length > 0) {
+        brandConfig.field_mapping = endpoint.field_mapping;
+      }
+
+      // Add headers if needed (e.g., Accept: application/json)
+      if (baseConfig.headers) {
+        brandConfig.headers = baseConfig.headers;
+      }
+
+      // Add any other properties from suggested config
+      if (baseConfig._note) {
+        brandConfig._note = baseConfig._note;
+      }
+
+      // When overwriting with a new name, remove the old key so we don't keep both
+      if (overwrite === true && oldBrandId && oldBrandId !== brandId) {
+        delete configs[oldBrandId];
+      }
+
+      // Save to brand_configs.json
+      configs[brandId] = brandConfig;
+      fs.writeFileSync(configPath, JSON.stringify(configs, null, 2), 'utf-8');
+
+      res.json({
+        message: 'Brand configuration saved successfully',
+        brandId,
+        config: brandConfig
+      });
+    } catch (error: any) {
+      console.error('Error saving brand config:', error);
       res.status(500).json({ error: error.message });
     }
   }

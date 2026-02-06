@@ -23,9 +23,20 @@ import os
 import re
 import math
 import sys
+import time
+import copy
 from datetime import datetime
 from typing import List, Dict, Set, Tuple, Optional
 from pathlib import Path
+
+# Geocoding support (optional - only used if geopy is available)
+try:
+    from geopy.geocoders import Nominatim
+    from geopy.exc import GeocoderTimedOut, GeocoderServiceError, GeocoderUnavailable
+    GEOPY_AVAILABLE = True
+except ImportError:
+    GEOPY_AVAILABLE = False
+    Nominatim = None
 
 
 def log_sync(message: str, level: str = "INFO"):
@@ -183,6 +194,171 @@ def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     return R * c
 
 
+# =============================================================================
+# GEOCODING FUNCTIONS (for coordinate validation)
+# =============================================================================
+
+# Global geocoder instance (lazy initialization)
+_geocoder = None
+_last_geocode_time = 0
+_geocode_cache = {}  # Cache geocoding results to avoid duplicate API calls
+
+def get_geocoder():
+    """Get or create Nominatim geocoder instance"""
+    global _geocoder
+    if not GEOPY_AVAILABLE:
+        return None
+    
+    if _geocoder is None:
+        # Use Nominatim (OpenStreetMap) - free, no API key required
+        # User agent is required by Nominatim usage policy
+        _geocoder = Nominatim(
+            user_agent="WatchDNA-StoreLocator/1.0 (https://watchdna.com)",
+            timeout=10  # 10 second timeout
+        )
+    
+    return _geocoder
+
+
+def geocode_address(
+    address: str,
+    city: str = "",
+    state: str = "",
+    country: str = ""
+) -> Optional[Tuple[float, float]]:
+    """
+    Geocode an address to get latitude and longitude using Nominatim (OpenStreetMap).
+    
+    This is a free geocoding service that doesn't require an API key.
+    Rate limit: 1 request per second (enforced automatically).
+    
+    Args:
+        address: Address line 1
+        city: City name
+        state: State/Province/Region
+        country: Country name
+    
+    Returns:
+        Tuple of (latitude, longitude) if found, None otherwise
+    """
+    if not GEOPY_AVAILABLE:
+        return None
+    
+    # Build full address string
+    address_parts = []
+    if address:
+        address_parts.append(address)
+    if city:
+        address_parts.append(city)
+    if state:
+        address_parts.append(state)
+    if country:
+        address_parts.append(country)
+    
+    if not address_parts:
+        return None
+    
+    full_address = ", ".join(address_parts)
+    
+    # Check cache first
+    cache_key = full_address.lower().strip()
+    if cache_key in _geocode_cache:
+        return _geocode_cache[cache_key]
+    
+    geocoder = get_geocoder()
+    if not geocoder:
+        return None
+    
+    # Rate limiting: Nominatim requires max 1 request per second
+    global _last_geocode_time
+    current_time = time.time()
+    time_since_last = current_time - _last_geocode_time
+    if time_since_last < 1.0:
+        time.sleep(1.0 - time_since_last)
+    
+    try:
+        _last_geocode_time = time.time()
+        location = geocoder.geocode(full_address, exactly_one=True, timeout=10)
+        
+        if location:
+            lat = location.latitude
+            lon = location.longitude
+            result = (lat, lon)
+            # Cache the result
+            _geocode_cache[cache_key] = result
+            return result
+        else:
+            # Cache None result to avoid retrying failed addresses
+            _geocode_cache[cache_key] = None
+            return None
+            
+    except (GeocoderTimedOut, GeocoderServiceError, GeocoderUnavailable) as e:
+        # Log but don't fail - geocoding is optional
+        return None
+    except Exception as e:
+        # Any other error - return None
+        return None
+
+
+def verify_coordinates_match_address(
+    store: Dict[str, str],
+    tolerance_meters: float = 1000.0
+) -> Tuple[bool, Optional[float], Optional[str]]:
+    """
+    Verify that the coordinates in a store record match the address using geocoding.
+    
+    Args:
+        store: Store dictionary with Latitude, Longitude, Address Line 1, City, State/Province/Region, Country
+        tolerance_meters: Maximum distance in meters between provided coordinates and geocoded address (default: 1000m = 1km)
+    
+    Returns:
+        Tuple of (is_valid, distance_meters, error_message)
+        - is_valid: True if coordinates match address within tolerance, False otherwise
+        - distance_meters: Distance between provided and geocoded coordinates (None if geocoding failed)
+        - error_message: Error message if validation failed (None if valid)
+    """
+    # Get coordinates from store
+    lat_str = store.get('Latitude', '').strip()
+    lon_str = store.get('Longitude', '').strip()
+    
+    if not lat_str or not lon_str:
+        return (False, None, "Missing coordinates")
+    
+    try:
+        provided_lat = float(lat_str)
+        provided_lon = float(lon_str)
+    except (ValueError, TypeError):
+        return (False, None, "Invalid coordinate format")
+    
+    # Get address components
+    address = store.get('Address Line 1', '').strip()
+    city = store.get('City', '').strip()
+    state = store.get('State/Province/Region', '').strip()
+    country = store.get('Country', '').strip()
+    
+    if not address and not city:
+        return (False, None, "Insufficient address information")
+    
+    # Geocode the address
+    geocoded_coords = geocode_address(address, city, state, country)
+    
+    if geocoded_coords is None:
+        return (False, None, "Could not geocode address")
+    
+    geocoded_lat, geocoded_lon = geocoded_coords
+    
+    # Calculate distance between provided and geocoded coordinates
+    distance = calculate_distance(provided_lat, provided_lon, geocoded_lat, geocoded_lon)
+    
+    # Check if within tolerance
+    is_valid = distance <= tolerance_meters
+    
+    if is_valid:
+        return (True, distance, None)
+    else:
+        return (False, distance, f"Coordinates mismatch: {distance:.0f}m from geocoded address (tolerance: {tolerance_meters:.0f}m)")
+
+
 def normalize_store_name(name: str) -> str:
     """
     Normalize store name for comparison (remove common words, lowercase, etc.)
@@ -314,7 +490,8 @@ def find_matching_store(
         except (ValueError, TypeError):
             pass
     
-    # If we have coordinates, use coordinate + name matching
+    # PRIORITY 1: If we have coordinates, use coordinate matching FIRST (geolocation is most reliable)
+    # Coordinates are the primary matching criteria - name/address are secondary
     if new_lat is not None and new_lng is not None:
         for existing_store in existing_stores:
             existing_name = existing_store.get('Name', '').strip()
@@ -322,11 +499,7 @@ def find_matching_store(
             existing_lng_str = existing_store.get('Longitude', '').strip()
             existing_brands = existing_store.get('Brands', '').strip()
             
-            # Check if names are similar
-            if not names_similar(new_name, existing_name):
-                continue
-            
-            # Check coordinates if available
+            # Check coordinates if available - THIS IS THE PRIMARY MATCHING CRITERIA
             if existing_lat_str and existing_lng_str:
                 try:
                     existing_lat = float(existing_lat_str)
@@ -335,13 +508,28 @@ def find_matching_store(
                     # Calculate distance
                     distance = calculate_distance(new_lat, new_lng, existing_lat, existing_lng)
                     
-                    # If within tolerance and names are similar, it's a match
+                    # If within tolerance, it's a match (same physical location)
+                    # Name similarity is checked for logging but NOT required - coordinates are primary
                     if distance <= coordinate_tolerance_meters:
+                        # Check name similarity for logging purposes
+                        names_match = names_similar(new_name, existing_name)
+                        
                         # Log the match
-                        log_sync(
-                            f"MATCH FOUND: '{new_name}' ({brand_name}) matches existing store '{existing_name}'",
-                            "SUCCESS"
-                        )
+                        if names_match:
+                            log_sync(
+                                f"MATCH FOUND (coordinate + name): '{new_name}' ({brand_name}) matches existing store '{existing_name}'",
+                                "SUCCESS"
+                            )
+                        else:
+                            log_sync(
+                                f"MATCH FOUND (coordinate only): '{new_name}' ({brand_name}) matches existing store '{existing_name}'",
+                                "SUCCESS"
+                            )
+                            log_sync(
+                                f"  ⚠️  Names differ but coordinates match (same physical location)",
+                                "WARN"
+                            )
+                        
                         log_sync(
                             f"  Location: {new_addr}, {new_city}, {new_country}",
                             "INFO"
@@ -414,7 +602,8 @@ def merge_store_data(existing_store: Dict[str, str], new_store: Dict[str, str], 
     Returns:
         Merged store dictionary
     """
-    merged = existing_store.copy()
+    # Use deep copy to avoid mutating nested structures in the original store
+    merged = copy.deepcopy(existing_store)
     
     # Extract existing brands from both columns
     existing_brands = extract_all_brands_from_store(existing_store)
@@ -607,10 +796,11 @@ def append_to_master_csv(
         
         if merge_by_address:
             # Use improved matching logic (name + coordinate tolerance)
+            # Use 50m tolerance for matching - prioritizes geolocation over name/address
             matching_store = find_matching_store(
                 new_store, 
                 master_store_list, 
-                coordinate_tolerance_meters=100.0,
+                coordinate_tolerance_meters=50.0,  # 50 meters - handles GPS variations while being precise
                 brand_name=normalized_brand
             )
             
@@ -680,11 +870,10 @@ def append_to_master_csv(
     log_sync("=" * 80, "INFO")
     log_sync("SYNC COMPLETE", "SUCCESS")
     log_sync(f"  Brand: {normalized_brand} ({brand_name})", "INFO")
-    log_sync(f"  Master stores before: {master_stores_before}", "INFO")
-    log_sync(f"  New stores processed: {new_stores_count}", "INFO")
-    log_sync(f"  Stores merged: {stores_merged}", "SUCCESS")
-    log_sync(f"  Stores added: {stores_added}", "SUCCESS")
-    log_sync(f"  Master stores after: {master_stores_after}", "INFO")
+    log_sync(f"  New stores from this brand: {new_stores_count}", "INFO")
+    log_sync(f"  → Matched existing stores: {stores_merged}", "SUCCESS" if stores_merged > 0 else "INFO")
+    log_sync(f"  → New unique stores added: {stores_added}", "SUCCESS" if stores_added > 0 else "INFO")
+    log_sync(f"  Master stores after sync: {master_stores_after}", "INFO")
     log_sync("=" * 80, "INFO")
     
     # Automatically validate and deduplicate after merging
@@ -693,6 +882,30 @@ def append_to_master_csv(
     
     # Update return stats with validation results
     final_stores_count = validate_result.get("stores_after", master_stores_after)
+    
+    # Log final comprehensive summary
+    log_sync("", "INFO")  # Empty line
+    log_sync("=" * 80, "INFO")
+    log_sync("FINAL SUMMARY", "SUCCESS")
+    log_sync("=" * 80, "INFO")
+    log_sync(f"  Brand processed: {normalized_brand}", "INFO")
+    log_sync(f"  New stores scraped: {new_stores_count}", "INFO")
+    log_sync(f"  Stores matched & merged: {stores_merged}", "SUCCESS")
+    log_sync(f"  New stores added: {stores_added}", "SUCCESS")
+    log_sync("", "INFO")
+    log_sync(f"  Master CSV before: {master_stores_before} stores", "INFO")
+    log_sync(f"  Master CSV after sync: {master_stores_after} stores", "INFO")
+    log_sync(f"  Duplicates removed (location): {validate_result.get('duplicates_by_location', 0)}", "INFO")
+    log_sync(f"  Duplicates removed (name): {validate_result.get('duplicates_by_name', 0)}", "INFO")
+    log_sync(f"  Master CSV final: {final_stores_count} stores", "SUCCESS")
+    log_sync(f"  Total deduplicated: {master_stores_after - final_stores_count} stores", "SUCCESS")
+    final_warnings = validate_result.get("warnings", [])
+    if final_warnings:
+        log_sync("", "INFO")
+        log_sync("WARNINGS (data quality):", "INFO")
+        for msg in final_warnings:
+            log_sync(f"  ⚠️  {msg}", "INFO")
+    log_sync("=" * 80, "INFO")
     
     return {
         "master_stores_before": master_stores_before,
@@ -709,17 +922,20 @@ def append_to_master_csv(
     }
 
 
-def validate_and_deduplicate_master_csv(master_csv: str) -> Dict[str, any]:
+def validate_and_deduplicate_master_csv(master_csv: str, coordinate_validation_tolerance_meters: float = 1000.0) -> Dict[str, any]:
     """
     Validate and deduplicate the master CSV file
     
     This function:
-    1. Deduplicates by location (same lat/lon) - keeps one per location, preferring entries with phone numbers
+    1. Deduplicates by location (same lat/lon with tolerance) - keeps one per location, preferring entries with phone numbers
     2. Deduplicates by store name - prefers entries with phone numbers and more complete data
-    3. Logs all deduplication actions
+    3. Uses coordinates directly for matching (no geocoding - fast and efficient)
+    4. Logs all deduplication actions
     
     Args:
         master_csv: Path to master CSV file
+        coordinate_validation_tolerance_meters: Maximum distance in meters for coordinate matching (default: 1000m = 1km)
+                                                Used for deduplication tolerance, not geocoding validation
     
     Returns:
         Dictionary with statistics:
@@ -727,6 +943,8 @@ def validate_and_deduplicate_master_csv(master_csv: str) -> Dict[str, any]:
             "stores_before": int,
             "duplicates_by_location": int,
             "duplicates_by_name": int,
+            "coordinate_mismatches": int,
+            "coordinate_validation_failed": int,
             "stores_after": int
         }
     """
@@ -736,6 +954,8 @@ def validate_and_deduplicate_master_csv(master_csv: str) -> Dict[str, any]:
             "stores_before": 0,
             "duplicates_by_location": 0,
             "duplicates_by_name": 0,
+            "coordinate_mismatches": 0,
+            "coordinate_validation_failed": 0,
             "stores_after": 0
         }
     
@@ -754,77 +974,269 @@ def validate_and_deduplicate_master_csv(master_csv: str) -> Dict[str, any]:
             "stores_before": 0,
             "duplicates_by_location": 0,
             "duplicates_by_name": 0,
+            "coordinate_mismatches": 0,
+            "coordinate_validation_failed": 0,
             "stores_after": 0
         }
     
-    # First pass: Deduplicate by location (lat/lon)
+    # First pass: Deduplicate by location (lat/lon) with tolerance
+    # Use coordinate tolerance to handle slight GPS variations (e.g., 50 meters)
     log_sync("-" * 80, "INFO")
-    log_sync("Step 1: Deduplicating by location (coordinates)", "INFO")
-    location_map = {}
+    log_sync("Step 1: Deduplicating by location (coordinates with tolerance)", "INFO")
+    log_sync(f"  Coordinate tolerance: {coordinate_validation_tolerance_meters:.0f} meters", "INFO")
+    
+    # Use a smaller tolerance for deduplication (50m) - stricter than validation tolerance
+    dedup_tolerance_meters = min(50.0, coordinate_validation_tolerance_meters / 2)
+    
+    deduplicated_stores = []
+    processed_indices = set()
     duplicates_by_location = 0
     
-    for store in stores:
+    for i, store in enumerate(stores):
+        if i in processed_indices:
+            continue
+            
         lat_str = store.get('Latitude', '').strip()
         lon_str = store.get('Longitude', '').strip()
         
         if not lat_str or not lon_str:
             # Store without coordinates - will handle in name deduplication
+            deduplicated_stores.append(store)
+            processed_indices.add(i)  # Track that we've processed this store
             continue
         
         try:
             lat = float(lat_str)
             lon = float(lon_str)
-            # Round to 6 decimals (~10cm precision) for matching
-            loc_key = f"{lat:.6f},{lon:.6f}"
             
-            existing = location_map.get(loc_key)
+            # Find all stores within tolerance distance
+            matching_stores = [store]  # Start with current store
+            matching_indices = [i]
             
-            if not existing:
-                location_map[loc_key] = store
+            for j, other_store in enumerate(stores[i+1:], start=i+1):
+                if j in processed_indices:
+                    continue
+                    
+                other_lat_str = other_store.get('Latitude', '').strip()
+                other_lon_str = other_store.get('Longitude', '').strip()
+                
+                if not other_lat_str or not other_lon_str:
+                    continue
+                
+                try:
+                    other_lat = float(other_lat_str)
+                    other_lon = float(other_lon_str)
+                    
+                    # Calculate distance
+                    distance = calculate_distance(lat, lon, other_lat, other_lon)
+                    
+                    # If within tolerance, it's a match (same physical location)
+                    if distance <= dedup_tolerance_meters:
+                        matching_stores.append(other_store)
+                        matching_indices.append(j)
+                except (ValueError, TypeError):
+                    continue
+            
+            # If we found matches, merge them
+            if len(matching_stores) > 1:
+                duplicates_by_location += len(matching_stores) - 1
+                
+                # Merge all matching stores
+                # IMPORTANT: Create a deep copy to avoid mutating nested structures in the original store dictionary
+                merged_store = copy.deepcopy(matching_stores[0])
+                existing_name = merged_store.get('Name', '').strip()
+                
+                # Combine all brands from all matching stores
+                all_brands = extract_all_brands_from_store(merged_store)
+                for idx, matching_store in enumerate(matching_stores[1:], start=1):
+                    current_name = matching_store.get('Name', '').strip()
+                    matching_brands = extract_all_brands_from_store(matching_store)
+                    all_brands = all_brands.union(matching_brands)
+                    
+                    # Calculate distance for logging
+                    matching_lat_str = matching_store.get('Latitude', '').strip()
+                    matching_lon_str = matching_store.get('Longitude', '').strip()
+                    match_distance = None
+                    if matching_lat_str and matching_lon_str:
+                        try:
+                            matching_lat = float(matching_lat_str)
+                            matching_lon = float(matching_lon_str)
+                            match_distance = calculate_distance(lat, lon, matching_lat, matching_lon)
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    # Merge store data (combines brands and other fields)
+                    merged_store = merge_store_data(merged_store, matching_store)
+                    
+                    if match_distance is not None:
+                        log_sync(
+                            f"  Location match: '{current_name}' merged with '{existing_name}' (distance: {match_distance:.1f}m)",
+                            "INFO"
+                        )
+                    else:
+                        log_sync(
+                            f"  Location match: '{current_name}' merged with '{existing_name}'",
+                            "INFO"
+                        )
+                
+                # Update brands in merged store
+                merged_store['Custom Brands'] = format_brands_for_custom_brands(all_brands)
+                merged_store['Brands'] = ', '.join(sorted(all_brands))
+                
+                # Prefer entry with phone number for base data
+                best_store = merged_store
+                best_has_phone = bool(merged_store.get('Phone', '').strip())
+                best_addr_len = len(merged_store.get('Address Line 1', '').strip())
+                
+                # Check if any other matching store has better data
+                for matching_store in matching_stores:
+                    has_phone = bool(matching_store.get('Phone', '').strip())
+                    addr_len = len(matching_store.get('Address Line 1', '').strip())
+                    
+                    if (has_phone and not best_has_phone) or \
+                       (has_phone == best_has_phone and addr_len > best_addr_len):
+                        # Re-merge with this store as base
+                        # Use deep copy to avoid mutating nested structures
+                        temp_merged = copy.deepcopy(matching_store)
+                        for other_store in matching_stores:
+                            if other_store is not matching_store:
+                                temp_merged = merge_store_data(temp_merged, other_store)
+                        # Restore brands
+                        temp_merged['Custom Brands'] = format_brands_for_custom_brands(all_brands)
+                        temp_merged['Brands'] = ', '.join(sorted(all_brands))
+                        best_store = temp_merged
+                        best_has_phone = has_phone
+                        best_addr_len = addr_len
+                
+                # Log brand merge
+                all_brands_str = ', '.join(sorted(all_brands)) if all_brands else 'None'
+                log_sync(
+                    f"    Brands combined: {all_brands_str}",
+                    "SUCCESS"
+                )
+                
+                deduplicated_stores.append(best_store)
+                # Mark all matching stores as processed
+                processed_indices.update(matching_indices)
             else:
-                duplicates_by_location += 1
-                existing_name = existing.get('Name', '').strip()
+                # No matches found, add as-is
+                deduplicated_stores.append(store)
+                processed_indices.add(i)
+                
+        except (ValueError, TypeError):
+            # Invalid coordinates - skip location deduplication for this store
+            deduplicated_stores.append(store)
+            processed_indices.add(i)
+            continue
+    
+    deduplicated_by_location = deduplicated_stores
+    
+    log_sync(f"  Removed {duplicates_by_location} duplicate(s) by location (within {dedup_tolerance_meters:.0f}m)", "SUCCESS")
+    log_sync(f"  Stores after location deduplication: {len(deduplicated_by_location)}", "INFO")
+    
+    # Second pass: Deduplicate by store name (only if coordinates are close)
+    log_sync("-" * 80, "INFO")
+    log_sync("Step 2: Deduplicating by store name (with coordinate check)", "INFO")
+    log_sync(f"  Coordinate tolerance: {dedup_tolerance_meters:.0f} meters", "INFO")
+    name_map = {}
+    duplicates_by_name = 0
+    stores_without_name = []  # Track stores without names to add them to final output
+    
+    for store in deduplicated_by_location:
+        name = (store.get('Name', '') or '').strip().lower()
+        if not name:
+            # Store without name - add directly to final output (can't deduplicate by name)
+            stores_without_name.append(copy.deepcopy(store))
+            continue
+        
+        existing = name_map.get(name)
+        
+        if not existing:
+            # Use deep copy to avoid mutating nested structures
+            name_map[name] = copy.deepcopy(store)
+        else:
+            # Handle case where existing might be a list (multiple stores with same name)
+            existing_stores = existing if isinstance(existing, list) else [existing]
+            
+            # Check if any existing store has coordinates close to current store
+            current_lat_str = store.get('Latitude', '').strip()
+            current_lon_str = store.get('Longitude', '').strip()
+            
+            coordinates_close = False
+            distance = None
+            matching_existing = None
+            
+            # Check against all existing stores with the same name
+            for existing_store in existing_stores:
+                existing_lat_str = existing_store.get('Latitude', '').strip()
+                existing_lon_str = existing_store.get('Longitude', '').strip()
+                
+                # Only merge if both have coordinates and they're close
+                if existing_lat_str and existing_lon_str and current_lat_str and current_lon_str:
+                    try:
+                        existing_lat = float(existing_lat_str)
+                        existing_lon = float(existing_lon_str)
+                        current_lat = float(current_lat_str)
+                        current_lon = float(current_lon_str)
+                        
+                        # Calculate distance
+                        dist = calculate_distance(existing_lat, existing_lon, current_lat, current_lon)
+                        
+                        # Only merge if coordinates are within tolerance
+                        if dist <= dedup_tolerance_meters:
+                            coordinates_close = True
+                            distance = dist
+                            matching_existing = existing_store
+                            break  # Found a match, stop searching
+                    except (ValueError, TypeError):
+                        # Invalid coordinates - continue checking other stores
+                        continue
+            
+            # Only merge stores with same name if coordinates are close
+            if coordinates_close and matching_existing:
+                duplicates_by_name += 1
+                existing_name = matching_existing.get('Name', '').strip()
                 current_name = store.get('Name', '').strip()
                 
                 # Extract brands from both stores
-                existing_brands_before = extract_all_brands_from_store(existing)
+                existing_brands_before = extract_all_brands_from_store(matching_existing)
                 current_brands = extract_all_brands_from_store(store)
                 combined_brands = existing_brands_before.union(current_brands)
                 
                 # Merge the stores, combining brands
-                merged_store = merge_store_data(existing, store)
+                merged_store = merge_store_data(matching_existing, store)
                 
                 # Prefer entry with phone number for base data
-                existing_has_phone = bool(existing.get('Phone', '').strip())
+                existing_has_phone = bool(matching_existing.get('Phone', '').strip())
                 current_has_phone = bool(store.get('Phone', '').strip())
                 
                 if current_has_phone and not existing_has_phone:
                     # Use current store as base, but keep merged brands
-                    merged_store = merge_store_data(store, existing)
+                    merged_store = merge_store_data(store, matching_existing)
                     log_sync(
-                        f"  Location duplicate: Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - has phone)",
+                        f"  Name duplicate (coordinates close): Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - has phone, distance: {distance:.1f}m)",
                         "INFO"
                     )
                 elif not current_has_phone and existing_has_phone:
                     # Use existing store as base (already merged above)
                     log_sync(
-                        f"  Location duplicate: Merging '{existing_name}' + '{current_name}' (keeping '{existing_name}' as base - has phone)",
+                        f"  Name duplicate (coordinates close): Merging '{existing_name}' + '{current_name}' (keeping '{existing_name}' as base - has phone, distance: {distance:.1f}m)",
                         "INFO"
                     )
                 else:
                     # Both have phone or both don't - prefer one with more complete data
-                    existing_addr = len(existing.get('Address Line 1', '').strip())
+                    existing_addr = len(matching_existing.get('Address Line 1', '').strip())
                     current_addr = len(store.get('Address Line 1', '').strip())
                     
                     if current_addr > existing_addr:
-                        merged_store = merge_store_data(store, existing)
+                        merged_store = merge_store_data(store, matching_existing)
                         log_sync(
-                            f"  Location duplicate: Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - more complete)",
+                            f"  Name duplicate (coordinates close): Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - more complete, distance: {distance:.1f}m)",
                             "INFO"
                         )
                     else:
                         log_sync(
-                            f"  Location duplicate: Merging '{existing_name}' + '{current_name}' (keeping '{existing_name}' as base - more complete)",
+                            f"  Name duplicate (coordinates close): Merging '{existing_name}' + '{current_name}' (keeping '{existing_name}' as base - more complete, distance: {distance:.1f}m)",
                             "INFO"
                         )
                 
@@ -838,101 +1250,61 @@ def validate_and_deduplicate_master_csv(master_csv: str) -> Dict[str, any]:
                     "SUCCESS"
                 )
                 
-                location_map[loc_key] = merged_store
-        except (ValueError, TypeError):
-            # Invalid coordinates - skip location deduplication for this store
-            continue
-    
-    deduplicated_by_location = list(location_map.values())
-    # Add stores without coordinates to the list
-    for store in stores:
-        lat_str = store.get('Latitude', '').strip()
-        lon_str = store.get('Longitude', '').strip()
-        if not lat_str or not lon_str:
-            deduplicated_by_location.append(store)
-    
-    log_sync(f"  Removed {duplicates_by_location} duplicate(s) by location", "SUCCESS")
-    log_sync(f"  Stores after location deduplication: {len(deduplicated_by_location)}", "INFO")
-    
-    # Second pass: Deduplicate by store name
-    log_sync("-" * 80, "INFO")
-    log_sync("Step 2: Deduplicating by store name", "INFO")
-    name_map = {}
-    duplicates_by_name = 0
-    
-    for store in deduplicated_by_location:
-        name = (store.get('Name', '') or '').strip().lower()
-        if not name:
-            continue
-        
-        existing = name_map.get(name)
-        
-        if not existing:
-            name_map[name] = store
-        else:
-            duplicates_by_name += 1
-            existing_name = existing.get('Name', '').strip()
-            current_name = store.get('Name', '').strip()
-            
-            # Extract brands from both stores
-            existing_brands_before = extract_all_brands_from_store(existing)
-            current_brands = extract_all_brands_from_store(store)
-            combined_brands = existing_brands_before.union(current_brands)
-            
-            # Merge the stores, combining brands
-            merged_store = merge_store_data(existing, store)
-            
-            # Prefer entry with phone number for base data
-            existing_has_phone = bool(existing.get('Phone', '').strip())
-            current_has_phone = bool(store.get('Phone', '').strip())
-            
-            if current_has_phone and not existing_has_phone:
-                # Use current store as base, but keep merged brands
-                merged_store = merge_store_data(store, existing)
-                log_sync(
-                    f"  Name duplicate: Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - has phone)",
-                    "INFO"
-                )
-            elif not current_has_phone and existing_has_phone:
-                # Use existing store as base (already merged above)
-                log_sync(
-                    f"  Name duplicate: Merging '{existing_name}' + '{current_name}' (keeping '{existing_name}' as base - has phone)",
-                    "INFO"
-                )
-            else:
-                # Both have phone or both don't - prefer one with more complete data
-                existing_addr = len(existing.get('Address Line 1', '').strip())
-                current_addr = len(store.get('Address Line 1', '').strip())
-                
-                if current_addr > existing_addr:
-                    merged_store = merge_store_data(store, existing)
-                    log_sync(
-                        f"  Name duplicate: Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - more complete)",
-                        "INFO"
-                    )
+                # Replace the matching store in the list, or replace single store
+                if isinstance(name_map[name], list):
+                    # Replace the matching store in the list with merged version
+                    index = existing_stores.index(matching_existing)
+                    existing_stores[index] = merged_store
+                    name_map[name] = existing_stores
                 else:
-                    log_sync(
-                        f"  Name duplicate: Merging '{existing_name}' + '{current_name}' (keeping '{existing_name}' as base - more complete)",
-                        "INFO"
-                    )
-            
-            # Log brand merge
-            existing_brands_str = ', '.join(sorted(existing_brands_before)) if existing_brands_before else 'None'
-            current_brands_str = ', '.join(sorted(current_brands)) if current_brands else 'None'
-            merged_brands_str = ', '.join(sorted(combined_brands)) if combined_brands else 'None'
-            
-            log_sync(
-                f"    Brands merged: [{existing_brands_str}] + [{current_brands_str}] → [{merged_brands_str}]",
-                "SUCCESS"
-            )
-            
-            name_map[name] = merged_store
+                    # Replace single store with merged version
+                    name_map[name] = merged_store
+            else:
+                # Same name but coordinates not close (or missing) - keep both as separate stores
+                # Store as list to handle multiple stores with same name but different locations
+                if isinstance(name_map[name], list):
+                    name_map[name].append(copy.deepcopy(store))
+                else:
+                    # Convert single store to list and add both
+                    existing_store = name_map[name]
+                    name_map[name] = [existing_store, copy.deepcopy(store)]
     
-    final_stores = list(name_map.values())
+    # Flatten name_map - handle both single stores and lists of stores with same name
+    final_stores = []
+    for value in name_map.values():
+        if isinstance(value, list):
+            # Multiple stores with same name but different locations - keep all
+            final_stores.extend(value)
+        else:
+            # Single store
+            final_stores.append(value)
+    
+    # Add stores without names that were skipped during name deduplication
+    if stores_without_name:
+        final_stores.extend(stores_without_name)
+        log_sync(f"  Added {len(stores_without_name)} store(s) without names to final output", "INFO")
+    
     stores_after = len(final_stores)
     
     log_sync(f"  Removed {duplicates_by_name} duplicate(s) by name", "SUCCESS")
     log_sync(f"  Stores after name deduplication: {stores_after}", "INFO")
+    
+    # Step 3: Skip geocoding validation - use coordinates directly
+    # We trust the coordinates provided and use them for matching/deduplication
+    # Geocoding is slow and unnecessary since we match by coordinates directly
+    log_sync("-" * 80, "INFO")
+    log_sync("Step 3: Coordinate validation skipped (using coordinates directly)", "INFO")
+    log_sync("  Using provided coordinates for matching - no geocoding performed", "INFO")
+    log_sync("  All stores with coordinates are kept (fast and efficient)", "SUCCESS")
+    
+    validated_stores = final_stores
+    coordinate_mismatches = 0
+    coordinate_validation_failed = 0
+    stores_after_validation = len(validated_stores)
+    removed_by_validation = 0
+    
+    final_stores = validated_stores
+    stores_after = stores_after_validation
     
     # Write deduplicated CSV back
     if stores_after < stores_before:
@@ -957,21 +1329,47 @@ def validate_and_deduplicate_master_csv(master_csv: str) -> Dict[str, any]:
         write_dict_list_to_csv(final_stores, master_csv, fieldnames)
         log_sync("Validated master CSV written successfully", "SUCCESS")
     
+    # Collect data-quality warnings for final summary
+    warnings_list = []
+    no_name_count = len(stores_without_name)
+    no_coords_count = sum(
+        1 for s in final_stores
+        if not (s.get('Latitude') or '').strip() or not (s.get('Longitude') or '').strip()
+    )
+    no_address_count = sum(1 for s in final_stores if not (s.get('Address Line 1') or '').strip())
+    no_phone_count = sum(1 for s in final_stores if not (s.get('Phone') or '').strip())
+    if no_name_count:
+        warnings_list.append(f"{no_name_count} store(s) have no name")
+    if no_coords_count:
+        warnings_list.append(f"{no_coords_count} store(s) have missing or invalid coordinates")
+    if no_address_count:
+        warnings_list.append(f"{no_address_count} store(s) have no address")
+    if no_phone_count:
+        warnings_list.append(f"{no_phone_count} store(s) have no phone number")
+    
     # Log summary
     log_sync("=" * 80, "INFO")
-    log_sync("VALIDATION COMPLETE", "SUCCESS")
-    log_sync(f"  Stores before: {stores_before}", "INFO")
-    log_sync(f"  Duplicates by location: {duplicates_by_location}", "INFO")
-    log_sync(f"  Duplicates by name: {duplicates_by_name}", "INFO")
-    log_sync(f"  Stores after: {stores_after}", "INFO")
-    log_sync(f"  Total duplicates removed: {stores_before - stores_after}", "SUCCESS")
+    log_sync("DEDUPLICATION COMPLETE", "SUCCESS")
+    log_sync(f"  Stores before deduplication: {stores_before}", "INFO")
+    log_sync(f"  Duplicates removed (by location): {duplicates_by_location}", "SUCCESS" if duplicates_by_location > 0 else "INFO")
+    log_sync(f"  Duplicates removed (by name): {duplicates_by_name}", "SUCCESS" if duplicates_by_name > 0 else "INFO")
+    log_sync(f"  Stores after deduplication: {stores_after}", "SUCCESS")
+    log_sync(f"  Total duplicates removed: {stores_before - stores_after}", "SUCCESS" if (stores_before - stores_after) > 0 else "INFO")
+    if warnings_list:
+        log_sync("", "INFO")
+        log_sync("WARNINGS (data quality):", "INFO")
+        for msg in warnings_list:
+            log_sync(f"  ⚠️  {msg}", "INFO")
     log_sync("=" * 80, "INFO")
     
     return {
         "stores_before": stores_before,
         "duplicates_by_location": duplicates_by_location,
         "duplicates_by_name": duplicates_by_name,
-        "stores_after": stores_after
+        "coordinate_mismatches": 0,  # Geocoding validation disabled - using coordinates directly
+        "coordinate_validation_failed": 0,  # Geocoding validation disabled - using coordinates directly
+        "stores_after": stores_after,
+        "warnings": warnings_list
     }
 
 
@@ -991,11 +1389,15 @@ if __name__ == "__main__":
             sys.exit(1)
         master_csv = sys.argv[2]
         result = validate_and_deduplicate_master_csv(master_csv)
-        print(f"\nValidation Results Summary:")
-        print(f"  Stores before: {result['stores_before']}")
-        print(f"  Duplicates by location: {result['duplicates_by_location']}")
-        print(f"  Duplicates by name: {result['duplicates_by_name']}")
-        print(f"  Stores after: {result['stores_after']}")
+        print(f"\n{'='*80}")
+        print(f"DEDUPLICATION SUMMARY")
+        print(f"{'='*80}")
+        print(f"  Stores before deduplication: {result['stores_before']}")
+        print(f"  Duplicates removed (by location): {result['duplicates_by_location']}")
+        print(f"  Duplicates removed (by name): {result['duplicates_by_name']}")
+        print(f"  Stores after deduplication: {result['stores_after']}")
+        print(f"  Total duplicates removed: {result['stores_before'] - result['stores_after']}")
+        print(f"{'='*80}")
     else:
         if len(sys.argv) < 3:
             print("Usage: python3 master_csv_manager.py <new_stores.csv> <master_stores.csv> [brand_name]")
@@ -1007,18 +1409,25 @@ if __name__ == "__main__":
         
         result = append_to_master_csv(new_csv, master_csv, brand_name)
         
-        print(f"\nMaster CSV Update Results Summary:")
-        print(f"  Master stores before: {result['master_stores_before']}")
-        print(f"  New stores: {result['new_stores']}")
-        print(f"  Stores merged: {result['stores_merged']}")
-        print(f"  Stores added: {result['stores_added']}")
-        print(f"  Master stores after merge: {result['master_stores_after']}")
+        print(f"\n{'='*80}")
+        print(f"MASTER CSV SYNC SUMMARY")
+        print(f"{'='*80}")
+        print(f"  Brand: {brand_name}")
+        print(f"  New stores scraped: {result['new_stores']}")
+        print(f"  → Matched existing stores: {result['stores_merged']}")
+        print(f"  → New unique stores added: {result['stores_added']}")
+        print(f"")
+        print(f"  Master CSV before sync: {result['master_stores_before']} stores")
+        print(f"  Master CSV after sync: {result['master_stores_after']} stores")
         
         # Validation results are included in the return value
         if 'validation' in result:
             val = result['validation']
-            print(f"\nValidation Results Summary:")
-            print(f"  Stores before validation: {val['stores_before_validation']}")
-            print(f"  Duplicates by location: {val['duplicates_by_location']}")
-            print(f"  Duplicates by name: {val['duplicates_by_name']}")
-            print(f"  Stores after validation: {val['stores_after_validation']}")
+            print(f"")
+            print(f"  Deduplication:")
+            print(f"    Stores before deduplication: {val['stores_before_validation']}")
+            print(f"    Duplicates removed (location): {val['duplicates_by_location']}")
+            print(f"    Duplicates removed (name): {val['duplicates_by_name']}")
+            print(f"    Stores after deduplication: {val['stores_after_validation']}")
+            print(f"    Total removed: {val['stores_before_validation'] - val['stores_after_validation']}")
+        print(f"{'='*80}")

@@ -104,6 +104,30 @@ export const scraperService = {
   }> {
     const response = await api.get('/scraper/stats');
     return response.data;
+  },
+
+  // Discover endpoints from a store locator page
+  async discoverEndpoints(storeLocatorUrl: string): Promise<any> {
+    const response = await api.post('/scraper/discover', { url: storeLocatorUrl });
+    return response.data;
+  },
+
+  // Save discovered endpoint as brand configuration
+  async saveBrandConfig(data: {
+    brandId: string;
+    brandName: string;
+    endpoint: any;
+    suggestedConfig?: any;
+    overwrite?: boolean;
+    oldBrandId?: string;
+  }): Promise<void> {
+    await api.post('/scraper/brands', data);
+  },
+
+  // Get a specific brand configuration
+  async getBrandConfig(brandId: string): Promise<{ brandId: string; config: any }> {
+    const response = await api.get(`/scraper/brands/${brandId}`);
+    return response.data;
   }
 };
 
