@@ -17,4 +17,11 @@ router.delete('/jobs/:id', scraperController.deleteJob);
 // Statistics
 router.get('/stats', scraperController.getStats);
 
+// Endpoint discovery
+router.post('/discover', scraperController.discoverEndpoints);
+
+// Brand configuration routes
+router.get('/brands/:id', scraperController.getBrandConfig);
+router.post('/brands', scraperController.saveBrandConfig);
+
 export default router;

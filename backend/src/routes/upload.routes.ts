@@ -29,6 +29,9 @@ router.get('/:id/logs', uploadController.getValidationLogs);
 // GET /api/uploads/:id/download - Download upload CSV file
 router.get('/:id/download', uploadController.downloadUpload);
 
+// POST /api/uploads/:id/revalidate - Re-validate upload with options (admin only)
+router.post('/:id/revalidate', requireRole(['admin']), uploadController.revalidateUpload);
+
 // DELETE /api/uploads/:id - Delete upload (admin only)
 router.delete('/:id', requireRole(['admin']), uploadController.deleteUpload);
 

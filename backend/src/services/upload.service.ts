@@ -33,9 +33,12 @@ export class UploadService {
         data: { status: 'validating' }
       });
 
-      // Run validation
+      // Run validation with auto-fix enabled (normalizes URLs, fixes data quality issues)
       console.log(`Starting validation for upload ${uploadId}...`);
-      const validationResult = await validationService.validateCSV(filePath);
+      const validationResult = await validationService.validateCSV(filePath, {
+        autoFix: true,  // Enable auto-fix to normalize URLs and fix data quality issues
+        checkUrls: false  // Don't check URLs via HTTP (faster, can be done manually if needed)
+      });
       console.log(`Validation complete. Valid: ${validationResult.valid}, Errors: ${validationResult.errors.length}`);
 
       // Update upload with validation results
@@ -278,6 +281,88 @@ export class UploadService {
     } catch (error) {
       console.error('Error getting master CSV path:', error);
       return null;
+    }
+  }
+
+  /**
+   * Re-validate an upload with optional settings
+   */
+  async revalidateUpload(
+    uploadId: string, 
+    options?: {
+      autoFix?: boolean;
+      checkUrls?: boolean;
+    }
+  ) {
+    try {
+      // Get upload to find file path
+      const upload = await prisma.upload.findUnique({
+        where: { id: uploadId }
+      });
+
+      if (!upload) {
+        throw new Error('Upload not found');
+      }
+
+      const filePath = await this.getFilePath(upload.filename);
+      if (!filePath) {
+        throw new Error('File path could not be resolved');
+      }
+
+      // Update status to validating
+      await prisma.upload.update({
+        where: { id: uploadId },
+        data: { status: 'validating' }
+      });
+
+      // Run validation with options
+      console.log(`Re-validating upload ${uploadId} with options:`, options);
+      const validationResult = await validationService.validateCSV(filePath, options || {});
+
+      // Delete old validation logs
+      await prisma.validationLog.deleteMany({
+        where: { uploadId }
+      });
+
+      // Update upload with validation results
+      const updateData = validationService.formatForDatabase(validationResult);
+      await prisma.upload.update({
+        where: { id: uploadId },
+        data: updateData
+      });
+
+      // Create new validation log entries
+      const logs = validationService.createValidationLogs(uploadId, validationResult);
+      if (logs.length > 0) {
+        await prisma.validationLog.createMany({
+          data: logs
+        });
+      }
+
+      console.log(`Re-validation complete. Valid: ${validationResult.valid}, Errors: ${validationResult.errors.length}`);
+
+      return {
+        success: true,
+        uploadId,
+        validationResult
+      };
+
+    } catch (error: any) {
+      console.error(`Error re-validating upload ${uploadId}:`, error);
+      
+      // Update upload status to failed
+      await prisma.upload.update({
+        where: { id: uploadId },
+        data: {
+          status: 'failed',
+          validationErrors: JSON.stringify([{
+            issue: 'revalidation_error',
+            message: error.message
+          }])
+        }
+      });
+
+      throw error;
     }
   }
 }

@@ -71,7 +71,7 @@ Default credentials:
 npm run dev
 ```
 
-Server runs on `http://localhost:3001`
+Server runs on `http://localhost:3001/api/auth/login`
 
 ## API Endpoints
 

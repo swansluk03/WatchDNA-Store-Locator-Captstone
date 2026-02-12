@@ -216,7 +216,7 @@
 
       border-radius: 6px;
       padding: 0.5rem;
-      margin-bottom: 0.5rem;
+      margin-bottom: 0.5rem;  
       cursor: pointer;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
       transition: background-color 0.2s, box-shadow 0.2s;
@@ -263,11 +263,126 @@
       color: var(--accent);
       font-weight: 600;
     }
+
+    /* Store detail panel */
+    .store-detail {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      box-sizing: border-box;
+      margin-top: 10px;
+    }
+          
+    .store-detail.hidden {
+      display: none !important;
+    }
+    
+    .store-detail__top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    
+    .store-detail__title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+    
+    .store-detail__close {
+      border: 1px solid var(--border);
+      background: var(--card2);
+      border-radius: 8px;
+      width: 34px;
+      height: 34px;
+      cursor: pointer;
+      font-size: 20px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .store-detail__image {
+      width: 100%;
+      height: 180px;
+      background: #e9e4d6;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    
+    .store-detail__imageText {
+      font-size: 1rem;
+      opacity: 0.8;
+    }
+    
+    .store-detail__actions {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    
+    .store-detail__btn {
+      flex: 1;
+      text-align: center;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--card2);
+      color: var(--text);
+      text-decoration: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    
+    .store-detail__btn:hover {
+      background: var(--hover-bg);
+    }
+    
+  .store-detail__section {
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    margin-top: 10px;
+  }
+  
+  .store-detail__label {
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  
+  .store-detail__value {
+    font-size: 1rem;
+    line-height: 1.3;
+    word-break: break-word;
+  }
+
+  /* Makes it so that when viewing a single store, everything else in the sidebar gets hidden */
+  #sidebar.store-focused #top,
+  #sidebar.store-focused #hamburger,
+  #sidebar.store-focused #filtersPanel,
+  #sidebar.store-focused #nearMeWithinBtn,
+  #sidebar.store-focused #nearMeRadius,
+  #sidebar.store-focused #nearMeBtn,
+  #sidebar.store-focused #storeListContainer,
+  #sidebar.store-focused #footer {
+    display: none;
+  }
+
   </style>
 </head>
 
 <body>
-  <header>
+  <header id="sidebar">
 
     <div id="top">
       <div id="inner">
@@ -301,6 +416,10 @@
         style="margin-top:10px; max-height:200px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px;">
         <!-- Store name checkboxes -->
       </div>
+        <input type="checkbox" id="premiumOnlyToggle" style="cursor:pointer; transform: scale(1.2);" />
+        <label for="premiumOnlyToggle" style="cursor:pointer;"><strong>Show Premium Only</strong></label>
+      </div>
+      <div style="margin-top:10px; display:flex; align-items:center; gap:8px;"></div>
       <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
         <button id="nearMeBtn" title="Share your location to find the closest store"
           style="padding:8px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer;">
@@ -322,6 +441,38 @@
       </div>
     </div>
 
+    <!-- Store detail panel (hidden by default)-->
+     <div id="storeDetailPanel" class="store-detail hidden" aria-hidden="true">
+      <div class="store-detail__top">
+        <div class="store-detail__title" id="detailName">Store Name</div>
+        <button class="store-detail__close" id="detailCloseBtn" aria-label="Close">×</button>
+      </div>
+
+      <div class="store-detail__image" id="detailImage" role="img" aria-label="Store image placeholder">
+        <div class="store-detail__imageText">Image placeholder</div>
+      </div>
+
+      <div class="store-detail__actions">
+        <a id="detailDirectionsBtn" class="store-detail__btn" href="#" target="_blank" rel="noopener">Directions</a>
+        <a id="detailConnectBtn" class="store-detail__btn" href="#">Connect</a>
+      </div>
+
+      <div class="store-detail__section">
+        <div class="store-detail__label">Address</div>
+        <div class="store-detail__value" id="detailAddress"></div>
+      </div>
+
+      <div class="store-detail__section">
+        <div class="store-detail__label">Phone</div>
+        <div class="store-detail__value" id="detailPhone"></div>
+      </div>
+
+      <div class="store-detail__section">
+        <div class="store-detail__label">Brands</div>
+        <div class="store-detail__value" id="detailBrands"></div>
+        </div>
+      </div>
+
     <div id="storeListContainer">
       <div id="storeListings"></div>
     </div>
@@ -338,6 +489,14 @@
     // --- Map bootstrap ---
     const map = L.map('map');
     map.setView([20, 0], 2); // will be replaced by fitBounds if we have data
+
+    // For zoom out logic
+    const originalCenter = map.getCenter();
+    const originalZoom = map.getZoom();
+
+    map.on('popupclose', () => {
+      resetFocusedStore();
+    });
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
@@ -425,7 +584,7 @@
     let allRows = [];
     let allMarkers = [];
 
-    //Icons for regular and premium vendors
+    // Temporary Icons for regular and premium vendors
     const regularIcon = L.icon({
       iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
       shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
@@ -446,9 +605,153 @@
       const addr = [row['Address Line 1'], row['City'], row['State/Province/Region'], row['Country']]
         .filter(Boolean).join(', ');
       const phone = row['Phone'] ? `<br>${row['Phone']}` : '';
-      return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}</div>`;
+      
+      // Get brands from Brands column first, fallback to Custom Brands if empty
+      let brands = (row['Brands'] || '').trim();
+      if (!brands && row['Custom Brands']) {
+        // Extract brand names from HTML Custom Brands column
+        const customBrandsHtml = row['Custom Brands'];
+        const brandMatches = customBrandsHtml.match(/>([^<]+)<\/A>/gi) || [];
+        brands = brandMatches.map(m => m.replace(/>|<\/A>/gi, '').trim()).filter(Boolean).join(', ');
+      }
+      
+      const brandsDisplay = brands ? `<br><br><strong>Brands:</strong> ${brands}` : '';
+      return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}${brandsDisplay}</div>`;
+    }
+    
+    function buildFullAddress(row) {
+      const line1 = (row['Address Line 1'] || '').trim();
+      const line2 = (row['Address Line 2'] || '').trim();
+      const city = (row['City'] || '').trim();
+      const state = (row['State/Province/Region'] || '').trim();
+      const zip = (row['Zip/Postal Code'] || '').trim();
+      const country = (row['Country'] || '').trim();
+      
+      const parts = [];
+      if (line1) parts.push(line1);
+      if (line2) parts.push(line2);
+      
+      const cityLine = [city, state, zip].filter(Boolean).join(', ');
+      if (cityLine) parts.push(cityLine);
+      if (country) parts.push(country);
+      
+      return parts.join('\n');
+    }
+    
+    function extractBrandsText(row) {
+      let brands = (row['Brands'] || '').trim();
+      
+      if (!brands && row['Custom Brands']) {
+        const customBrandsHtml = row['Custom Brands'];
+        const brandMatches = customBrandsHtml.match(/>([^<]+)<\/A>/gi) || [];
+        brands = brandMatches
+        .map(m => m.replace(/>|<\/A>/gi, '').trim())
+        .filter(Boolean)
+        .join(', ');
+      }
+      
+      return brands;
     }
 
+    function setDetailPanelVisible(visible) {
+      const sidebar = document.getElementById('sidebar');
+      const panel = document.getElementById('storeDetailPanel');
+      const listContainer = document.getElementById('storeListContainer');
+      if (!sidebar || !panel || !listContainer) return;
+
+      if (visible) {
+      sidebar.classList.add('store-focused');
+      panel.classList.remove('hidden');
+      panel.setAttribute('aria-hidden', 'false');
+      //listContainer.classList.add('hidden');
+      //listContainer.style.display = 'none';
+    } else {
+      sidebar.classList.remove('store-focused');
+      panel.classList.add('hidden');
+      panel.setAttribute('aria-hidden', 'true');
+      //listContainer.classList.remove('hidden');
+      //listContainer.style.display = '';
+    }
+  }
+
+  function openStoreDetail(row, marker) {
+    const nameEl = document.getElementById('detailName');
+    const addressEl = document.getElementById('detailAddress');
+    const phoneEl = document.getElementById('detailPhone');
+    const brandsEl = document.getElementById('detailBrands');
+    const directionsBtn = document.getElementById('detailDirectionsBtn');
+    const connectBtn = document.getElementById('detailConnectBtn');
+
+    const name = (row['Name'] || 'Unnamed').trim();
+    const address = buildFullAddress(row);
+    const phone = (row['Phone'] || '').trim();
+    const brands = extractBrandsText(row);
+
+    if (nameEl) nameEl.textContent = name;
+
+    if (addressEl) {
+      addressEl.textContent = address || 'Not provided';
+      addressEl.style.whiteSpace = 'pre-line';
+    }
+
+    if (phoneEl) phoneEl.textContent = phone || 'Not provided';
+    if (brandsEl) brandsEl.textContent = brands || 'Not provided';
+
+    // Directions: use lat/lng if available, otherwise fall back to address
+    const lat = parseFloat(String(row.Latitude || '').trim());
+    const lon = parseFloat(String(row.Longitude || '').trim());
+    const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
+
+    if (directionsBtn) {
+    const q = hasCoords ? `${lat},${lon}` : encodeURIComponent(address.replace(/\n/g, ', '));
+    directionsBtn.href = hasCoords
+      ? `https://www.google.com/maps/search/?api=1&query=${q}`
+      : `https://www.google.com/maps/search/?api=1&query=${q}`;
+    }
+
+    // Connect: prefer email; otherwise disable
+    const email = (row['Email'] || '').trim();
+    if (connectBtn) {
+      if (isValidEmail(email)) {
+        connectBtn.href = `mailto:${email}`;
+        connectBtn.textContent = 'Connect';
+        connectBtn.style.opacity = '1';
+        connectBtn.style.pointerEvents = 'auto';
+      } else {
+        connectBtn.href = '#';
+        connectBtn.textContent = 'Connect';
+        connectBtn.style.opacity = '0.5';
+        connectBtn.style.pointerEvents = 'none';
+      }
+    }
+    
+    setDetailPanelVisible(true);
+
+    // Optional: keep the map movement consistent
+    if (marker && hasCoords) {
+      map.flyTo([lat, lon], 14, { animate: true, duration: 2.5 });
+    }
+  }
+
+  //Zooms the map out to full view
+  function resetFocusedStore() {
+    setDetailPanelVisible(false);
+
+    if(originalCenter && originalZoom !== undefined) {
+      map.flyTo(originalCenter, originalZoom, {
+        animate: true,
+        duration: 2.5
+      });
+    }
+  }
+
+  // When the close store detail button is clicked, it will close itself, the popup, and zoom the map back out to full view
+  const closeBtn = document.getElementById('detailCloseBtn');
+  if(closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      resetFocusedStore();
+    });
+  }
 
     function rebuildStoreCheckboxes(rowsForList) {
       // rowsForList should be the rows after applying non-checkbox filters
@@ -463,7 +766,14 @@
 
       const storeNames = [...new Set(rowsForList.map(r => (r['Name'] || '').trim()).filter(Boolean))].sort();
 
+      const premiumOnly = document.getElementById('premiumOnlyToggle')?.checked;
+
       storeNames.forEach(name => {
+        const rowMatch = rowsForList.find(r => (r['Name'] || '').trim() === name);
+
+        // Skip non-premium rows entirely in checkbox list
+        if (premiumOnly && !rowMatch?._isPremium) return;
+
         const label = document.createElement('label');
         label.style.display = 'flex';
         label.style.alignItems = 'center';
@@ -473,7 +783,7 @@
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.value = name;
-        cb.checked = prevChecked.has(name); // preserve previous checked state
+        cb.checked = prevChecked.has(name);
         cb.addEventListener('change', () => applyFilter(document.getElementById('brandFilter').value));
 
         const span = document.createElement('span');
@@ -521,14 +831,16 @@
       const brandValue = (brand || '').trim().toUpperCase();
       const typeValue = (document.getElementById('typeFilter').value || 'all');
       const storeInput = (document.getElementById('storeFilter').value || '').trim().toLowerCase();
+      // Premium-only filter
+      const premiumOnly = document.getElementById('premiumOnlyToggle').checked;
 
       const baseRows = [];
       allMarkers.forEach(({ row }) => {
         let passes = true;
 
-        // brand filter
+        // brand filter - check Brands column (plain text, comma-separated)
         if (brandValue) {
-          const brands = (row['Custom Brands'] || '')
+          const brands = (row['Brands'] || '')
             .toUpperCase()
             .split(',')
             .map(s => s.trim())
@@ -549,6 +861,11 @@
         // type filter
         if (passes && typeValue && typeValue !== 'all') {
           passes = (String(row._type || 'retailer') === typeValue);
+        }
+
+        // Premium-only logic
+        if (passes && premiumOnly) {
+          passes = row._isPremium === true;
         }
 
         if (passes) baseRows.push(row);
@@ -742,8 +1059,22 @@
       document.body.appendChild(div);
     }
 
+    function isValidEmail(val) {
+      if (!val) return false;
+
+      const bad = new Set([
+        '', ' ', '-', '--', '---', '.', 'n/a', 'na', 'none', 'null',
+        'not provided', 'not available', 'no email', '0'
+    ]);
+
+    const cleaned = val.trim().toLowerCase();
+    if (bad.has(cleaned)) return false;
+
+    return cleaned.includes('@') && cleaned.includes('.');
+    }
+
     // --- Load data & render (with helpful logs) ---
-    loadCSV('locations.csv')
+    loadCSV('backend/uploads/master_stores.csv')
       .then(rows => {
         console.log('CSV rows (raw):', rows.length);
         const brandSet = new Set();
@@ -751,6 +1082,11 @@
         // Keep only rows that *have something* in lat/lon
         allRows = rows.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
         console.log('Rows with any lat/lon value:', allRows.length);
+
+        const detailCloseBtn = document.getElementById('detailCloseBtn');
+        if (detailCloseBtn) {
+          detailCloseBtn.addEventListener('click', () => setDetailPanelVisible(false));
+        }
 
         allRows.forEach(row => {
           // classify row as 'accessory' or 'retailer' using simple heuristics
@@ -774,31 +1110,27 @@
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-          row._isPremium = !!(row['Email'] && row['Email'].trim() !== '');
+          row._isPremium = isValidEmail(row['Email']);
 
           const iconToUse = row._isPremium ? premiumIcon : regularIcon;
-          
+
           const marker = L.marker([lat, lon], { icon: iconToUse })
             .bindPopup(buildPopup(row));
+            marker.on('click', () => {
+              openStoreDetail(row, marker);
+              });
           allMarkers.push({ row, marker });
           clusterGroup.addLayer(marker);
           bounds.extend([lat, lon]);
 
-          (row['Custom Brands'] || '')
+          // Extract brands from Brands column (plain text, comma-separated)
+          (row['Brands'] || '')
             .split(',')
             .map(s => s.trim())
             .filter(Boolean)
             .forEach(b => brandSet.add(b));
           // also expose type values for debugging / UI
           // (we don't include types in the brand list)
-
-          // A vendor is premium if it has an email attached to it (temporary logic)
-          row._isPremium = !!(row['Email'] && row['Email'].trim() !== '');
-          
-          // For debugging (you can remove later)
-          if (row._isPremium) {
-          console.log("PREMIUM:", row['Name']);
-          }
 
         });
 
@@ -867,8 +1199,12 @@
             // two lines to add lat and lon to variables but within this function there are already those so just going to use those
             const latitude = parseFloat(row.Latitude);
             const longitude = parseFloat(row.Longitude);
-            map.setView([latitude, longitude], 14);
-            marker.openPopup();
+
+            if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+              map.flyTo([latitude, longitude], 14, { animate: true, duration: 0.8 });
+            }
+
+            openStoreDetail(row, marker);
           });
 
           storeList.appendChild(item);
@@ -946,6 +1282,20 @@
         map.addControl(new RadiusControl());
         populateBrandSelect(brandSet);
         rebuildStoreCheckboxes(allRows);
+        // Premium Only Toggle Listener
+        document.getElementById('premiumOnlyToggle')
+          .addEventListener('change', () => {
+            const premiumOnly = document.getElementById('premiumOnlyToggle').checked;
+
+            // Clear all checkboxes when premium-only is enabled
+            if (premiumOnly) {
+              document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => {
+                cb.checked = false;
+              });
+            }
+
+            applyFilter(document.getElementById('brandFilter').value);
+          });
 
         // Preload filters from URL, then apply once
         document.getElementById('brandFilter').value = INITIAL.brand;
@@ -970,12 +1320,12 @@
 
         console.log('Markers added:', allMarkers.length);
         if (allMarkers.length === 0) {
-          showBanner('No markers loaded — check that locations.csv has data rows with numeric Latitude/Longitude.');
+          showBanner('No markers loaded — check that master_stores.csv has data rows with numeric Latitude/Longitude.');
         }
       })
       .catch(err => {
         console.error('Error loading CSV:', err);
-        alert('Failed to load locations.csv. Serve via http://localhost and ensure the CSV sits next to prototype.html.');
+        alert('Failed to load master_stores.csv. Serve via http://localhost and ensure the CSV file exists at backend/uploads/master_stores.csv.');
       });
   </script>
 </body>

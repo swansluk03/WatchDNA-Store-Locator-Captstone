@@ -57,6 +57,12 @@ For production or custom backend URL, create a `.env` file:
 VITE_API_URL=http://localhost:3001
 ```
 
+or if you're in Powershell
+
+@"
+VITE_API_URL=http://localhost:3001
+"@ | Out-File -Encoding UTF8 .env
+
 ### 3. Start Development Server
 
 ```bash

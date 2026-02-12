@@ -1,6 +1,6 @@
 .upload-detail {
   background: white;
-  padding: 1.5rem;
+  padding: 2rem;
   border-radius: 0.5rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
@@ -18,9 +18,11 @@
 }
 
 .page-header h1 {
-  font-size: 1.875rem;
+  font-size: 2rem;
   color: var(--gray-900);
   margin-bottom: 2rem;
+  font-weight: 700;
+  margin-top: 0.5rem;
 }
 
 .detail-grid {
@@ -110,12 +112,35 @@
   color: white;
 }
 
+.logs-table {
+  margin-top: 1rem;
+}
+
+.logs-table thead {
+  background: var(--gray-50);
+}
+
+.logs-table th {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+.logs-table tbody tr {
+  transition: background-color 0.15s;
+}
+
 .logs-table tbody tr.error {
   background: #fef2f2;
 }
 
 .logs-table tbody tr.warning {
   background: #fffbeb;
+}
+
+.logs-table tbody tr:hover {
+  background: var(--gray-50);
 }
 
 .value-cell {
@@ -133,4 +158,31 @@
   text-align: center;
   font-weight: 500;
   margin-top: 2rem;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .upload-detail {
+    padding: 1rem;
+  }
+
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .logs-section .section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .filter-buttons {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .logs-table {
+    overflow-x: auto;
+    display: block;
+  }
 }

@@ -25,8 +25,20 @@ Usage:
 import re
 import csv
 import os
-from typing import Dict, List, Any, Optional
+import json
+import time
+from typing import Dict, List, Any, Optional, Tuple
+from urllib.parse import urlparse, urljoin
 from urllib.parse import urlparse
+
+# Geocoding support (optional - only used if geopy is available)
+try:
+    from geopy.geocoders import Nominatim
+    from geopy.exc import GeocoderTimedOut, GeocoderServiceError, GeocoderUnavailable
+    GEOPY_AVAILABLE = True
+except ImportError:
+    GEOPY_AVAILABLE = False
+    Nominatim = None
 
 # The canonical schema for locations.csv (loaded from root locations.csv)
 CANONICAL_SCHEMA = [
@@ -112,6 +124,49 @@ def clean_html_tags(text: Any) -> str:
     return text_str.strip()
 
 
+def clean_address(address: Any) -> str:
+    """
+    Clean and normalize address strings by fixing common backslash issues
+    
+    Fixes:
+    - Backslash before forward slash (\\/ -> /)
+    - Double backslashes (\\\\ -> , ) for address separators
+    - Spanish Calle abbreviation (C\\/ -> C/)
+    
+    Args:
+        address: Address string that may contain backslash issues
+    
+    Returns:
+        Cleaned address string
+    """
+    if not address:
+        return ""
+    
+    address_str = str(address).strip()
+    
+    # Fix backslash before forward slash (\/ -> /)
+    # This is the most common issue: 1\/F -> 1/F, C\/ -> C/, MA-66\/103 -> MA-66/103, etc.
+    address_str = address_str.replace('\\/', '/')
+    
+    # Fix Spanish Calle abbreviation (C\/ -> C/)
+    # This handles cases where C\/ wasn't caught by the above (shouldn't happen, but safe)
+    address_str = re.sub(r'\bC\\/', 'C/', address_str)
+    
+    # Fix double backslashes (\\ -> , ) for address separators
+    # Common pattern: "Mall \\ Location" should be "Mall, Location"
+    # Replace \\ with comma and space, but preserve single \ that might be part of Unicode escapes
+    # We'll do a simple replacement: \\ -> , 
+    # Note: In the CSV string, \\ represents a literal backslash, so we need to match literal \\
+    address_str = re.sub(r'\\\\+', ', ', address_str)
+    
+    # Clean up any double spaces or spaces before commas that might have been created
+    address_str = re.sub(r'\s+', ' ', address_str)
+    address_str = re.sub(r'\s*,', ',', address_str)  # Remove space before comma
+    address_str = re.sub(r',\s*,', ',', address_str)  # Remove double commas
+    
+    return address_str.strip()
+
+
 def validate_coordinate(value: Any, coord_type: str = "latitude") -> Optional[str]:
     """
     Validate and normalize a coordinate value
@@ -188,27 +243,64 @@ def validate_email(email: Any) -> str:
     return ""
 
 
-def validate_url(url: Any) -> str:
+def validate_url(url: Any, validate_http: bool = False) -> str:
     """
     Validate and normalize URL
     
     Ensures URL has a scheme (defaults to https://)
+    Converts relative Omega store detail URLs to full URLs
+    Optionally validates URLs via HTTP request
+    
+    Args:
+        url: URL string to validate
+        validate_http: If True, make HTTP request to verify URL is accessible
+    
+    Returns:
+        Validated and normalized URL, or empty string if invalid
     """
     if not url:
         return ""
     
     url_str = str(url).strip()
     
+    # Fix escaped slashes (\/ -> /)
+    url_str = url_str.replace('\\/', '/').replace('\\', '/')
+    
+    # Check if this is an Omega store detail URL (relative or absolute)
+    # Pattern: store/storedetails/XXXX or /store/storedetails/XXXX
+    omega_store_pattern = r'(?:^|/)(?:store[/\\]storedetails[/\\])(\d+[^/]*)/?$'
+    omega_match = re.search(omega_store_pattern, url_str, re.IGNORECASE)
+    
+    if omega_match:
+        # This is an Omega store detail page - convert to full URL
+        store_id = omega_match.group(1)
+        url_str = f"https://www.omegawatches.com/en-us/store/storedetails/{store_id}"
+    
     # If it's a relative URL or missing scheme, add https://
     if url_str and not urlparse(url_str).scheme:
         url_str = f"https://{url_str}"
     
-    # Basic validation
+    # Basic validation - must have scheme and netloc
     parsed = urlparse(url_str)
-    if parsed.scheme and parsed.netloc:
-        return url_str
+    if not (parsed.scheme and parsed.netloc):
+        return ""
     
-    return ""
+    # Optional HTTP validation
+    if validate_http:
+        try:
+            import requests
+            response = requests.head(url_str, timeout=5, allow_redirects=True)
+            if response.status_code >= 400:
+                # If HEAD fails, try GET
+                response = requests.get(url_str, timeout=5, allow_redirects=True, stream=True)
+                if response.status_code >= 400:
+                    return ""  # URL not accessible
+        except Exception:
+            # If validation fails (network error, etc.), still return the URL
+            # as it might be valid but temporarily unavailable
+            pass
+    
+    return url_str
 
 
 def validate_boolean(value: Any, default: bool = True) -> str:
@@ -400,6 +492,324 @@ def apply_field_mapping(raw_data: Dict, field_mapping: Dict[str, Any]) -> Dict[s
 
 
 # =============================================================================
+# COUNTRY INFERENCE FUNCTION
+# =============================================================================
+
+def infer_country_from_address(
+    address: str,
+    city: str = "",
+    state: str = "",
+    country: str = ""
+) -> str:
+    """
+    Infer country from address fields by matching country names and common patterns.
+    
+    Args:
+        address: Address line 1
+        city: City name
+        state: State/Province/Region
+        country: Existing country (if already set, return it)
+    
+    Returns:
+        Country name if found, empty string otherwise
+    """
+    # If country is already set, return it
+    if country and country.strip():
+        return country.strip()
+    
+    # Load country names from watch_store_countries.json
+    countries_file = os.path.join(os.path.dirname(__file__), "watch_store_countries.json")
+    country_names = []
+    country_codes_to_names = {}
+    
+    try:
+        if os.path.exists(countries_file):
+            with open(countries_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if "countries" in data:
+                    # Get country code to name mapping
+                    country_codes_to_names = data["countries"]
+                    # Get all country names (values)
+                    country_names = list(country_codes_to_names.values())
+                    # Also add common variations
+                    country_variations = {
+                        "United States": ["USA", "US", "U.S.", "U.S.A.", "United States of America"],
+                        "United Kingdom": ["UK", "U.K.", "Great Britain", "Britain", "England", "Scotland", "Wales"],
+                        "United Arab Emirates": ["UAE", "U.A.E."],
+                        "South Korea": ["Korea", "South Korea", "Republic of Korea"],
+                        "Czech Republic": ["Czechia"],
+                        "Hong Kong": ["HK"],
+                    }
+                    for main_name, variations in country_variations.items():
+                        if main_name in country_names:
+                            country_names.extend(variations)
+    except Exception:
+        # Fallback to common country names if file not found
+        country_names = [
+            "United States", "Canada", "Mexico", "United Kingdom", "France", "Germany",
+            "Italy", "Spain", "Switzerland", "Japan", "China", "Hong Kong", "Singapore",
+            "Australia", "United Arab Emirates", "Saudi Arabia", "Brazil", "Argentina"
+        ]
+    
+    # Combine all address fields into one search string
+    search_text = f"{address} {city} {state}".lower()
+    
+    # Search for country names (longest first to match "United States" before "States")
+    # But avoid false matches like "Wales" in "New South Wales"
+    country_names_sorted = sorted(country_names, key=len, reverse=True)
+    
+    # Exclude "Wales" from matching (to avoid matching "New South Wales")
+    excluded_matches = {"wales"}  # Can add more if needed
+    
+    for country_name in country_names_sorted:
+        country_lower = country_name.lower()
+        if country_lower in excluded_matches:
+            continue  # Skip excluded matches
+        if country_lower in search_text:
+            # Additional check: if matching "Wales", make sure it's not part of "New South Wales" or similar
+            if country_lower == "wales":
+                if "new south wales" in search_text or "south wales" in search_text:
+                    continue
+            return country_name
+    
+    # Try to infer from Australian states first (to avoid WA conflict)
+    australian_states_abbrev = {"NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"}
+    if state and state.strip().upper() in australian_states_abbrev:
+        return "Australia"
+    
+    # Try to infer from US state abbreviations (common pattern)
+    # Note: WA is excluded here as it could be Western Australia
+    us_states = {
+        "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA",
+        "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+        "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT",
+        "VA", "WV", "WI", "WY"
+    }
+    if state and state.strip().upper() in us_states:
+        return "United States"
+    
+    # Handle WA specifically - check city for context
+    if state and state.strip().upper() == "WA":
+        # If city is known Australian city, it's Australia; otherwise assume US
+        australian_cities = {"perth", "fremantle", "bunbury", "geraldton", "kalgoorlie"}
+        if city and city.lower().strip() in australian_cities:
+            return "Australia"
+        else:
+            return "United States"  # Default to US (Washington)
+    
+    # Try to infer from Canadian provinces
+    canadian_provinces = {
+        "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"
+    }
+    if state and state.strip().upper() in canadian_provinces:
+        return "Canada"
+    
+    # Try to infer from Australian states/territories (full names)
+    australian_states_full = {
+        "New South Wales", "Victoria", "Queensland", "Western Australia",
+        "South Australia", "Tasmania", "Australian Capital Territory", "Northern Territory"
+    }
+    if state and state.strip() in australian_states_full:
+        return "Australia"
+    # Also check if state contains Australian state name
+    state_lower = state.lower() if state else ""
+    if "queensland" in state_lower or "new south wales" in state_lower or "western australia" in state_lower:
+        return "Australia"
+    
+    # Common city-to-country mappings (for well-known cities)
+    city_country_map = {
+        "london": "United Kingdom",
+        "paris": "France",
+        "tokyo": "Japan",
+        "berlin": "Germany",
+        "rome": "Italy",
+        "madrid": "Spain",
+        "amsterdam": "Netherlands",
+        "vienna": "Austria",
+        "zurich": "Switzerland",
+        "geneva": "Switzerland",
+        "milan": "Italy",
+        "barcelona": "Spain",
+        "munich": "Germany",
+        "frankfurt": "Germany",
+        "brussels": "Belgium",
+        "copenhagen": "Denmark",
+        "stockholm": "Sweden",
+        "oslo": "Norway",
+        "helsinki": "Finland",
+        "dublin": "Ireland",
+        "lisbon": "Portugal",
+        "athens": "Greece",
+        "warsaw": "Poland",
+        "prague": "Czech Republic",
+        "budapest": "Hungary",
+        "bucharest": "Romania",
+        "sydney": "Australia",
+        "melbourne": "Australia",
+        "auckland": "New Zealand",
+        "singapore": "Singapore",
+        "hong kong": "Hong Kong",
+        "dubai": "United Arab Emirates",
+        "riyadh": "Saudi Arabia",
+        "doha": "Qatar",
+        "kuwait city": "Kuwait",
+        "manama": "Bahrain",
+        "muscat": "Oman",
+        "tel aviv": "Israel",
+        "istanbul": "Turkey",
+        "cairo": "Egypt",
+        "johannesburg": "South Africa",
+        "cape town": "South Africa",
+        "sao paulo": "Brazil",
+        "rio de janeiro": "Brazil",
+        "buenos aires": "Argentina",
+        "santiago": "Chile",  # Most common Santiago is in Chile
+        "lima": "Peru",
+        "bogota": "Colombia",
+        "mexico city": "Mexico",
+        "moscow": "Russia",
+        "beijing": "China",
+        "shanghai": "China",
+        "seoul": "South Korea",
+        "taipei": "Taiwan",
+        "bangkok": "Thailand",
+        "kuala lumpur": "Malaysia",
+        "jakarta": "Indonesia",
+        "manila": "Philippines",
+        "ho chi minh city": "Vietnam",
+        "mumbai": "India",
+        "delhi": "India",
+        "karachi": "Pakistan",
+        "marigot": "France",  # Saint Martin (French territory)
+    }
+    
+    city_lower = city.lower().strip()
+    if city_lower in city_country_map:
+        return city_country_map[city_lower]
+    
+    # Check for US territories and special cases
+    us_territories = {
+        "saipan": "United States",  # Northern Mariana Islands (US territory)
+        "guam": "United States",
+        "puerto rico": "United States",
+        "us virgin islands": "United States",
+    }
+    
+    search_lower = search_text.lower()
+    for territory, country in us_territories.items():
+        if territory in search_lower:
+            return country
+    
+    return ""
+
+
+# =============================================================================
+# GEOCODING FUNCTION (for missing coordinates)
+# =============================================================================
+
+# Global geocoder instance (lazy initialization)
+_geocoder = None
+_last_geocode_time = 0
+_geocode_cache = {}  # Cache geocoding results to avoid duplicate API calls
+
+def get_geocoder():
+    """Get or create Nominatim geocoder instance"""
+    global _geocoder
+    if not GEOPY_AVAILABLE:
+        return None
+    
+    if _geocoder is None:
+        # Use Nominatim (OpenStreetMap) - free, no API key required
+        # User agent is required by Nominatim usage policy
+        _geocoder = Nominatim(
+            user_agent="WatchDNA-StoreLocator/1.0 (https://watchdna.com)",
+            timeout=10  # 10 second timeout
+        )
+    
+    return _geocoder
+
+
+def geocode_address(
+    address: str,
+    city: str = "",
+    state: str = "",
+    country: str = ""
+) -> Optional[Tuple[float, float]]:
+    """
+    Geocode an address to get latitude and longitude using Nominatim (OpenStreetMap).
+    
+    This is a free geocoding service that doesn't require an API key.
+    Rate limit: 1 request per second (enforced automatically).
+    
+    Args:
+        address: Address line 1
+        city: City name
+        state: State/Province/Region
+        country: Country name
+    
+    Returns:
+        Tuple of (latitude, longitude) if found, None otherwise
+    """
+    if not GEOPY_AVAILABLE:
+        return None
+    
+    # Build full address string
+    address_parts = []
+    if address:
+        address_parts.append(address)
+    if city:
+        address_parts.append(city)
+    if state:
+        address_parts.append(state)
+    if country:
+        address_parts.append(country)
+    
+    if not address_parts:
+        return None
+    
+    full_address = ", ".join(address_parts)
+    
+    # Check cache first
+    cache_key = full_address.lower().strip()
+    if cache_key in _geocode_cache:
+        return _geocode_cache[cache_key]
+    
+    geocoder = get_geocoder()
+    if not geocoder:
+        return None
+    
+    # Rate limiting: Nominatim requires max 1 request per second
+    global _last_geocode_time
+    current_time = time.time()
+    time_since_last = current_time - _last_geocode_time
+    if time_since_last < 1.0:
+        time.sleep(1.0 - time_since_last)
+    
+    try:
+        _last_geocode_time = time.time()
+        location = geocoder.geocode(full_address, exactly_one=True, timeout=10)
+        
+        if location:
+            lat = location.latitude
+            lon = location.longitude
+            result = (lat, lon)
+            # Cache the result
+            _geocode_cache[cache_key] = result
+            return result
+        else:
+            # Cache None result to avoid retrying failed addresses
+            _geocode_cache[cache_key] = None
+            return None
+            
+    except (GeocoderTimedOut, GeocoderServiceError, GeocoderUnavailable) as e:
+        # Log but don't fail - geocoding is optional
+        return None
+    except Exception as e:
+        # Any other error - return None
+        return None
+
+
+# =============================================================================
 # MAIN NORMALIZATION FUNCTION
 # =============================================================================
 
@@ -433,12 +843,29 @@ def normalize_location(
     
     # Basic fields (direct copy with cleaning - also clean HTML tags)
     normalized["Name"] = clean_html_tags(mapped_data.get("Name", ""))
-    normalized["Address Line 1"] = clean_html_tags(mapped_data.get("Address Line 1", ""))
-    normalized["Address Line 2"] = clean_html_tags(mapped_data.get("Address Line 2", ""))
+    # Address fields need special cleaning for backslash issues
+    normalized["Address Line 1"] = clean_address(clean_html_tags(mapped_data.get("Address Line 1", "")))
+    normalized["Address Line 2"] = clean_address(clean_html_tags(mapped_data.get("Address Line 2", "")))
     normalized["Postal/ZIP Code"] = clean_html_tags(mapped_data.get("Postal/ZIP Code", ""))
     normalized["City"] = clean_html_tags(mapped_data.get("City", ""))
     normalized["State/Province/Region"] = clean_html_tags(mapped_data.get("State/Province/Region", ""))
-    normalized["Country"] = clean_html_tags(mapped_data.get("Country", ""))
+    country_raw = clean_html_tags(mapped_data.get("Country", ""))
+    
+    # If country is missing, try to infer it from address
+    if not country_raw or not country_raw.strip():
+        inferred_country = infer_country_from_address(
+            normalized["Address Line 1"],
+            normalized["City"],
+            normalized["State/Province/Region"],
+            country_raw
+        )
+        if inferred_country:
+            normalized["Country"] = inferred_country
+        else:
+            normalized["Country"] = ""
+    else:
+        normalized["Country"] = country_raw
+    
     normalized["Priority"] = clean_html_tags(mapped_data.get("Priority", ""))
     
     # Validated fields
@@ -518,25 +945,71 @@ def normalize_location(
 def batch_normalize(
     raw_data_list: List[Dict[str, Any]],
     field_mapping: Optional[Dict[str, Any]] = None,
-    deduplicate: bool = True
+    deduplicate: bool = True,
+    geocode_missing: bool = True
 ) -> List[Dict[str, str]]:
     """
-    Normalize a batch of locations with comprehensive deduplication
+    Normalize a batch of locations with comprehensive deduplication.
+    Attempts to geocode stores missing coordinates, then excludes stores without coordinates and logs them clearly.
     
     Args:
         raw_data_list: List of raw data dictionaries
         field_mapping: Optional field mapping
         deduplicate: If True, ensures unique handles and removes duplicates by name+address+city
+        geocode_missing: If True, attempt to geocode stores missing coordinates (default: True)
     
     Returns:
-        List of normalized location dictionaries (deduplicated)
+        List of normalized location dictionaries (deduplicated, excluding stores without coordinates)
     """
     existing_handles = set() if deduplicate else None
     normalized_list = []
     seen_combinations = set()  # Track name+address+city combinations
+    excluded_stores = []  # Track stores excluded due to missing coordinates
     
     for raw_data in raw_data_list:
         normalized = normalize_location(raw_data, field_mapping, existing_handles)
+        
+        # Check if coordinates are missing (critical - store cannot be mapped without coordinates)
+        lat = normalized.get("Latitude", "").strip()
+        lon = normalized.get("Longitude", "").strip()
+        
+        # If coordinates are missing, try to geocode the address
+        if (not lat or not lon) and geocode_missing:
+            store_address = normalized.get("Address Line 1", "").strip()
+            store_city = normalized.get("City", "").strip()
+            store_state = normalized.get("State/Province/Region", "").strip()
+            store_country = normalized.get("Country", "").strip()
+            
+            # Try geocoding if we have address information
+            if store_address or store_city:
+                geocoded = geocode_address(store_address, store_city, store_state, store_country)
+                if geocoded:
+                    lat, lon = geocoded
+                    normalized["Latitude"] = f"{lat:.7f}"
+                    normalized["Longitude"] = f"{lon:.7f}"
+                    # Update lat/lon variables for the check below
+                    lat = normalized["Latitude"]
+                    lon = normalized["Longitude"]
+        
+        # If still no coordinates after geocoding attempt, exclude the store
+        if not lat or not lon:
+            store_name = normalized.get("Name", "Unknown").strip()
+            store_address = normalized.get("Address Line 1", "").strip()
+            store_city = normalized.get("City", "").strip()
+            store_country = normalized.get("Country", "").strip()
+            
+            # Build address string for logging
+            address_parts = [store_address, store_city, store_country]
+            address_str = ", ".join([p for p in address_parts if p])
+            if not address_str:
+                address_str = "Address not available"
+            
+            excluded_stores.append({
+                "name": store_name,
+                "address": address_str,
+                "reason": "Missing coordinates (Latitude/Longitude) - geocoding failed or insufficient address data"
+            })
+            continue  # Skip this store - exclude from output
         
         # Additional deduplication by name+address+city (even if handles differ)
         if deduplicate:
@@ -552,6 +1025,25 @@ def batch_normalize(
                 seen_combinations.add(combo_key)
         
         normalized_list.append(normalized)
+    
+    # Log excluded stores clearly (flush immediately so it appears in scraper output)
+    if excluded_stores:
+        import sys
+        print("\n" + "=" * 80, flush=True)
+        print(f"⚠️  EXCLUDED STORES (Missing Coordinates): {len(excluded_stores)} store(s)", flush=True)
+        print("=" * 80, flush=True)
+        print("These stores were excluded because they lack Latitude/Longitude coordinates.", flush=True)
+        print("This may indicate closed stores, old data, or incomplete records.", flush=True)
+        print("Please verify these stores manually:\n", flush=True)
+        
+        for i, store in enumerate(excluded_stores, 1):
+            print(f"{i}. Store Name: {store['name']}", flush=True)
+            print(f"   Address: {store['address']}", flush=True)
+            print(f"   Reason: {store['reason']}", flush=True)
+            print(flush=True)
+        
+        print("=" * 80, flush=True)
+        print(flush=True)
     
     return normalized_list
 

@@ -1,9 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { scraperService, type Brand, type ScraperJob, type ScraperStats } from '../services/scraper.service';
+import EndpointDiscovery from '../components/EndpointDiscovery';
 import '../styles/Scraper.css';
 
+type TabType = 'jobs' | 'discovery';
+
 const Scraper: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<TabType>('jobs');
   const [brands, setBrands] = useState<Brand[]>([]);
   const [jobs, setJobs] = useState<ScraperJob[]>([]);
   const [stats, setStats] = useState<ScraperStats | null>(null);
@@ -30,9 +34,19 @@ const Scraper: React.FC = () => {
     }
   }, [filterStatus]);
 
+  const previousTabRef = useRef<TabType>(activeTab);
+
   useEffect(() => {
     loadData();
   }, []);
+
+  // Refetch brands when switching from Endpoint Discovery to Scraping Jobs (so newly saved configs appear)
+  useEffect(() => {
+    if (previousTabRef.current === 'discovery' && activeTab === 'jobs') {
+      loadData();
+    }
+    previousTabRef.current = activeTab;
+  }, [activeTab]);
 
   // Refresh jobs when filter changes or every 5 seconds
   useEffect(() => {
@@ -207,10 +221,34 @@ const Scraper: React.FC = () => {
     <div className="scraper-page">
       <div className="page-header">
         <h1>Store Scraper</h1>
-        <button className="btn btn-primary" onClick={() => setShowNewJobModal(true)}>
-          + New Scraping Job
+        {activeTab === 'jobs' && (
+          <button className="btn btn-primary" onClick={() => setShowNewJobModal(true)}>
+            + New Scraping Job
+          </button>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="scraper-tabs">
+        <button
+          className={`tab-button ${activeTab === 'jobs' ? 'active' : ''}`}
+          onClick={() => setActiveTab('jobs')}
+        >
+          Scraping Jobs
+        </button>
+        <button
+          className={`tab-button ${activeTab === 'discovery' ? 'active' : ''}`}
+          onClick={() => setActiveTab('discovery')}
+        >
+          Endpoint Discovery
         </button>
       </div>
+
+      {/* Tab Content */}
+      {activeTab === 'discovery' ? (
+        <EndpointDiscovery onConfigSaved={loadData} />
+      ) : (
+        <>
 
       {/* Stats Cards */}
       {stats && (
@@ -483,6 +521,8 @@ const Scraper: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );
