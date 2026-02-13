@@ -39,10 +39,11 @@ export function securityHeaders(req: Request, res: Response, next: NextFunction)
   }
 
   // Permissions Policy (formerly Feature Policy)
-  // Disable unused browser features
+  // Allow geolocation for this origin (needed for "Near Me" feature)
+  // Disable other unused browser features
   res.setHeader(
     'Permissions-Policy',
-    'geolocation=(), microphone=(), camera=(), payment=()'
+    'geolocation=(self), microphone=(), camera=(), payment=()'
   );
 
   // Strict Transport Security (HTTPS only)
