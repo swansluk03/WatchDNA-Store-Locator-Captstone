@@ -8,6 +8,8 @@ generator client {
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
+  // directUrl is only needed for PostgreSQL connection pooling
+  // directUrl = env("DIRECT_URL")
 }
 
 model Upload {

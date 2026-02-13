@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import fs from 'fs/promises';
 import path from 'path';
 import validationService from './validation.service';
+import locationService from './location.service';
 
 const prisma = new PrismaClient();
 
@@ -56,6 +57,28 @@ export class UploadService {
       }
 
       console.log(`Upload ${uploadId} processed successfully. Status: ${updateData.status}`);
+
+      // Auto-import to database if validation passed
+      if (updateData.status === 'valid') {
+        console.log(`🔄 Auto-importing valid CSV to database...`);
+        try {
+          const importResult = await locationService.importFromCSV(filePath);
+          console.log(`✅ Database import complete: ${importResult.newCount} new, ${importResult.updatedCount} updated`);
+
+          // Update upload record to link imported locations
+          await prisma.upload.update({
+            where: { id: uploadId },
+            data: {
+              status: 'completed',
+              rowsProcessed: importResult.newCount + importResult.updatedCount
+            }
+          });
+        } catch (importError: any) {
+          console.error(`❌ Database import failed:`, importError);
+          // Don't fail the whole process, just log it
+          // Upload remains 'valid' but not imported
+        }
+      }
 
       return {
         success: true,

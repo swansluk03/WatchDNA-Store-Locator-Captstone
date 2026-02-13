@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import uploadService from '../services/upload.service';
+import fs from 'fs';
 
 export class UploadController {
 
