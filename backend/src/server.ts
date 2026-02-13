@@ -89,11 +89,19 @@ app.use('/api/uploads', uploadRoutes);
 app.use('/api/scraper', scraperRoutes);
 app.use('/api/locations', locationRoutes);
 
-// Serve static files (prototype.html and locations.csv)
-const staticDir = path.join(__dirname, '..', '..');
+// Serve only the user-facing frontend and expose CSV separately
+const staticDir = path.join(__dirname, '..', '..', 'user-frontend');
 app.use(express.static(staticDir));
 
-// Redirect root to prototype.html
+// make the CSV available at a known path (not part of the frontend bundle)
+app.get('/locations.csv', (req: Request, res: Response) => {
+  res.sendFile(path.join(__dirname, '..', '..', 'locations.csv'));
+});
+
+// expose backend/uploads via a matching URL so prototype.html can fetch it
+app.use('/backend/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+
+// Redirect root to prototype.html (now inside user-frontend)
 app.get('/', (req: Request, res: Response) => {
   res.redirect('/prototype.html');
 });
