@@ -467,7 +467,7 @@
         <div class="store-detail__value" id="detailPhone"></div>
       </div>
 
-      <div class="store-detail__section">
+      <div class="store-detail__section" id="detailBrandsSection">
         <div class="store-detail__label">Brands</div>
         <div class="store-detail__value" id="detailBrands"></div>
         </div>
@@ -615,7 +615,9 @@
         brands = brandMatches.map(m => m.replace(/>|<\/A>/gi, '').trim()).filter(Boolean).join(', ');
       }
       
-      const brandsDisplay = brands ? `<br><br><strong>Brands:</strong> ${brands}` : '';
+      const brandsDisplay = (row._isPremium && brands)
+      ? `<br><br><strong>Brands:</strong> ${brands}`
+      : '';
       return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}${brandsDisplay}</div>`;
     }
     
@@ -679,6 +681,8 @@
     const addressEl = document.getElementById('detailAddress');
     const phoneEl = document.getElementById('detailPhone');
     const brandsEl = document.getElementById('detailBrands');
+    const brandsSectionEl = document.getElementById('detailBrandsSection');
+    const imageEl = document.getElementById('detailImage');
     const directionsBtn = document.getElementById('detailDirectionsBtn');
     const connectBtn = document.getElementById('detailConnectBtn');
 
@@ -695,7 +699,39 @@
     }
 
     if (phoneEl) phoneEl.textContent = phone || 'Not provided';
-    if (brandsEl) brandsEl.textContent = brands || 'Not provided';
+    const isVerified = !!row._isPremium;
+
+    // Image: show only for premium/verified
+    if (imageEl) {
+      if (isVerified) {
+        imageEl.style.display = '';
+        const imageUrl = (row['Image URL'] || '').trim();
+
+        if (imageUrl) {
+          imageEl.style.backgroundImage = `url('${imageUrl}')`;
+          imageEl.style.backgroundSize = 'cover';
+          imageEl.style.backgroundPosition = 'center';
+
+          const imageText = imageEl.querySelector('.store-detail__imageText');
+          if (imageText) imageText.style.display = 'none';
+        } else {
+          imageEl.style.backgroundImage = '';
+          const imageText = imageEl.querySelector('.store-detail__imageText');
+          if (imageText) imageText.style.display = '';
+        }
+      } else {
+        imageEl.style.backgroundImage = '';
+        imageEl.style.display = 'none';
+      }
+    }
+
+    // Brands: show only for premium/verified
+    if (brandsSectionEl) {
+      brandsSectionEl.style.display = isVerified ? '' : 'none';
+    }
+    if (brandsEl) {
+      brandsEl.textContent = isVerified ? (brands || 'Not provided') : '';
+    }
 
     // Directions: use lat/lng if available, otherwise fall back to address
     const lat = parseFloat(String(row.Latitude || '').trim());
