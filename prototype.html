@@ -473,6 +473,11 @@
         </div>
       </div>
 
+      <div class="store-detail__section" id="detailAboutSection">
+        <div class="store-detail__label">Information</div>
+        <div class="store-detail__value" id="detailAbout"></div>
+      </div>
+
     <div id="storeListContainer">
       <div id="storeListings"></div>
     </div>
@@ -685,6 +690,8 @@
     const imageEl = document.getElementById('detailImage');
     const directionsBtn = document.getElementById('detailDirectionsBtn');
     const connectBtn = document.getElementById('detailConnectBtn');
+    const aboutSectionEl = document.getElementById('detailAboutSection');
+    const aboutEl = document.getElementById('detailAbout');
 
     const name = (row['Name'] || 'Unnamed').trim();
     const address = buildFullAddress(row);
@@ -700,6 +707,17 @@
 
     if (phoneEl) phoneEl.textContent = phone || 'Not provided';
     const isVerified = !!row._isPremium;
+
+    const aboutText =
+      "We are building a vibrant community where watch enthusiasts can discover new brands and connect with passionate jewellers who value both timepieces and the stories behind them. As your trusted directory for brands and authorized dealers, we make it easy to find and reach out to reputable retailers. Feel free to contact your authorized dealer for any questions regarding the brands they carry.";
+
+    if (aboutSectionEl) {
+      aboutSectionEl.style.display = isVerified ? "" : "none";
+    }
+
+    if (aboutEl) {
+      aboutEl.textContent = isVerified ? aboutText : "";
+    }
 
     // Image: show only for premium/verified
     if (imageEl) {
@@ -732,6 +750,8 @@
     if (brandsEl) {
       brandsEl.textContent = isVerified ? (brands || 'Not provided') : '';
     }
+
+    
 
     // Directions: use lat/lng if available, otherwise fall back to address
     const lat = parseFloat(String(row.Latitude || '').trim());
