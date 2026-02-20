@@ -467,16 +467,16 @@
         <div class="store-detail__value" id="detailPhone"></div>
       </div>
 
-      <div class="store-detail__section" id="detailBrandsSection">
-        <div class="store-detail__label">Brands</div>
-        <div class="store-detail__value" id="detailBrands"></div>
-        </div>
-      </div>
-
       <div class="store-detail__section" id="detailAboutSection">
         <div class="store-detail__label">Information</div>
         <div class="store-detail__value" id="detailAbout"></div>
       </div>
+
+      <div class="store-detail__section" id="detailBrandsSection">
+        <div class="store-detail__label">Brands</div>
+        <div class="store-detail__value" id="detailBrands"></div>
+      </div>
+
 
     <div id="storeListContainer">
       <div id="storeListings"></div>
@@ -619,8 +619,9 @@
         brands = brandMatches.map(m => m.replace(/>|<\/A>/gi, '').trim()).filter(Boolean).join(', ');
       }
       
-      const brandsDisplay = (row._isPremium && brands)
-      ? `<br><br><strong>Brands:</strong> ${brands}`
+      const displayBrands = getDisplayBrandsForRow(row);
+      const brandsDisplay = displayBrands
+      ? `<br><br><strong>Brands:</strong> ${displayBrands}`
       : '';
       return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}${brandsDisplay}</div>`;
     }
@@ -643,6 +644,59 @@
       
       return parts.join('\n');
     }
+
+    // Brand level paid visibility (demo)
+    // A brand can approve up to 'maxApproved' locations to show that brand even if the location isnt verified
+     const BRAND_VISIBILITY_CONFIG = {
+      "OMEGA": {
+        maxApproved: 5,
+        approvedHandles: ["7426", "6416", "3229", "6917170001", "O1825152"]
+      }
+    };
+
+    function normalizeKey(val) {
+      return String(val || "").trim().toLowerCase();
+    }
+
+    function isLocationApprovedForBrand(row, brandName) {
+      const cfg = BRAND_VISIBILITY_CONFIG[String(brandName || "").toUpperCase()];
+      if (!cfg) return false;
+
+      const maxApproved = Number(cfg.maxApproved || 0);
+      const approvedCount =
+        (cfg.approvedHandles?.length || 0) + (cfg.approvedNames?.length || 0);
+      
+      if (maxApproved > 0 && approvedCount > maxApproved) {
+      }
+
+      const handle = normalizeKey(row["Handle"]);
+      const name = normalizeKey(row["Name"]);
+
+      const handleApproved = (cfg.approvedHandles || [])
+        .slice(0, maxApproved || undefined)
+        .some(h => normalizeKey(h) === handle);
+
+      const nameApproved = (cfg.approvedNames || [])
+        .slice(0, maxApproved || undefined)
+        .some(n => normalizeKey(n) === name);
+
+      return handleApproved || nameApproved;
+    }
+
+    function getDisplayBrandsForRow(row) {
+      const fullBrands = extractBrandsText(row);
+      const list = fullBrands
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean);
+
+      if (row._isPremium) return list.join(", ");
+
+      // Unverified: only show brands that approved this location
+      const allowed = list.filter(b => isLocationApprovedForBrand(row, b));
+      return allowed.join(", ");
+    }
+
     
     function extractBrandsText(row) {
       let brands = (row['Brands'] || '').trim();
@@ -695,7 +749,7 @@
     const name = (row['Name'] || 'Unnamed').trim();
     const address = buildFullAddress(row);
     const phone = (row['Phone'] || '').trim();
-    const brands = extractBrandsText(row);
+    const brands = getDisplayBrandsForRow(row);
 
     if (nameEl) nameEl.textContent = name;
 
@@ -743,11 +797,15 @@
     }
 
     // Brands: show only for premium/verified
+    const hasVisibleBrands = !!brands;
+
     if (brandsSectionEl) {
-      brandsSectionEl.style.display = isVerified ? '' : 'none';
+      // Verified: show; Unverified: only show if a brand approved visibility
+      brandsSectionEl.style.display = (isVerified || hasVisibleBrands) ? '' : 'none';
     }
     if (brandsEl) {
-      brandsEl.textContent = isVerified ? (brands || 'Not provided') : '';
+      if (isVerified) brandsEl.textContent = brands || 'Not provided';
+      else brandsEl.textContent = hasVisibleBrands ? brands : '';
     }
 
     
@@ -895,7 +953,7 @@
 
         // brand filter - check Brands column (plain text, comma-separated)
         if (brandValue) {
-          const brands = (row['Brands'] || '')
+          const brands = getDisplayBrandsForRow(row)
             .toUpperCase()
             .split(',')
             .map(s => s.trim())
