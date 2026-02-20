@@ -490,12 +490,18 @@
     const map = L.map('map');
     map.setView([20, 0], 2); // will be replaced by fitBounds if we have data
 
-    // For zoom out logic
+    // Default zoom out logic. Will be used if user did not use Near Me features
     const originalCenter = map.getCenter();
     const originalZoom = map.getZoom();
 
     map.on('popupclose', () => {
-      resetFocusedStore();
+      if(radiusCircle) {
+        setDetailPanelVisible(false);
+        map.fitBounds(radiusCircle.getBounds().pad(0.2));
+      } else {
+        // Reset to default zoom
+        resetFocusedStore();
+      }
     });
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -737,7 +743,8 @@
   function resetFocusedStore() {
     setDetailPanelVisible(false);
 
-    if(originalCenter && originalZoom !== undefined) {
+    // Zoom back out to the original field of view
+    if(!radiusCircle && originalCenter && originalZoom !== undefined) {
       map.flyTo(originalCenter, originalZoom, {
         animate: true,
         duration: 2.5
@@ -749,7 +756,23 @@
   const closeBtn = document.getElementById('detailCloseBtn');
   if(closeBtn) {
     closeBtn.addEventListener('click', () => {
-      resetFocusedStore();
+      // Hide the store detail panel (mainly for if radiusCircle is true)
+      setDetailPanelVisible(false);
+
+      // Close the popup on the associated map marker
+      if (focusedMarker) {
+        focusedMarker.closePopup();
+        focusedMarker = null; 
+      }
+
+      // Zoom out to the appropriate level
+      if (radiusCircle) {
+        // Near Me/Within Radius has been used
+        map.fitBounds(radiusCircle.getBounds().pad(0.2));
+      } else {
+        // Default zoom
+        resetFocusedStore();
+      }
     });
   }
 
@@ -1117,6 +1140,7 @@
           const marker = L.marker([lat, lon], { icon: iconToUse })
             .bindPopup(buildPopup(row));
             marker.on('click', () => {
+              focusedMarker = marker;
               openStoreDetail(row, marker);
               });
           allMarkers.push({ row, marker });
@@ -1204,6 +1228,7 @@
               map.flyTo([latitude, longitude], 14, { animate: true, duration: 0.8 });
             }
 
+            focusedMarker = marker;
             openStoreDetail(row, marker);
           });
 
