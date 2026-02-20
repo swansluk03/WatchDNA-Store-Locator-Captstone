@@ -2,7 +2,7 @@
 
 **Project:** WatchDNA Store Locator Capstone
 **Version:** 1.0.0
-**Last Updated:** December 2, 2025
+**Last Updated:** February 19, 2026
 **Status:** Active Development
 
 ---
@@ -235,13 +235,21 @@ WatchDNA-Store-Locator-Captstone/
 │       ├── viewport_grid.py          # Viewport simulation
 │       └── brand_configs.json        # Brand configurations
 │
-├── prototype.html                    # Interactive map demo
-├── mb_prototype.html                 # Mapbox prototype
+├── prototype.html                    # Interactive map demo (root)
 ├── locations.csv                     # Store location data
+├── locations2.csv                    # Alternate store data
+├── master_stores.csv                 # Master store list
 ├── requirements.txt                  # Python dependencies
 ├── README.md                         # Main documentation
+├── PHASE1_COMPLETE.md                # Phase 1 summary
+├── RESET_GUIDE.md                    # Reset guide
+├── server.js                         # Simple server entry (root)
 ├── .env.example                      # Environment template
-└── TECHNICAL_DOCUMENTATION.md        # This file
+├── TECHNICAL_DOCUMENTATION.md        # This file
+├── uploads/                          # Uploaded CSVs and exports
+│   └── master_stores.csv
+└── user-frontend/                    # Lightweight frontend prototype
+  └── prototype.html
 ```
 
 ### Key Directories Explained
