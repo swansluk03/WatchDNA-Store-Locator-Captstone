@@ -114,11 +114,16 @@
         <div class="store-detail__value" id="detailPhone"></div>
       </div>
 
-      <div class="store-detail__section">
+      <div class="store-detail__section" id="detailAboutSection">
+        <div class="store-detail__label">Information</div>
+        <div class="store-detail__value" id="detailAbout"></div>
+      </div>
+
+      <div class="store-detail__section" id="detailBrandsSection">
         <div class="store-detail__label">Brands</div>
         <div class="store-detail__value" id="detailBrands"></div>
-        </div>
       </div>
+
 
     <div id="storeListContainer">
       <div id="storeListings"></div>
@@ -261,11 +266,10 @@
     });
 
     const premiumIcon = L.icon({
-      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-gold.png',
-      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-      iconSize: [25, 41],
-      iconAnchor: [12, 41],
-      popupAnchor: [1, -34]
+      iconUrl: 'assets/markers/watchdna_clear_pin.png',
+      iconSize: [64, 64],
+      iconAnchor: [32, 64],
+      popupAnchor: [0, -56]
     });
 
     function buildPopup(row) {
@@ -282,7 +286,10 @@
         brands = brandMatches.map(m => m.replace(/>|<\/A>/gi, '').trim()).filter(Boolean).join(', ');
       }
       
-      const brandsDisplay = brands ? `<br><br><strong>Brands:</strong> ${brands}` : '';
+      const displayBrands = getDisplayBrandsForRow(row);
+      const brandsDisplay = displayBrands
+      ? `<br><br><strong>Brands:</strong> ${displayBrands}`
+      : '';
       return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}${brandsDisplay}</div>`;
     }
     
@@ -304,6 +311,59 @@
       
       return parts.join('\n');
     }
+
+    // Brand level paid visibility (demo)
+    // A brand can approve up to 'maxApproved' locations to show that brand even if the location isnt verified
+     const BRAND_VISIBILITY_CONFIG = {
+      "OMEGA": {
+        maxApproved: 5,
+        approvedHandles: ["7426", "6416", "3229", "6917170001", "O1825152"]
+      }
+    };
+
+    function normalizeKey(val) {
+      return String(val || "").trim().toLowerCase();
+    }
+
+    function isLocationApprovedForBrand(row, brandName) {
+      const cfg = BRAND_VISIBILITY_CONFIG[String(brandName || "").toUpperCase()];
+      if (!cfg) return false;
+
+      const maxApproved = Number(cfg.maxApproved || 0);
+      const approvedCount =
+        (cfg.approvedHandles?.length || 0) + (cfg.approvedNames?.length || 0);
+      
+      if (maxApproved > 0 && approvedCount > maxApproved) {
+      }
+
+      const handle = normalizeKey(row["Handle"]);
+      const name = normalizeKey(row["Name"]);
+
+      const handleApproved = (cfg.approvedHandles || [])
+        .slice(0, maxApproved || undefined)
+        .some(h => normalizeKey(h) === handle);
+
+      const nameApproved = (cfg.approvedNames || [])
+        .slice(0, maxApproved || undefined)
+        .some(n => normalizeKey(n) === name);
+
+      return handleApproved || nameApproved;
+    }
+
+    function getDisplayBrandsForRow(row) {
+      const fullBrands = extractBrandsText(row);
+      const list = fullBrands
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean);
+
+      if (row._isPremium) return list.join(", ");
+
+      // Unverified: only show brands that approved this location
+      const allowed = list.filter(b => isLocationApprovedForBrand(row, b));
+      return allowed.join(", ");
+    }
+
     
     function extractBrandsText(row) {
       let brands = (row['Brands'] || '').trim();
@@ -346,13 +406,17 @@
     const addressEl = document.getElementById('detailAddress');
     const phoneEl = document.getElementById('detailPhone');
     const brandsEl = document.getElementById('detailBrands');
+    const brandsSectionEl = document.getElementById('detailBrandsSection');
+    const imageEl = document.getElementById('detailImage');
     const directionsBtn = document.getElementById('detailDirectionsBtn');
     const connectBtn = document.getElementById('detailConnectBtn');
+    const aboutSectionEl = document.getElementById('detailAboutSection');
+    const aboutEl = document.getElementById('detailAbout');
 
     const name = (row['Name'] || 'Unnamed').trim();
     const address = buildFullAddress(row);
     const phone = (row['Phone'] || '').trim();
-    const brands = extractBrandsText(row);
+    const brands = getDisplayBrandsForRow(row);
 
     if (nameEl) nameEl.textContent = name;
 
@@ -362,7 +426,56 @@
     }
 
     if (phoneEl) phoneEl.textContent = phone || 'Not provided';
-    if (brandsEl) brandsEl.textContent = brands || 'Not provided';
+    const isVerified = !!row._isPremium;
+
+    const aboutText =
+      "We are building a vibrant community where watch enthusiasts can discover new brands and connect with passionate jewellers who value both timepieces and the stories behind them. As your trusted directory for brands and authorized dealers, we make it easy to find and reach out to reputable retailers. Feel free to contact your authorized dealer for any questions regarding the brands they carry.";
+
+    if (aboutSectionEl) {
+      aboutSectionEl.style.display = isVerified ? "" : "none";
+    }
+
+    if (aboutEl) {
+      aboutEl.textContent = isVerified ? aboutText : "";
+    }
+
+    // Image: show only for premium/verified
+    if (imageEl) {
+      if (isVerified) {
+        imageEl.style.display = '';
+        const imageUrl = (row['Image URL'] || '').trim();
+
+        if (imageUrl) {
+          imageEl.style.backgroundImage = `url('${imageUrl}')`;
+          imageEl.style.backgroundSize = 'cover';
+          imageEl.style.backgroundPosition = 'center';
+
+          const imageText = imageEl.querySelector('.store-detail__imageText');
+          if (imageText) imageText.style.display = 'none';
+        } else {
+          imageEl.style.backgroundImage = '';
+          const imageText = imageEl.querySelector('.store-detail__imageText');
+          if (imageText) imageText.style.display = '';
+        }
+      } else {
+        imageEl.style.backgroundImage = '';
+        imageEl.style.display = 'none';
+      }
+    }
+
+    // Brands: show only for premium/verified
+    const hasVisibleBrands = !!brands;
+
+    if (brandsSectionEl) {
+      // Verified: show; Unverified: only show if a brand approved visibility
+      brandsSectionEl.style.display = (isVerified || hasVisibleBrands) ? '' : 'none';
+    }
+    if (brandsEl) {
+      if (isVerified) brandsEl.textContent = brands || 'Not provided';
+      else brandsEl.textContent = hasVisibleBrands ? brands : '';
+    }
+
+    
 
     // Directions: use lat/lng if available, otherwise fall back to address
     const lat = parseFloat(String(row.Latitude || '').trim());
@@ -531,7 +644,7 @@
 
         // brand filter - check Brands column (plain text, comma-separated)
         if (brandValue) {
-          const brands = (row['Brands'] || '')
+          const brands = getDisplayBrandsForRow(row)
             .toUpperCase()
             .split(',')
             .map(s => s.trim())
