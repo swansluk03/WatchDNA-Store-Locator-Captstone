@@ -286,9 +286,9 @@
         brands = brandMatches.map(m => m.replace(/>|<\/A>/gi, '').trim()).filter(Boolean).join(', ');
       }
       
-      const displayBrands = getDisplayBrandsForRow(row);
-      const brandsDisplay = displayBrands
-      ? `<br><br><strong>Brands:</strong> ${displayBrands}`
+      const displayBrandsHTML = getDisplayBrandsHTMLForRow(row);
+      const brandsDisplay = displayBrandsHTML
+      ? `<br><br><strong>Brands:</strong> ${displayBrandsHTML}`
       : '';
       return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}${brandsDisplay}</div>`;
     }
@@ -320,6 +320,53 @@
         approvedHandles: ["7426", "6416", "3229", "6917170001", "O1825152"]
       }
     };
+
+    // Brands that should show a verified indicator (demo list)
+    const VERIFIED_BRANDS = new Set([
+      "OMEGA"
+    ]);
+
+    function escapeHtml(s) {
+      return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+    }
+
+    // Returns array of visible brand names for a row
+    function getVisibleBrandsList(row) {
+      const fullBrands = extractBrandsText(row);
+      const list = fullBrands
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean);
+      
+      if (row._isPremium) return list;
+
+      // Unverified: only show brands that approved this location
+      return list.filter(b => isLocationApprovedForBrand(row, b));
+    }
+
+    // Plain string used for filtering + any logic that expects commas
+    function getDisplayBrandsForRow(row) {
+      return getVisibleBrandsList(row).join(", ");
+    }
+
+    // HTML string used for UI display (adds verified checkmark)
+    function getDisplayBrandsHTMLForRow(row) {
+      const list = getVisibleBrandsList(row);
+
+      if (!list.length) return "";
+
+      return list.map(b => {
+        const clean = b.trim();
+        const isVerifiedBrand = VERIFIED_BRANDS.has(clean.toUpperCase());
+        const check = isVerifiedBrand ? ` <span class="verified-check" title="Verified brand">✓</span>` : "";
+        return `<span class="brand-pill">${escapeHtml(clean)}${check}</span>`;
+      }).join(" ");
+    }
 
     function normalizeKey(val) {
       return String(val || "").trim().toLowerCase();
@@ -416,7 +463,10 @@
     const name = (row['Name'] || 'Unnamed').trim();
     const address = buildFullAddress(row);
     const phone = (row['Phone'] || '').trim();
-    const brands = getDisplayBrandsForRow(row);
+    const brandsText = getDisplayBrandsForRow(row);
+    const brandsHTML = getDisplayBrandsHTMLForRow(row);
+    const hasVisibleBrands = !!brandsText;
+
 
     if (nameEl) nameEl.textContent = name;
 
@@ -463,16 +513,14 @@
       }
     }
 
-    // Brands: show only for premium/verified
-    const hasVisibleBrands = !!brands;
-
     if (brandsSectionEl) {
       // Verified: show; Unverified: only show if a brand approved visibility
       brandsSectionEl.style.display = (isVerified || hasVisibleBrands) ? '' : 'none';
     }
+
     if (brandsEl) {
-      if (isVerified) brandsEl.textContent = brands || 'Not provided';
-      else brandsEl.textContent = hasVisibleBrands ? brands : '';
+      if (isVerified) brandsEl.innerHTML = brandsHTML || 'Not provided';
+      else brandsEl.innerHTML = hasVisibleBrands ? brandsHTML : '';
     }
 
     

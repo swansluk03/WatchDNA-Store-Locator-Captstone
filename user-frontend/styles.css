@@ -347,3 +347,20 @@
   #sidebar.store-focused #footer {
     display: none;
   }
+
+  /* Verfied Brand indicators */
+  .brand-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 999px;
+    font-size: 0.9rem;
+    margin: 2px 6px 2px 0;
+  }
+
+  .verified-check {
+    font-weight: 700;
+    line-height: 1;
+  }
