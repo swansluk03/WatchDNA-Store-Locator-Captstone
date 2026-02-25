@@ -266,7 +266,7 @@
     });
 
     const premiumIcon = L.icon({
-      iconUrl: 'assets/markers/watchdna_clear_pin.png',
+      iconUrl: '/assets/markers/watchdna_clear_pin.png',
       iconSize: [64, 64],
       iconAnchor: [32, 64],
       popupAnchor: [0, -56]
@@ -889,7 +889,7 @@
     }
 
     // --- Load data & render (with helpful logs) ---
-    loadCSV('backend/uploads/master_stores.csv')
+    loadCSV('/backend/uploads/master_stores.csv')
       .then(rows => {
         console.log('CSV rows (raw):', rows.length);
         const brandSet = new Set();
