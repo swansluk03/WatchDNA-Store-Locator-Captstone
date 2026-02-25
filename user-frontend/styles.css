@@ -1,0 +1,349 @@
+:root {
+      --card:  #fff9e8;
+      --card2:#ffffff;
+      --border: #c8bfb2;
+      --accent: #6e4b3a;
+      --hover-bg: #f9f5e9;
+      --hover-bg2: #bea24d;
+      --text: #2e2b28;
+      --link: #3a4a5e;
+    }
+    
+    header, #footer, .banner {
+      color: black;
+    }
+    
+    #footer a {
+      color: black;
+    }
+    
+    body {
+      font-family: "Cormorant", serif;
+      color: var(--text);
+      margin: 0;
+    }
+
+    /* Layout: left vertical control bar + map content to the right. */
+    body {
+      display: flex;
+    }
+
+    header {
+      box-sizing: border-box;
+      background: var(--card);
+      width: 400px;
+      /* width of the left control bar */
+      min-width: 240px;
+      height: 100vh;
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: flex-start;
+      background: var(--card);
+      border-right: 1px solid var(--border);
+      z-index: 1002;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    header::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    header::-webkit-scrollbar-thumb {
+      background-color: rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+    }
+
+    #brandFilter {
+      padding: 8px;
+      min-width: 160px;
+      width: 100%;
+    }
+
+    /* push the map to the right so it doesn't sit underneath the fixed left bar */
+    #map {
+      margin-left: 400px;
+      width: calc(100% - 400px);
+      height: 100vh;
+    }
+
+    .popup {
+      font-size: 1.05rem;
+      line-height: 1.35;
+    }
+
+    #filtersPanel[hidden] {
+      display: none !important;
+    }
+
+    #hamburger {
+      font-size: 20px;
+      font-family: "Cormorant", serif;
+      background: var(--card2);
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer
+    }
+
+    #filtersPanel {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .filters-panel {
+      /* default: make the controls look like a card inside the left bar */
+      position: relative;
+      left: 0;
+      top: 0;
+      background: transparent;
+      border: 0;
+      padding: 0;
+      box-shadow: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 100%;
+    }
+
+    /* On small screens keep the original top-header behavior: make the header a normal top bar */
+    @media(max-width:899px) {
+      body {
+        display: block;
+      }
+
+      header {
+        position: static;
+        width: 100%;
+        height: auto;
+        border-right: none;
+        padding: 12px 16px;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        background: var(--card);
+        color: #fff;
+      }
+
+      #map {
+        margin-left: 0;
+        width: 100%;
+        height: 640px;
+      }
+
+      .filters-panel {
+        flex-direction: row;
+        align-items: center;
+        gap: 12px;
+      }
+    }
+
+    .banner {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, .06);
+      z-index: 1000;
+    }
+
+    #top {
+      /* This is for making the border-bottom span the entire width of the sidebar */
+      margin-left: -18px;
+      margin-right: -18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #top #inner {
+      /* This allows the text within the top div to maintain the same padding as the rest of the sidebar */
+      padding-left: 18px;
+      padding-right: 18px;
+    }
+
+    #storeListContainer {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      width: 100%;
+      box-sizing: border-box;
+      padding-bottom: 0.5rem;
+    }
+
+    .store {
+      /* Will change colors if necessary */
+      background-color: var(--card2);
+      border: 1px solid var(--border);
+      color: var(--text);
+
+      border-radius: 6px;
+      padding: 0.5rem;
+      margin-bottom: 0.5rem;  
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      transition: background-color 0.2s, box-shadow 0.2s;
+    }
+
+    .store:hover {
+      background-color: var(--hover-bg);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    #footer {
+      /* This fixes the footer div to the bottom of the sidebar */
+      flex: none;
+      margin-top: auto;
+      margin-left: -10px;
+      /* padding: top right bottom left */
+      padding: 10px 10px 5px 10px;
+      border-top: 1px solid var(--border);
+      box-sizing: border-box;
+      width: calc(100% + 36px);
+      background: var(--card);
+    }
+
+    #storeCheckboxes input[type="checkbox"] {
+      accent-color: var(--accent);
+      cursor: pointer;
+      margin-right: 6px;
+    }
+
+    #storeCheckboxes label {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      padding: 2px 0;
+    }
+
+    #storeCheckboxes input[type="checkbox"]:checked+label,
+    #storeCheckboxes input[type="checkbox"]:checked {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Store detail panel */
+    .store-detail {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      box-sizing: border-box;
+      margin-top: 10px;
+    }
+          
+    .store-detail.hidden {
+      display: none !important;
+    }
+    
+    .store-detail__top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    
+    .store-detail__title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+    
+    .store-detail__close {
+      border: 1px solid var(--border);
+      background: var(--card2);
+      border-radius: 8px;
+      width: 34px;
+      height: 34px;
+      cursor: pointer;
+      font-size: 20px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .store-detail__image {
+      width: 100%;
+      height: 180px;
+      background: #e9e4d6;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    
+    .store-detail__imageText {
+      font-size: 1rem;
+      opacity: 0.8;
+    }
+    
+    .store-detail__actions {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    
+    .store-detail__btn {
+      flex: 1;
+      text-align: center;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--card2);
+      color: var(--text);
+      text-decoration: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    
+    .store-detail__btn:hover {
+      background: var(--hover-bg);
+    }
+    
+  .store-detail__section {
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    margin-top: 10px;
+  }
+  
+  .store-detail__label {
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  
+  .store-detail__value {
+    font-size: 1rem;
+    line-height: 1.3;
+    word-break: break-word;
+  }
+
+  /* Makes it so that when viewing a single store, everything else in the sidebar gets hidden */
+  #sidebar.store-focused #top,
+  #sidebar.store-focused #hamburger,
+  #sidebar.store-focused #filtersPanel,
+  #sidebar.store-focused #nearMeWithinBtn,
+  #sidebar.store-focused #nearMeRadius,
+  #sidebar.store-focused #nearMeBtn,
+  #sidebar.store-focused #storeListContainer,
+  #sidebar.store-focused #footer {
+    display: none;
+  }

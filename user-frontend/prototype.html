@@ -25,360 +25,7 @@
 
   <!-- Cormorant font -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant:wght@400;500;600;700&display=swap">
-
-
-  <style>
-    :root {
-      --card:  #fff9e8;
-      --card2:#ffffff;
-      --border: #c8bfb2;
-      --accent: #6e4b3a;
-      --hover-bg: #f9f5e9;
-      --hover-bg2: #bea24d;
-      --text: #2e2b28;
-      --link: #3a4a5e;
-    }
-    
-    header, #footer, .banner {
-      color: black;
-    }
-    
-    #footer a {
-      color: black;
-    }
-    
-    body {
-      font-family: "Cormorant", serif;
-      color: var(--text);
-      margin: 0;
-    }
-
-    /* Layout: left vertical control bar + map content to the right. */
-    body {
-      display: flex;
-    }
-
-    header {
-      box-sizing: border-box;
-      background: var(--card);
-      width: 400px;
-      /* width of the left control bar */
-      min-width: 240px;
-      height: 100vh;
-      position: fixed;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      padding: 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      align-items: flex-start;
-      background: var(--card);
-      border-right: 1px solid var(--border);
-      z-index: 1002;
-      overflow-y: auto;
-      overflow-x: hidden;
-    }
-
-    header::-webkit-scrollbar {
-      width: 8px;
-    }
-
-    header::-webkit-scrollbar-thumb {
-      background-color: rgba(0, 0, 0, 0.2);
-      border-radius: 4px;
-    }
-
-    #brandFilter {
-      padding: 8px;
-      min-width: 160px;
-      width: 100%;
-    }
-
-    /* push the map to the right so it doesn't sit underneath the fixed left bar */
-    #map {
-      margin-left: 400px;
-      width: calc(100% - 400px);
-      height: 100vh;
-    }
-
-    .popup {
-      font-size: 1.05rem;
-      line-height: 1.35;
-    }
-
-    #filtersPanel[hidden] {
-      display: none !important;
-    }
-
-    #hamburger {
-      font-size: 20px;
-      font-family: "Cormorant", serif;
-      background: var(--card2);
-      border: 1px solid var(--border);
-      padding: 6px 10px;
-      border-radius: 6px;
-      cursor: pointer
-    }
-
-    #filtersPanel {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-    }
-
-    .filters-panel {
-      /* default: make the controls look like a card inside the left bar */
-      position: relative;
-      left: 0;
-      top: 0;
-      background: transparent;
-      border: 0;
-      padding: 0;
-      box-shadow: none;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      width: 100%;
-    }
-
-    /* On small screens keep the original top-header behavior: make the header a normal top bar */
-    @media(max-width:899px) {
-      body {
-        display: block;
-      }
-
-      header {
-        position: static;
-        width: 100%;
-        height: auto;
-        border-right: none;
-        padding: 12px 16px;
-        display: flex;
-        flex-direction: row;
-        align-items: center;
-        background: var(--card);
-        color: #fff;
-      }
-
-      #map {
-        margin-left: 0;
-        width: 100%;
-        height: 640px;
-      }
-
-      .filters-panel {
-        flex-direction: row;
-        align-items: center;
-        gap: 12px;
-      }
-    }
-
-    .banner {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      padding: 8px 12px;
-      border-radius: 8px;
-      box-shadow: 0 2px 6px rgba(0, 0, 0, .06);
-      z-index: 1000;
-    }
-
-    #top {
-      /* This is for making the border-bottom span the entire width of the sidebar */
-      margin-left: -18px;
-      margin-right: -18px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    #top #inner {
-      /* This allows the text within the top div to maintain the same padding as the rest of the sidebar */
-      padding-left: 18px;
-      padding-right: 18px;
-    }
-
-    #storeListContainer {
-      flex: 1 1 auto;
-      overflow-y: auto;
-      width: 100%;
-      box-sizing: border-box;
-      padding-bottom: 0.5rem;
-    }
-
-    .store {
-      /* Will change colors if necessary */
-      background-color: var(--card2);
-      border: 1px solid var(--border);
-      color: var(--text);
-
-      border-radius: 6px;
-      padding: 0.5rem;
-      margin-bottom: 0.5rem;  
-      cursor: pointer;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-      transition: background-color 0.2s, box-shadow 0.2s;
-    }
-
-    .store:hover {
-      background-color: var(--hover-bg);
-      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-
-    }
-
-    .hidden {
-      display: none !important;
-    }
-
-    #footer {
-      /* This fixes the footer div to the bottom of the sidebar */
-      flex: none;
-      margin-top: auto;
-      margin-left: -10px;
-      /* padding: top right bottom left */
-      padding: 10px 10px 5px 10px;
-      border-top: 1px solid var(--border);
-      box-sizing: border-box;
-      width: calc(100% + 36px);
-      background: var(--card);
-    }
-
-    #storeCheckboxes input[type="checkbox"] {
-      accent-color: var(--accent);
-      cursor: pointer;
-      margin-right: 6px;
-    }
-
-    #storeCheckboxes label {
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      padding: 2px 0;
-    }
-
-    #storeCheckboxes input[type="checkbox"]:checked+label,
-    #storeCheckboxes input[type="checkbox"]:checked {
-      color: var(--accent);
-      font-weight: 600;
-    }
-
-    /* Store detail panel */
-    .store-detail {
-      width: 100%;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px;
-      box-sizing: border-box;
-      margin-top: 10px;
-    }
-          
-    .store-detail.hidden {
-      display: none !important;
-    }
-    
-    .store-detail__top {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-    
-    .store-detail__title {
-      font-size: 1.2rem;
-      font-weight: 700;
-      line-height: 1.2;
-      text-transform: uppercase;
-    }
-    
-    .store-detail__close {
-      border: 1px solid var(--border);
-      background: var(--card2);
-      border-radius: 8px;
-      width: 34px;
-      height: 34px;
-      cursor: pointer;
-      font-size: 20px;
-      line-height: 1;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-    }
-    
-    .store-detail__image {
-      width: 100%;
-      height: 180px;
-      background: #e9e4d6;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      margin-bottom: 10px;
-    }
-    
-    .store-detail__imageText {
-      font-size: 1rem;
-      opacity: 0.8;
-    }
-    
-    .store-detail__actions {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 12px;
-    }
-    
-    .store-detail__btn {
-      flex: 1;
-      text-align: center;
-      padding: 10px 12px;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      background: var(--card2);
-      color: var(--text);
-      text-decoration: none;
-      cursor: pointer;
-      font-weight: 600;
-    }
-    
-    .store-detail__btn:hover {
-      background: var(--hover-bg);
-    }
-    
-  .store-detail__section {
-    padding-top: 10px;
-    border-top: 1px solid var(--border);
-    margin-top: 10px;
-  }
-  
-  .store-detail__label {
-    font-weight: 700;
-    margin-bottom: 6px;
-  }
-  
-  .store-detail__value {
-    font-size: 1rem;
-    line-height: 1.3;
-    word-break: break-word;
-  }
-
-  /* Makes it so that when viewing a single store, everything else in the sidebar gets hidden */
-  #sidebar.store-focused #top,
-  #sidebar.store-focused #hamburger,
-  #sidebar.store-focused #filtersPanel,
-  #sidebar.store-focused #nearMeWithinBtn,
-  #sidebar.store-focused #nearMeRadius,
-  #sidebar.store-focused #nearMeBtn,
-  #sidebar.store-focused #storeListContainer,
-  #sidebar.store-focused #footer {
-    display: none;
-  }
-
-  </style>
+  <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
@@ -413,8 +60,8 @@
       <label for="storeFilter" style="margin-left:12px"><strong>Filter by store:</strong></label>
       <input id="storeFilter" type="search" placeholder="Search By Store Name" style="padding:8px; min-width:260px;" />
       <div id="storeCheckboxes"
-        style="margin-top:10px; max-height:200px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px;">
-        <!-- Store name checkboxes -->
+        style="display:none; margin-top:10px; max-height:200px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px;">
+        <!-- Store name checkboxes (hidden until user searches) -->
       </div>
         <input type="checkbox" id="premiumOnlyToggle" style="cursor:pointer; transform: scale(1.2);" />
         <label for="premiumOnlyToggle" style="cursor:pointer;"><strong>Show Premium Only</strong></label>
@@ -565,6 +212,12 @@
           panel.setAttribute('hidden', '');
           btn.setAttribute('aria-expanded', 'false');
           setStoreListHidden(false); //show the store list
+          // Clear the store search when closing the panel
+          const storeInput = document.getElementById('storeFilter');
+          if (storeInput) {
+            storeInput.value = '';
+            applyFilter(document.getElementById('brandFilter').value);
+          }
         }
         e.stopPropagation();
       });
@@ -573,6 +226,12 @@
           panel.setAttribute('hidden', '');
           btn.setAttribute('aria-expanded', 'false');
           setStoreListHidden(false);
+          // Clear the store search when closing the panel by clicking outside
+          const storeInput = document.getElementById('storeFilter');
+          if (storeInput) {
+            storeInput.value = '';
+            applyFilter(document.getElementById('brandFilter').value);
+          }
           console.log('[document] closed filters by click outside');
         }
       });
@@ -583,6 +242,8 @@
     const bounds = L.latLngBounds();
     let allRows = [];
     let allMarkers = [];
+    // Keep track of stores the user has explicitly checked (lowercased names)
+    let userCheckedStores = new Set();
 
     // Temporary Icons for regular and premium vendors
     const regularIcon = L.icon({
@@ -757,16 +418,17 @@
       // rowsForList should be the rows after applying non-checkbox filters
       const storeCheckboxesDiv = document.getElementById('storeCheckboxes');
 
-      // preserve which store names were checked before rebuild
-      const prevChecked = new Set(
-        Array.from(storeCheckboxesDiv.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value)
-      );
-
+      // start fresh; by default checkboxes should be unchecked so the user
+      // explicitly selects any stores they want
       storeCheckboxesDiv.innerHTML = '';
 
       const storeNames = [...new Set(rowsForList.map(r => (r['Name'] || '').trim()).filter(Boolean))].sort();
 
       const premiumOnly = document.getElementById('premiumOnlyToggle')?.checked;
+
+      // Remove any previously-checked stores that are no longer present
+      const storeNameSet = new Set(storeNames.map(s => s.toLowerCase()));
+      Array.from(userCheckedStores).forEach(s => { if (!storeNameSet.has(s)) userCheckedStores.delete(s); });
 
       storeNames.forEach(name => {
         const rowMatch = rowsForList.find(r => (r['Name'] || '').trim() === name);
@@ -783,8 +445,13 @@
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.value = name;
-        cb.checked = prevChecked.has(name);
-        cb.addEventListener('change', () => applyFilter(document.getElementById('brandFilter').value));
+        // restore user selection if previously checked
+        cb.checked = userCheckedStores.has(name.toLowerCase());
+        cb.addEventListener('change', () => {
+          const val = cb.value.toLowerCase();
+          if (cb.checked) userCheckedStores.add(val); else userCheckedStores.delete(val);
+          applyFilter(document.getElementById('brandFilter').value);
+        });
 
         const span = document.createElement('span');
         span.textContent = name;
@@ -816,11 +483,12 @@
         // Show/hide entries that are not part of the current filtered set
         label.style.display = inFiltered ? '' : 'none';
 
-        // If a store text filter exists, auto-check matches; otherwise uncheck hidden
-        if (q) {
-          cb.checked = inFiltered && name.includes(q);
-        } else if (!inFiltered) {
+        // Do not auto-check matches when the user types — leave checked state
+        // under user control. If an item is no longer in the filtered set,
+        // uncheck it and remove it from the user's selection set.
+        if (!inFiltered) {
           cb.checked = false;
+          userCheckedStores.delete(cb.value.toLowerCase());
         }
       });
     }
@@ -874,6 +542,16 @@
       rebuildStoreCheckboxes(baseRows);
       syncStoreCheckboxes(baseRows);
 
+      // Show checkboxes only when the user has entered a store search
+      try {
+        const storeCheckboxesDiv = document.getElementById('storeCheckboxes');
+        if (storeCheckboxesDiv) {
+          storeCheckboxesDiv.style.display = storeInput && storeInput.trim() ? '' : 'none';
+        }
+      } catch (e) {
+        console.warn('Could not toggle storeCheckboxes visibility', e);
+      }
+
 
       const checkedStores = Array.from(document.querySelectorAll('#storeCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value.toLowerCase());
 
@@ -889,6 +567,7 @@
 
         if (show) clusterGroup.addLayer(marker);
       });
+
     }
 
     // --- Near Me radius filter ---
@@ -1288,11 +967,12 @@
             const premiumOnly = document.getElementById('premiumOnlyToggle').checked;
 
             // Clear all checkboxes when premium-only is enabled
-            if (premiumOnly) {
-              document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => {
-                cb.checked = false;
-              });
-            }
+                if (premiumOnly) {
+                  document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => {
+                    cb.checked = false;
+                  });
+                  userCheckedStores.clear();
+                }
 
             applyFilter(document.getElementById('brandFilter').value);
           });
@@ -1303,14 +983,8 @@
         document.getElementById('storeFilter').value = INITIAL.store;
         applyFilter(INITIAL.brand);
 
-        // --- Sync checkboxes to match URL store filter ---
-        if (INITIAL.store) {
-          const filterValue = INITIAL.store.toLowerCase();
-          document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => {
-            const label = cb.parentElement.querySelector('span')?.textContent?.toLowerCase() || '';
-            cb.checked = label.includes(filterValue);
-          });
-        }
+        // Do not pre-check checkboxes from URL params; users must explicitly
+        // select stores using the checkbox controls.
 
         const nearBtn = document.getElementById('nearMeBtn');
         if (nearBtn) nearBtn.addEventListener('click', locateAndJumpToNearest);
