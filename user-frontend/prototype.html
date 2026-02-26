@@ -45,10 +45,10 @@
       ☰ Filter
     </button>
     <div id="filtersPanel" class="filters-panel" hidden>
-      <label for="brandFilter"><strong>Filter by brand:</strong></label>
-      <select id="brandFilter">
-        <option value="">All brands</option>
-      </select>
+      <label for="brandCheckboxes"><strong>Filter by brand:</strong></label>
+      <div id="brandCheckboxes" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px;">
+        <!-- Brand checkboxes inserted here -->
+      </div>
       <label for="typeFilter" style="margin-left:12px"><strong>Type:</strong></label>
       <select id="typeFilter" style="padding:8px;">
         <option value="all">All</option>
@@ -227,9 +227,9 @@
           setStoreListHidden(false); //show the store list
           // Clear the store search when closing the panel
           const storeInput = document.getElementById('storeFilter');
-          if (storeInput) {
+            if (storeInput) {
             storeInput.value = '';
-            applyFilter(document.getElementById('brandFilter').value);
+            applyFilter();
           }
         }
         e.stopPropagation();
@@ -243,7 +243,7 @@
           const storeInput = document.getElementById('storeFilter');
           if (storeInput) {
             storeInput.value = '';
-            applyFilter(document.getElementById('brandFilter').value);
+            applyFilter();
           }
           console.log('[document] closed filters by click outside');
         }
@@ -636,7 +636,7 @@
         cb.addEventListener('change', () => {
           const val = cb.value.toLowerCase();
           if (cb.checked) userCheckedStores.add(val); else userCheckedStores.delete(val);
-          applyFilter(document.getElementById('brandFilter').value);
+          applyFilter();
         });
 
         const span = document.createElement('span');
@@ -679,10 +679,12 @@
       });
     }
 
-    function applyFilter(brand) {
+    function applyFilter() {
       clusterGroup.clearLayers();
-
-      const brandValue = (brand || '').trim().toUpperCase();
+      // Gather selected brands from checkbox list (if any)
+      const selectedBrandEls = document.querySelectorAll('#brandCheckboxes input[type="checkbox"]:checked');
+      const brandSet = new Set(Array.from(selectedBrandEls).map(el => (el.value || '').toUpperCase().trim()));
+      const brandFilterActive = brandSet.size > 0;
       const typeValue = (document.getElementById('typeFilter').value || 'all');
       const storeInput = (document.getElementById('storeFilter').value || '').trim().toLowerCase();
       // Premium-only filter
@@ -693,22 +695,31 @@
         let passes = true;
 
         // brand filter - check Brands column (plain text, comma-separated)
-        if (brandValue) {
-          const brands = getDisplayBrandsForRow(row)
+        if (brandFilterActive) {
+          const brands = (row['Brands'] || '')
             .toUpperCase()
             .split(',')
             .map(s => s.trim())
             .filter(Boolean);
-          passes = brands.includes(brandValue);
+          passes = brands.some(b => brandSet.has(b));
         }
 
-        // store text search
+        // store text search - check multiple fields (Name, City, State, Address, Country)
         if (passes && storeInput) {
           if (storeInput.startsWith('handle:')) {
             const h = storeInput.split(':', 2)[1] || '';
             passes = (String(row['Handle'] || '') === h);
           } else {
-            passes = (String(row['Name'] || '').toLowerCase().includes(storeInput));
+            const searchFields = [
+              row['Name'] || '',
+              row['City'] || '',
+              row['State/Province/Region'] || '',
+              row['Address Line 1'] || '',
+              row['Address Line 2'] || '',
+              row['Country'] || '',
+              row['Postal/ZIP Code'] || ''
+            ].map(f => String(f).toLowerCase());
+            passes = searchFields.some(field => field.includes(storeInput));
           }
         }
 
@@ -767,8 +778,7 @@
       radiusCircle = L.circle(centerLL, { radius: radiusMeters, fillOpacity: 0.07 }).addTo(map);
 
       // Start from your existing filtered set
-      const brandValue = (document.getElementById('brandFilter').value || '');
-      applyFilter(brandValue);
+      applyFilter();
 
       // Filter only visible markers within the radius
       const current = clusterGroup.getLayers();
@@ -791,7 +801,7 @@
           const ll = toLatLng(pos.coords.latitude, pos.coords.longitude);
           showUserMarker(ll);
           const mi = parseFloat(document.getElementById('nearMeRadius').value || '10');
-          applyRadiusToCurrent(ll, meters(mi));
+              applyRadiusToCurrent(ll, meters(mi));
         },
         () => setNearMeStatus('Unable to get location.'),
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
@@ -879,8 +889,7 @@
           showUserMarker(userLL);
 
           // Ensure we're using the current filtered set (whatever UI is set to)
-          const brandValue = (document.getElementById('brandFilter').value || '');
-          applyFilter(brandValue); // keeps current type/store filters
+          applyFilter(); // keeps current type/store filters
 
           const visible = getVisibleMarkers();
           if (!visible.length) { setNearMeStatus('No locations match current filters.'); return; }
@@ -898,22 +907,39 @@
     }
 
     function populateBrandSelect(brandSet) {
-      const sel = document.getElementById('brandFilter');
-      while (sel.options.length > 1) sel.remove(1);
+      const container = document.getElementById('brandCheckboxes');
+      container.innerHTML = '';
       [...brandSet].sort().forEach(b => {
-        const opt = document.createElement('option');
-        opt.value = b; opt.textContent = b; sel.appendChild(opt);
+        const label = document.createElement('label');
+        label.style.display = 'inline-flex';
+        label.style.alignItems = 'center';
+        label.style.gap = '6px';
+        label.style.marginRight = '6px';
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = b;
+        cb.addEventListener('change', () => applyFilter());
+
+        const span = document.createElement('span');
+        span.textContent = b;
+        span.style.userSelect = 'none';
+
+        label.appendChild(cb);
+        label.appendChild(span);
+        container.appendChild(label);
       });
-      sel.onchange = () => applyFilter(sel.value);
+      // wire brand checkbox container: changes trigger applyFilter
+      // (populateBrandSelect will create checkboxes instead of options)
       // wire type select
       const typeSel = document.getElementById('typeFilter');
-      typeSel.onchange = () => applyFilter(sel.value);
+      typeSel.onchange = () => applyFilter();
       // wire store filter input (debounced)
       const storeInput = document.getElementById('storeFilter');
       let debounce;
       storeInput.addEventListener('input', () => {
         clearTimeout(debounce);
-        debounce = setTimeout(() => applyFilter(sel.value), 250);
+        debounce = setTimeout(() => applyFilter(), 250);
       });
     }
 
@@ -1162,14 +1188,19 @@
                   userCheckedStores.clear();
                 }
 
-            applyFilter(document.getElementById('brandFilter').value);
+            applyFilter();
           });
 
         // Preload filters from URL, then apply once
-        document.getElementById('brandFilter').value = INITIAL.brand;
         document.getElementById('typeFilter').value = INITIAL.type;
         document.getElementById('storeFilter').value = INITIAL.store;
-        applyFilter(INITIAL.brand);
+        if (INITIAL.brand) {
+          const b = INITIAL.brand.toLowerCase();
+          document.querySelectorAll('#brandCheckboxes input[type="checkbox"]').forEach(cb => {
+            if ((cb.value || '').toLowerCase().includes(b)) cb.checked = true;
+          });
+        }
+        applyFilter();
 
         // Do not pre-check checkboxes from URL params; users must explicitly
         // select stores using the checkbox controls.
