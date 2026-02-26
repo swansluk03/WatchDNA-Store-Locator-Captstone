@@ -23,6 +23,16 @@ const Scraper: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('');
+  const [showRecordsModal, setShowRecordsModal] = useState(false);
+  const [recordsJobId, setRecordsJobId] = useState<string>('');
+  const [recordsData, setRecordsData] = useState<{
+    columns: string[];
+    records: Record<string, string>[];
+  } | null>(null);
+  const [loadingRecords, setLoadingRecords] = useState(false);
+  const [editedRecords, setEditedRecords] = useState<Map<number, Record<string, string>>>(new Map());
+  const [savingRecords, setSavingRecords] = useState(false);
+  const [recordsViewMode, setRecordsViewMode] = useState<'all' | 'incomplete'>('all');
 
   const loadJobs = useCallback(async () => {
     try {
@@ -150,6 +160,82 @@ const Scraper: React.FC = () => {
       setSelectedJobLogs(`Error loading logs: ${err.response?.data?.error || err.message}`);
     } finally {
       setLoadingLogs(false);
+    }
+  };
+
+  const handleEditRecords = async (jobId: string) => {
+    setRecordsJobId(jobId);
+    setShowRecordsModal(true);
+    setLoadingRecords(true);
+    setEditedRecords(new Map());
+    setRecordsViewMode('all');
+    setError(null);
+
+    try {
+      const data = await scraperService.getJobRecords(jobId);
+      setRecordsData({ columns: data.columns, records: data.records });
+    } catch (err: any) {
+      setRecordsData(null);
+      setError(err.response?.data?.error || 'Failed to load job records');
+    } finally {
+      setLoadingRecords(false);
+    }
+  };
+
+  const handleRecordCellChange = (rowIndex: number, column: string, value: string) => {
+    if (!recordsData) return;
+    const base = editedRecords.get(rowIndex) ?? recordsData.records[rowIndex];
+    const updated = { ...base, [column]: value };
+    setEditedRecords(new Map(editedRecords).set(rowIndex, updated));
+  };
+
+  const getRecordValue = (rowIndex: number, column: string): string => {
+    const edited = editedRecords.get(rowIndex);
+    const base = recordsData?.records[rowIndex];
+    if (edited && column in edited) return edited[column];
+    return base?.[column] ?? '';
+  };
+
+  /** Check if a store record is missing important data (phone or address) */
+  const storeHasMissingImportantData = (record: Record<string, string>): boolean => {
+    const phone = (record['Phone'] ?? '').trim();
+    const addr1 = (record['Address Line 1'] ?? '').trim();
+    const addr2 = (record['Address Line 2'] ?? '').trim();
+    const hasAddress = addr1.length > 0 || addr2.length > 0;
+    const hasPhone = phone.length > 0;
+    return !hasPhone || !hasAddress;
+  };
+
+  /** Records to display based on view mode (all vs incomplete only) */
+  const displayedRecords = (() => {
+    if (!recordsData) return [];
+    if (recordsViewMode === 'all') {
+      return recordsData.records.map((r, i) => ({ record: r, originalIndex: i }));
+    }
+    return recordsData.records
+      .map((r, i) => ({ record: r, originalIndex: i }))
+      .filter(({ record }) => storeHasMissingImportantData(record));
+  })();
+
+  const incompleteCount = recordsData
+    ? recordsData.records.filter(storeHasMissingImportantData).length
+    : 0;
+
+  const handleSaveRecords = async () => {
+    if (!recordsData || editedRecords.size === 0) return;
+    setSavingRecords(true);
+    setError(null);
+    try {
+      const rowsToUpdate = Array.from(editedRecords.values());
+      const result = await scraperService.updateMasterCsvRows(rowsToUpdate);
+      setEditedRecords(new Map());
+      setShowRecordsModal(false);
+      loadData();
+      alert(`Saved ${result.updatedCount} of ${result.totalRequested} records to master CSV.`);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to save records');
+    } finally {
+      setSavingRecords(false);
     }
   };
 
@@ -344,6 +430,15 @@ const Scraper: React.FC = () => {
                       >
                         View Logs
                       </button>
+                      {job.status === 'completed' && job.uploadId && (
+                        <button
+                          onClick={() => handleEditRecords(job.id)}
+                          className="btn btn-primary btn-sm"
+                          style={{ marginRight: '0.5rem' }}
+                        >
+                          Edit Records
+                        </button>
+                      )}
                       {job.status === 'running' ? (
                         <button
                           onClick={() => handleCancelJob(job.id)}
@@ -517,6 +612,129 @@ const Scraper: React.FC = () => {
                 }}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Job Records Edit Modal */}
+      {showRecordsModal && (
+        <div className="modal-overlay" onClick={() => setShowRecordsModal(false)}>
+          <div className="modal modal-xlarge modal-records" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Edit Job Records – {recordsJobId.substring(0, 8)}</h2>
+              <button className="modal-close" onClick={() => setShowRecordsModal(false)}>
+                ×
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {error && <div className="error-message">{error}</div>}
+              {loadingRecords ? (
+                <div className="loading">Loading records...</div>
+              ) : recordsData ? (
+                <>
+                  <p className="records-hint">
+                    Edit incorrect or missing fields below. Changes are saved to the master CSV when you click Save.
+                  </p>
+                  <div className="records-view-toggle">
+                    <button
+                      type="button"
+                      className={`records-view-btn ${recordsViewMode === 'all' ? 'active' : ''}`}
+                      onClick={() => setRecordsViewMode('all')}
+                    >
+                      All records ({recordsData.records.length})
+                    </button>
+                    <button
+                      type="button"
+                      className={`records-view-btn ${recordsViewMode === 'incomplete' ? 'active' : ''}`}
+                      onClick={() => setRecordsViewMode('incomplete')}
+                    >
+                      Incomplete only ({incompleteCount})
+                    </button>
+                  </div>
+                  <div className="records-table-wrapper">
+                    <table className="records-edit-table">
+                      <thead>
+                        <tr>
+                          <th className="record-warning-col record-header-sticky" title="Stores with missing phone or address">
+                            <span className="record-warning-header">⚠</span>
+                          </th>
+                          {recordsData.columns.map((col) => (
+                            <th key={col} className="record-header-sticky">{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                            {displayedRecords.length === 0 ? (
+                              <tr>
+                                <td colSpan={(recordsData.columns.length + 1)} className="records-empty-state">
+                                  {recordsViewMode === 'incomplete'
+                                    ? 'No records with missing phone or address.'
+                                    : 'No records.'}
+                                </td>
+                              </tr>
+                            ) : displayedRecords.map(({ record, originalIndex }) => {
+                              const hasMissing = storeHasMissingImportantData(
+                                editedRecords.get(originalIndex) ?? record
+                              );
+                              return (
+                                <tr
+                                  key={originalIndex}
+                                  className={`${editedRecords.has(originalIndex) ? 'row-edited' : ''} ${hasMissing ? 'row-incomplete' : ''}`}
+                                >
+                                  <td className="record-warning-col">
+                                    {hasMissing ? (
+                                      <span
+                                        className="record-warning-icon"
+                                        title="Missing phone number or address"
+                                      >
+                                        ⚠
+                                      </span>
+                                    ) : (
+                                      <span className="record-warning-empty" />
+                                    )}
+                                  </td>
+                                  {recordsData.columns.map((col) => (
+                                    <td key={col}>
+                                      {col === 'Handle' ? (
+                                        <span className="record-cell-readonly">{getRecordValue(originalIndex, col)}</span>
+                                      ) : (
+                                        <input
+                                          type="text"
+                                          className="record-cell-input"
+                                          value={getRecordValue(originalIndex, col)}
+                                          onChange={(e) => handleRecordCellChange(originalIndex, col, e.target.value)}
+                                        />
+                                      )}
+                                    </td>
+                                  ))}
+                                </tr>
+                              );
+                            })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <div className="error-message">Could not load records</div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowRecordsModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleSaveRecords}
+                disabled={editedRecords.size === 0 || savingRecords}
+              >
+                {savingRecords ? 'Saving...' : `Save ${editedRecords.size} change(s) to master CSV`}
               </button>
             </div>
           </div>

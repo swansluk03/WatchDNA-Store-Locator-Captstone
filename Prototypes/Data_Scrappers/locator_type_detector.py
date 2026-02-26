@@ -1,23 +1,5 @@
 #!/usr/bin/env python3
-"""
-Store Locator Type Detector & Strategy Planner
-===============================================
-
-Detects WHAT TYPE of store locator is being used and provides strategies
-to scrape ALL locations worldwide, not just a single region.
-
-Based on research of luxury watch retailers (Rolex, Omega, Cartier, Patek Philippe, etc.)
-and common store locator patterns.
-
-Common Store Locator Types:
-1. Viewport/Bounds-based (requires lat/lng bounds) - Rolex, some Shopify
-2. Country/Region filters (dropdown selections) - Omega, Cartier  
-3. Search radius (center point + radius) - Many custom implementations
-4. Paginated full list (all stores, but paginated) - REST APIs
-5. Single endpoint (all stores in one call) - Simple APIs
-6. ZIP/Postal code search - US-focused retailers
-7. City/Location search - Google-like search
-"""
+"""Detects store locator type (viewport, country filter, paginated, etc.) and expansion strategy."""
 
 import re
 import requests
@@ -25,10 +7,6 @@ from typing import Dict, List, Any, Optional
 from urllib.parse import urlparse, parse_qs
 import json
 
-
-# =============================================================================
-# LOCATOR TYPE DEFINITIONS
-# =============================================================================
 
 LOCATOR_TYPES = {
     "viewport": {
@@ -43,7 +21,7 @@ LOCATOR_TYPES = {
     "country_filter": {
         "name": "Country/Region Filter",
         "description": "Filters by country code or region parameter",
-        "indicators": ["country", "countryCode", "country_code", "region", "regionCode"],
+        "indicators": ["country", "country_id", "countryCode", "country_code", "country-region", "country_region", "region", "regionCode"],
         "examples": ["Omega, Cartier, TAG Heuer"],
         "strategy": "iterate_countries",
         "complexity": "medium",
@@ -97,21 +75,7 @@ LOCATOR_TYPES = {
 }
 
 
-# =============================================================================
-# DETECTION FUNCTIONS
-# =============================================================================
-
 def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]:
-    """
-    Detect what type of store locator this is and if it's region-specific
-    
-    Args:
-        url: The API endpoint URL
-        sample_response: Optional sample response data
-    
-    Returns:
-        Dict with type, confidence, strategy, and expansion needs
-    """
     result = {
         "url": url,
         "detected_type": "unknown",
@@ -125,26 +89,18 @@ def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]
         "estimated_calls_world": 1,
         "estimated_time_min": 0
     }
-    
-    # Parse URL
     parsed = urlparse(url)
     params = parse_qs(parsed.query)
     result["url_params"] = {k: v[0] if len(v) == 1 else v for k, v in params.items()}
-    
-    # Score each locator type
     scores = {}
     
     for type_key, type_info in LOCATOR_TYPES.items():
         score = 0.0
         matched = []
-        
-        # Check URL parameters
         for indicator in type_info["indicators"]:
             if any(indicator.lower() in k.lower() for k in params.keys()):
                 score += 1.0
                 matched.append(indicator)
-            
-            # Check URL path
             if indicator.lower() in parsed.path.lower():
                 score += 0.5
                 if indicator not in matched:
@@ -157,15 +113,10 @@ def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]
                 "info": type_info
             }
     
-    # Determine best match
     if scores:
         best = max(scores.items(), key=lambda x: x[1]["score"])
-        
-        # Override: If offset parameter exists, prioritize paginated over city_search
-        # (offset is a strong indicator of pagination)
         if "offset" in result["url_params"] and best[0] == "city_search" and "paginated" in scores:
             paginated_score = scores["paginated"]["score"]
-            # If paginated has any score, prefer it when offset is present
             if paginated_score > 0:
                 best = ("paginated", scores["paginated"])
         
@@ -175,24 +126,17 @@ def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]
         result["expansion_strategy"] = best[1]["info"]["strategy"]
         result["complexity"] = best[1]["info"]["complexity"]
         result["can_expand_to_world"] = best[1]["info"]["can_get_all"]
-        
-        # Region-specific types
         if best[0] in ["viewport", "radius_search", "zip_search", "city_search", "country_filter"]:
             result["is_region_specific"] = True
     else:
-        # No indicators - likely single endpoint
         result["detected_type"] = "single_call"
         result["confidence"] = 0.7
         result["expansion_strategy"] = "direct_fetch"
         result["complexity"] = "low"
         result["can_expand_to_world"] = True
-    
-    # Analyze response for clues
     if sample_response:
         response_analysis = analyze_response_clues(sample_response)
         result.update(response_analysis)
-        
-        # Check for token-based pagination (pageToken in response)
         if isinstance(sample_response, dict) and "pageToken" in sample_response:
             result["has_token_pagination"] = True
             result["pagination_type"] = "token"
@@ -202,8 +146,6 @@ def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]
         else:
             result["has_token_pagination"] = False
             result["pagination_type"] = "page_number"
-    
-    # Get estimates
     estimates = get_scraping_estimates(result["detected_type"])
     result["estimated_calls_world"] = estimates["calls"]
     result["estimated_time_min"] = estimates["time_min"]
@@ -212,12 +154,6 @@ def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]
 
 
 def analyze_response_clues(response: Any) -> Dict[str, Any]:
-    """
-    Analyze response to determine if it's partial/region-limited
-    
-    Returns:
-        Dict with clues about data completeness
-    """
     clues = {
         "appears_region_limited": False,
         "has_pagination": False,
@@ -225,20 +161,15 @@ def analyze_response_clues(response: Any) -> Dict[str, Any]:
         "total_count": None,
         "likely_complete": False
     }
-    
-    # Extract data array
     if isinstance(response, list):
         data = response
     elif isinstance(response, dict):
-        # Find data array
         for key in ["data", "results", "items", "stores", "locations", "dealers", "retailers"]:
             if key in response and isinstance(response[key], list):
                 data = response[key]
                 break
         else:
             data = []
-        
-        # Check for pagination/totals
         if "total" in response or "total_count" in response or "count" in response:
             clues["has_pagination"] = True
             clues["total_count"] = response.get("total") or response.get("total_count") or response.get("count")
@@ -249,22 +180,13 @@ def analyze_response_clues(response: Any) -> Dict[str, Any]:
         data = []
     
     clues["returned_count"] = len(data)
-    
-    # Heuristics for region-limited data
     if clues["returned_count"] > 0:
-        # Suspiciously round numbers suggest limits
         if clues["returned_count"] in [10, 25, 50, 100, 250, 500]:
             clues["appears_region_limited"] = True
-        
-        # If total != returned, it's partial
         if clues["total_count"] and clues["total_count"] != clues["returned_count"]:
             clues["appears_region_limited"] = True
-        
-        # If returned count is very small, might be region-limited
         if clues["returned_count"] < 20:
             clues["appears_region_limited"] = True
-        
-        # If returned count is very large (>500), likely complete
         if clues["returned_count"] > 500:
             clues["likely_complete"] = True
     
@@ -272,12 +194,6 @@ def analyze_response_clues(response: Any) -> Dict[str, Any]:
 
 
 def get_scraping_estimates(locator_type: str, region: str = "world") -> Dict[str, Any]:
-    """
-    Estimate API calls and time needed for complete scraping
-    
-    Returns:
-        Dict with calls and time estimates
-    """
     estimates = {
         "viewport": {"calls": 720, "time_min": 6},
         "country_filter": {"calls": 195, "time_min": 2},
@@ -291,12 +207,8 @@ def get_scraping_estimates(locator_type: str, region: str = "world") -> Dict[str
     return estimates.get(locator_type, {"calls": "unknown", "time_min": "unknown"})
 
 
-# =============================================================================
-# PRETTY PRINTING
-# =============================================================================
-
 def print_analysis(analysis: Dict[str, Any]):
-    """Pretty print the analysis results"""
+    """Print analysis results."""
     print("=" * 80)
     print("🔍 STORE LOCATOR TYPE DETECTION & EXPANSION ANALYSIS")
     print("=" * 80)
@@ -318,8 +230,6 @@ def print_analysis(analysis: Dict[str, Any]):
     if analysis.get("matched_indicators"):
         print(f"🔑 Matched Indicators: {', '.join(analysis['matched_indicators'])}")
         print()
-    
-    # CRITICAL QUESTION: Is this region-specific?
     print("=" * 80)
     if analysis["is_region_specific"]:
         print("⚠️  REGION-SPECIFIC ENDPOINT DETECTED")
@@ -349,8 +259,6 @@ def print_analysis(analysis: Dict[str, Any]):
         print("   This endpoint returns ALL stores in ONE API call.")
         print("   No expansion needed!")
         print()
-    
-    # Response analysis
     if "returned_count" in analysis:
         print("📦 SAMPLE RESPONSE ANALYSIS:")
         print(f"   Stores in sample: {analysis['returned_count']}")
@@ -364,8 +272,6 @@ def print_analysis(analysis: Dict[str, Any]):
             if analysis.get("total_count"):
                 print(f"   Total count: {analysis['total_count']}")
         print()
-    
-    # Recommendations
     print("=" * 80)
     print("💡 RECOMMENDATIONS:")
     print("=" * 80)
@@ -396,10 +302,6 @@ def print_analysis(analysis: Dict[str, Any]):
     print()
     print("=" * 80)
 
-
-# =============================================================================
-# CLI
-# =============================================================================
 
 def main():
     import argparse

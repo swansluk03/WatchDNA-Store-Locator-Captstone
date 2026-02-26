@@ -3,9 +3,14 @@
 CSV Validator for WatchDNA Store Locator
 Validates CSV files for header correctness and row-level data quality.
 
+Two entry points:
+  - validate_csv(path): Lightweight boolean check for programmatic use. Returns True/False.
+  - CSVValidator: Full validation with auto-fix, duplicate detection, and detailed reports.
+    Use validate_file() for file validation, or --check-urls for HTTP URL verification.
+
 Can be used as:
   1. CLI tool: python validate_csv.py locations.csv
-  2. Module: from validate_csv import validate_csv
+  2. Module: from validate_csv import validate_csv, CSVValidator, DEFAULT_REQUIRED
 """
 
 import csv
@@ -18,6 +23,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Tuple, Set, Any, Optional
 from collections import defaultdict
+from urllib.parse import urlparse
 
 # Handle Windows console encoding
 if sys.platform == 'win32':
@@ -119,13 +125,15 @@ class CSVValidator:
                  fail_duplicates: bool = False,
                  show_bad: bool = False,
                  limit: Optional[int] = None,
-                 max_rows: Optional[int] = MAX_ROWS_WARNING):
+                 max_rows: Optional[int] = MAX_ROWS_WARNING,
+                 check_urls: bool = False):
         self.required_headers = required_headers
         self.warn_duplicates = warn_duplicates
         self.fail_duplicates = fail_duplicates
         self.show_bad = show_bad
         self.limit = limit
         self.max_rows = max_rows
+        self.check_urls = check_urls  # If True, validate URLs via HTTP requests
 
         self.errors: List[ValidationError] = []
         self.warnings: List[ValidationWarning] = []
@@ -203,6 +211,43 @@ class CSVValidator:
                     f"Row {row_num}: {field} has {decimals} decimal places (>{COORDINATE_PRECISION_WARNING})",
                     {"row": row_num, "field": field, "decimals": decimals}
                 ))
+
+    def validate_url(self, value: str, field: str, row_num: int, check_http: bool = False) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Validate a URL value.
+        Converts relative Omega store detail URLs to full URLs.
+        Optionally checks if URL is accessible via HTTP.
+        Returns: (is_valid, normalized_url, error_message)
+        """
+        if not value or value.strip() == "":
+            return True, "", None  # Empty URLs are valid (optional field)
+        url_str = str(value).strip()
+        url_str = url_str.replace('\\/', '/').replace('\\', '/')
+        omega_store_pattern = r'(?:^|/|https?://)(?:store[/\\]storedetails[/\\])(\d+[^/]*)/?$'
+        omega_match = re.search(omega_store_pattern, url_str, re.IGNORECASE)
+        if omega_match:
+            store_id = omega_match.group(1)
+            url_str = f"https://www.omegawatches.com/en-us/store/storedetails/{store_id}"
+        if url_str and not urlparse(url_str).scheme:
+            url_str = f"https://{url_str}"
+        parsed = urlparse(url_str)
+        if not (parsed.scheme and parsed.netloc):
+            return False, None, "invalid_format"
+        if check_http:
+            try:
+                import requests
+                response = requests.head(url_str, timeout=5, allow_redirects=True)
+                if response.status_code >= 400:
+                    response = requests.get(url_str, timeout=5, allow_redirects=True, stream=True)
+                    if response.status_code >= 400:
+                        return False, url_str, f"http_error_{response.status_code}"
+            except requests.exceptions.Timeout:
+                return False, url_str, "timeout"
+            except requests.exceptions.RequestException:
+                return False, url_str, "connection_error"
+            except Exception:
+                pass
+        return True, url_str, None
 
     def fix_data_quality(self, value: str, field: str) -> str:
         """
@@ -356,6 +401,44 @@ class CSVValidator:
         elif lon_value is not None:
             self.check_coordinate_precision(lon_value, "Longitude", row_num)
 
+        # Validate Website URL (if present)
+        website = row.get("Website", "").strip()
+        if website:
+            url_valid, normalized_url, url_error = self.validate_url(
+                website, "Website", row_num, check_http=self.check_urls
+            )
+            if not url_valid:
+                self.errors.append(ValidationError(
+                    row_num, "Website", url_error or "invalid_url", website
+                ))
+                has_errors = True
+            elif normalized_url and normalized_url != website:
+                row["Website"] = normalized_url
+                self.warnings.append(ValidationWarning(
+                    "url_normalized",
+                    f"Row {row_num}: Website URL normalized: {website} -> {normalized_url}",
+                    {"row": row_num, "field": "Website", "original": website, "normalized": normalized_url}
+                ))
+
+        # Validate Image URL (if present)
+        image_url = row.get("Image URL", "").strip()
+        if image_url:
+            url_valid, normalized_url, url_error = self.validate_url(
+                image_url, "Image URL", row_num, check_http=self.check_urls
+            )
+            if not url_valid:
+                self.errors.append(ValidationError(
+                    row_num, "Image URL", url_error or "invalid_url", image_url
+                ))
+                has_errors = True
+            elif normalized_url and normalized_url != image_url:
+                row["Image URL"] = normalized_url
+                self.warnings.append(ValidationWarning(
+                    "url_normalized",
+                    f"Row {row_num}: Image URL normalized: {image_url} -> {normalized_url}",
+                    {"row": row_num, "field": "Image URL", "original": image_url, "normalized": normalized_url}
+                ))
+
         # Check data quality issues (warnings, not errors)
         # Note: auto_fix is handled at the file level, not row level
         self.check_data_quality(row, row_num, auto_fix=False)
@@ -476,6 +559,17 @@ class CSVValidator:
                             if fixed != original:
                                 row[field] = fixed
                                 fixes_count += 1
+                    # Also normalize URLs (Website and Image URL)
+                    for url_field in ["Website", "Image URL"]:
+                        if url_field in headers and url_field in row:
+                            url_value = row[url_field].strip()
+                            if url_value:
+                                url_valid, normalized_url, _ = self.validate_url(
+                                    url_value, url_field, 0, check_http=False
+                                )
+                                if normalized_url and normalized_url != url_value:
+                                    row[url_field] = normalized_url
+                                    fixes_count += 1
             
             # Write fixed data back
             with open(output_path, 'w', newline='', encoding='utf-8') as f:
@@ -561,6 +655,17 @@ class CSVValidator:
                                 if fixed != original:
                                     row[field] = fixed
                                     fixes_count += 1
+                        # Also normalize URLs (Website and Image URL)
+                        for url_field in ["Website", "Image URL"]:
+                            if url_field in reader.fieldnames and url_field in row:
+                                url_value = row[url_field].strip()
+                                if url_value:
+                                    url_valid, normalized_url, _ = self.validate_url(
+                                        url_value, url_field, 0, check_http=False
+                                    )
+                                    if normalized_url and normalized_url != url_value:
+                                        row[url_field] = normalized_url
+                                        fixes_count += 1
                     
                     if fixes_count > 0:
                         # Write fixed data back to file
@@ -702,9 +807,7 @@ class CSVValidator:
         }
 
 
-# ==============================================================================
 # SIMPLE VALIDATE_CSV FUNCTION (for module imports from dynamic_scraper.py)
-# ==============================================================================
 
 def validate_csv(path="locations.csv"):
     """
@@ -773,9 +876,7 @@ def validate_csv(path="locations.csv"):
         return False
 
 
-# ==============================================================================
 # CLI ARGUMENT PARSING
-# ==============================================================================
 
 def parse_args():
     """Parse command line arguments"""
@@ -900,6 +1001,14 @@ Examples:
         help="Automatically fix data quality issues (backslashes, control characters, etc.)"
     )
 
+    parser.add_argument(
+        "--check-urls",
+        dest="check_urls",
+        action="store_true",
+        default=False,
+        help="Validate URLs by making HTTP requests (slower but more thorough)"
+    )
+
     return parser.parse_args()
 
 
@@ -953,7 +1062,8 @@ def batch_validate(directory: str, args):
             fail_duplicates=args.fail_duplicates,
             show_bad=False,  # Don't show full rows in batch mode
             limit=args.limit,
-            max_rows=args.max_rows
+            max_rows=args.max_rows,
+            check_urls=args.check_urls
         )
         
         # Validate
@@ -1046,7 +1156,8 @@ def main():
         fail_duplicates=args.fail_duplicates,
         show_bad=args.show_bad,
         limit=args.limit,
-        max_rows=args.max_rows
+        max_rows=args.max_rows,
+        check_urls=args.check_urls
     )
 
     # Validate file (with auto-fix if requested)
@@ -1076,7 +1187,8 @@ def main():
                 fail_duplicates=args.fail_duplicates,
                 show_bad=args.show_bad,
                 limit=args.limit,
-                max_rows=args.max_rows
+                max_rows=args.max_rows,
+                check_urls=args.check_urls
             )
             exit_code = validator.validate_file(args.file)
         else:

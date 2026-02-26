@@ -1,40 +1,36 @@
 #!/usr/bin/env python3
-"""
-Endpoint Verifier
-=================
-
-Lightweight verification of discovered endpoints using existing scraping methods.
-Efficiently tests endpoints to get store counts and verify they work without full scraping.
-"""
+"""Verifies discovered endpoints using existing scraping methods."""
 
 import sys
 import os
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlparse, parse_qs
 
-# Add parent directory to path to import existing scraping methods
-# This ensures we can import from the Data_Scrappers directory
+DISCOVERY_SAMPLE_LIMIT = 15
+
+
+def _url_with_sample_limit(url: str, limit: int = DISCOVERY_SAMPLE_LIMIT) -> str:
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    limit_params = ['limit', 'per', 'per_page', 'take', 'page_size']
+    if any(p.lower() in [k.lower() for k in params.keys()] for p in limit_params):
+        return url
+    sep = '&' if parsed.query else '?'
+    return f"{url}{sep}limit={limit}"
+
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 _parent_dir = os.path.dirname(_current_dir)
-# Make sure parent directory is in path (check both at start and end to handle different import scenarios)
-if _parent_dir not in sys.path:
-    sys.path.insert(0, _parent_dir)
-# Also ensure current directory is in path (for local imports)
+_data_scrappers_dir = os.path.join(_parent_dir, 'Data_Scrappers')
+if _data_scrappers_dir not in sys.path:
+    sys.path.insert(0, _data_scrappers_dir)
 if _current_dir not in sys.path:
     sys.path.insert(0, _current_dir)
 
-# Import core scraping methods (required)
-# NOTE: universal_scraper imports detect_data_pattern from pattern_detector
-# If local PatternDetector is already loaded, we need to handle this conflict
 try:
-    # Temporarily remove pattern_detector from cache if it's the local one
-    # This allows universal_scraper to import from parent pattern_detector
     cached_pattern = None
     if 'pattern_detector' in sys.modules:
-        # Check if it's the local one (has PatternDetector class but no detect_data_pattern function)
         pattern_mod = sys.modules['pattern_detector']
         if hasattr(pattern_mod, 'PatternDetector') and not hasattr(pattern_mod, 'detect_data_pattern'):
-            # It's the local one - temporarily remove it so universal_scraper can import parent
             cached_pattern = sys.modules.pop('pattern_detector')
     
     try:
@@ -43,7 +39,6 @@ try:
         SCRAPING_METHODS_AVAILABLE = True
         import_error_msg = None
     finally:
-        # Restore cached local pattern_detector if we removed it
         if cached_pattern:
             sys.modules['pattern_detector'] = cached_pattern
 except ImportError as e:
@@ -57,18 +52,13 @@ except ImportError as e:
     detect_locator_type = None
     import_error_msg = f"Import failed: {_import_error}"
 
-# Try importing detect_data_pattern from parent pattern_detector (optional)
-# (endpoint_discoverer has its own PatternDetector class, but we need the function)
-# This is optional - verification works without it
-# NOTE: We skip this if pattern_detector is already loaded (to avoid conflicts)
+
 detect_data_pattern = None
 if SCRAPING_METHODS_AVAILABLE and 'pattern_detector' not in sys.modules:
-    # Only try to import if pattern_detector hasn't been loaded yet
-    # If it's already loaded, it's the local one and we can't get detect_data_pattern
     try:
         # Import from parent directory before local one gets loaded
         import importlib.util
-        parent_pattern_detector_path = os.path.join(_parent_dir, 'pattern_detector.py')
+        parent_pattern_detector_path = os.path.join(_data_scrappers_dir, 'pattern_detector.py')
         if os.path.exists(parent_pattern_detector_path):
             spec = importlib.util.spec_from_file_location("parent_pattern_detector_module", parent_pattern_detector_path)
             parent_pattern_module = importlib.util.module_from_spec(spec)
@@ -374,9 +364,27 @@ class EndpointVerifier:
             return result
         
         try:
-            # Step 1: Fetch sample data (lightweight - single request)
+            # Step 1: Fetch sample data. Try limited URL first to avoid 1600+ store downloads.
+            sample_data = None
             try:
-                sample_data = fetch_data(url, headers=custom_headers, timeout=timeout)
+                limited_url = _url_with_sample_limit(url)
+                if limited_url != url:
+                    try:
+                        sample_data = fetch_data(limited_url, headers=custom_headers, timeout=min(timeout, 15))
+                        # Verify we got stores (limit param may not be supported)
+                        if isinstance(sample_data, (list, dict)):
+                            stores_check = sample_data if isinstance(sample_data, list) else None
+                            if not stores_check and isinstance(sample_data, dict):
+                                for key in ["entities", "data", "results", "stores", "locations"]:
+                                    if key in sample_data and isinstance(sample_data[key], list):
+                                        stores_check = sample_data[key]
+                                        break
+                            if not stores_check or len(stores_check) == 0:
+                                sample_data = None  # Limit returned empty, retry full URL
+                    except Exception:
+                        sample_data = None
+                if sample_data is None:
+                    sample_data = fetch_data(url, headers=custom_headers, timeout=timeout)
             except Exception as e:
                 result['error'] = f"Failed to fetch: {str(e)[:200]}"
                 result['verification_time'] = time.time() - start_time

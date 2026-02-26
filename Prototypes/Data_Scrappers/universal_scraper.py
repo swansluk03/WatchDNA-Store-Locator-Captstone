@@ -19,27 +19,39 @@ import sys
 import os
 import time
 import json
-from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
+from urllib.parse import urlparse
 
-# Debug logging helper
-def log_debug(message: str, level: str = "INFO"):
-    """Print timestamped debug message"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    prefix = {
-        "INFO": "ℹ️ ",
-        "SUCCESS": "✅",
-        "ERROR": "❌",
-        "WARN": "⚠️ ",
-        "DEBUG": "🔍"
-    }.get(level, "  ")
-    print(f"[{timestamp}] {prefix} {message}", flush=True)
+from scraper_utils import log_debug
+
+# Request/retry constants
+DEFAULT_REQUEST_TIMEOUT = 120
+DEFAULT_RETRIES = 3
+DEFAULT_BACKOFF_FACTOR = 2
+DEFAULT_VIEWPORT_GRID_SIZE = 20
+DEFAULT_DELAY_BETWEEN_REQUESTS = 0.5
 
 # Add paths
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools"))
 
 from locator_type_detector import detect_locator_type
+
+
+def _print_technique_comparison(technique_metrics: Dict[str, Any]) -> None:
+    """Print comparison table of extraction technique results."""
+    print("\n📊 EXTRACTION TECHNIQUE COMPARISON")
+    print("=" * 60)
+    for name, m in technique_metrics.items():
+        total = m.get("total", 0)
+        score = m.get("completeness_score", 0)
+        pcts = m.get("pcts", {})
+        print(f"\n  {name}:")
+        print(f"    Stores: {total}  |  Completeness: {score}%")
+        if pcts:
+            parts = [f"{k.replace('_pct','')}:{v}%" for k, v in list(pcts.items())[:6]]
+            print(f"    Fields: {', '.join(parts)}")
+    print("=" * 60)
 
 
 def _collect_data_quality_warnings(stores: List[Dict[str, Any]]) -> List[str]:
@@ -66,10 +78,16 @@ def _collect_data_quality_warnings(stores: List[Dict[str, Any]]) -> List[str]:
     return warnings
 from pattern_detector import detect_data_pattern
 from data_normalizer import batch_normalize, write_normalized_csv
-from validate_csv import validate_csv, CSVValidator, DEFAULT_REQUIRED
+from validate_csv import CSVValidator, DEFAULT_REQUIRED
+from extraction_techniques import (
+    extract_stores_from_html_generic,
+    enrich_stores_from_detail_pages,
+    compute_extraction_metrics,
+    run_extraction_with_techniques,
+)
 
 
-def fetch_data(url: str, headers: Dict = None, timeout: int = 120, retries: int = 3) -> Any:
+def fetch_data(url: str, headers: Optional[Dict] = None, timeout: int = DEFAULT_REQUEST_TIMEOUT, retries: int = DEFAULT_RETRIES) -> Any:
     """
     Fetch data from URL with retry logic and configurable timeout
     
@@ -104,7 +122,7 @@ def fetch_data(url: str, headers: Dict = None, timeout: int = 120, retries: int 
     # Configure retry strategy
     retry_strategy = Retry(
         total=retries,
-        backoff_factor=2,  # Wait 2, 4, 8 seconds between retries
+        backoff_factor=DEFAULT_BACKOFF_FACTOR,
         status_forcelist=[429, 500, 502, 503, 504],  # Retry on these status codes
         allowed_methods=["GET", "HEAD"]  # Only retry safe methods
     )
@@ -132,7 +150,12 @@ def fetch_data(url: str, headers: Dict = None, timeout: int = 120, retries: int 
                 data = response.json()
                 log_debug(f"Response type: JSON | Top-level keys: {list(data.keys()) if isinstance(data, dict) else 'array'}", "DEBUG")
                 return data
-            except:
+            except (ValueError, json.JSONDecodeError):
+                # Try JSONP (e.g. callback([...]) or SMcallback2([...]))
+                data = _parse_jsonp(response.text)
+                if data is not None:
+                    log_debug(f"Response type: JSONP | Parsed successfully", "DEBUG")
+                    return data
                 log_debug(f"Response type: HTML/Text | Length: {len(response.text)} chars", "DEBUG")
                 return response.text
                 
@@ -156,6 +179,136 @@ def fetch_data(url: str, headers: Dict = None, timeout: int = 120, retries: int 
     if last_error:
         raise last_error
     raise Exception("Failed to fetch data after all retries")
+
+
+def _parse_jsonp(text: str):
+    """
+    Parse JSONP response (e.g. callback([...]) or SMcallback2([...])).
+    Returns parsed JSON or None if not valid JSONP.
+    """
+    text = text.strip()
+    start = text.find('(')
+    if start == -1:
+        return None
+    i = start + 1
+    depth = 1
+    in_string = False
+    escape = False
+    quote_char = None
+    while i < len(text):
+        c = text[i]
+        if escape:
+            escape = False
+            i += 1
+            continue
+        if in_string:
+            if c == '\\':
+                escape = True
+            elif c == quote_char:
+                in_string = False
+            i += 1
+            continue
+        if c in '"\'':
+            in_string = True
+            quote_char = c
+            i += 1
+            continue
+        if c == '(':
+            depth += 1
+        elif c == ')':
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start + 1:i])
+                except json.JSONDecodeError:
+                    return None
+        i += 1
+    return None
+
+
+def _extract_stores_from_html_cards(soup) -> List[Dict]:
+    """
+    Generic fallback: extract store/retailer cards from HTML when no API or JSON found.
+    Tries multiple patterns to find containers with: heading (name) + address block + optional maps link.
+    Works with various page structures (Tailwind, Bootstrap, custom CSS, etc.).
+    """
+    import re
+    stores = []
+
+    def _parse_card(card) -> Optional[Dict]:
+        """Parse a single card element into a store dict, or None if invalid."""
+        # Name: from h2, h3, or h4 (first one found)
+        heading = card.find(['h2', 'h3', 'h4'])
+        if not heading:
+            return None
+        name = heading.get_text(strip=True)
+        if not name or len(name) < 2 or len(name) > 120:
+            return None
+        store = {'Name': name}
+        # Address block: p tags (common pattern)
+        ps = card.find_all('p')
+        if len(ps) >= 1:
+            store['Address Line 1'] = ps[0].get_text(strip=True)
+        if len(ps) >= 2:
+            city_state_zip = ps[1].get_text(strip=True)
+            store['City'] = city_state_zip.split(',')[0].strip() if ',' in city_state_zip else city_state_zip
+            parts = re.split(r',\s*', city_state_zip, 2)
+            if len(parts) >= 2:
+                store['State/Province/Region'] = re.sub(r'\s*\d{4,6}(?:-\d{4})?\s*$', '', parts[1]).strip()
+            zip_match = re.search(r'\b(\d{4,6}(?:-\d{4})?)\b', city_state_zip)
+            if zip_match:
+                store['Postal/ZIP Code'] = zip_match.group(1)
+        if len(ps) >= 3:
+            store['Country'] = ps[2].get_text(strip=True)
+        # Coords: Google Maps destination=lat,lng (or maps.google.com, openstreetmap, etc.)
+        for link in card.find_all('a', href=True):
+            href = link.get('href', '')
+            m = re.search(r'destination=([-\d.]+),([-\d.]+)', href)
+            if not m:
+                m = re.search(r'@([-\d.]+),([-\d.]+)', href)  # Google Maps @lat,lng
+            if not m:
+                m = re.search(r'!3d([-\d.]+)!4d([-\d.]+)', href)  # Google Maps embed
+            if m:
+                store['Latitude'] = m.group(1)
+                store['Longitude'] = m.group(2)
+                break
+        if store.get('Name'):
+            return store
+        return None
+
+    # Strategy 1: Card-like containers (common class patterns)
+    card_patterns = [
+        lambda c: c and 'group' in str(c) and 'cursor-pointer' in str(c),
+        lambda c: c and ('card' in str(c) or 'store-card' in str(c) or 'retailer' in str(c)),
+        lambda c: c and ('border' in str(c) or 'rounded') and ('p-4' in str(c) or 'p-5' in str(c) or 'padding' in str(c)),
+        lambda c: c and 'location' in str(c).lower() and ('item' in str(c) or 'card' in str(c)),
+    ]
+    for pattern in card_patterns:
+        cards = soup.find_all('div', class_=pattern)
+        for card in cards:
+            s = _parse_card(card)
+            if s:
+                stores.append(s)
+        if len(stores) >= 2:  # Need at least 2 to confirm we found a list
+            return stores
+        stores.clear()
+
+    # Strategy 2: Broader search - containers with heading + address-like content
+    addr_hint = re.compile(r'\d|street|st\.|ave|road|rd\.|boulevard|blvd|suite|floor|no\.|n°', re.I)
+    seen = set()
+    for elem in soup.find_all(['div', 'section', 'article']):
+        s = _parse_card(elem)
+        if s and (s.get('Address Line 1') or s.get('City')):
+            text = elem.get_text()
+            if addr_hint.search(text) or s.get('Postal/ZIP Code'):
+                key = (s.get('Name', ''), s.get('Address Line 1', ''))
+                if key not in seen:
+                    seen.add(key)
+                    stores.append(s)
+    if len(stores) >= 2:
+        return stores
+
+    return stores
 
 
 def extract_stores_from_html_js(html_content: str) -> List[Dict]:
@@ -297,9 +450,14 @@ def extract_stores_from_html_js(html_content: str) -> List[Dict]:
                 except (json.JSONDecodeError, AttributeError, KeyError) as e:
                     continue
             
-            # Method 3: If still no stores, try parsing structured HTML (fallback)
+            # Method 3: Generic HTML fallback - parse store/retailer cards from any page structure
             if not stores:
-                # Look for headings with boutique/store names
+                stores = _extract_stores_from_html_cards(soup)
+                if stores:
+                    log_debug(f"Extracted {len(stores)} stores from HTML cards (generic fallback)", "SUCCESS")
+
+            # Method 4: Look for headings with boutique/store names (Blancpain-style)
+            if not stores:
                 headings = soup.find_all(['h2', 'h3'], string=re.compile(r'Boutique|Store|Retailer', re.I))
                 
                 for heading in headings:
@@ -375,24 +533,25 @@ def extract_stores_from_html_js(html_content: str) -> List[Dict]:
     return stores
 
 
-def scrape_single_call(url: str, custom_headers: Dict = None) -> List[Dict]:
+def scrape_single_call(
+    url: str,
+    custom_headers: Optional[Dict] = None,
+    compare_techniques: bool = False,
+) -> Tuple[List[Dict], Optional[Dict[str, Any]]]:
     """Scrape from single endpoint - handles both JSON and HTML"""
     print("📡 Fetching stores...")
     log_debug("Starting single-call scrape strategy", "DEBUG")
-    
+
     data = fetch_data(url, headers=custom_headers)
-    
+
     # Try JSON first
     if isinstance(data, (list, dict)):
         if isinstance(data, list):
             log_debug(f"Data is array | Length: {len(data)}", "DEBUG")
-            return data
-        
-        # Find data array in dict (support nested paths like response.entities)
+            return data, None
+
         log_debug(f"Data is object | Searching for store array in keys: {list(data.keys())}", "DEBUG")
-        
-        # Try nested paths first (e.g., response.entities)
-        nested_paths = ["response.entities", "response.data", "response.results", 
+        nested_paths = ["response.entities", "response.data", "response.results",
                        "response.stores", "data.stores", "data.results"]
         for path in nested_paths:
             keys = path.split('.')
@@ -405,23 +564,41 @@ def scrape_single_call(url: str, custom_headers: Dict = None) -> List[Dict]:
             else:
                 if isinstance(value, list):
                     log_debug(f"Found stores array in nested path '{path}' | Length: {len(value)}", "SUCCESS")
-                    return value
-        
-        # Try direct keys
+                    return value, None
+
         for key in ["entities", "data", "results", "items", "stores", "locations", "dealers", "retailers"]:
             if key in data and isinstance(data[key], list):
                 log_debug(f"Found stores array in key '{key}' | Length: {len(data[key])}", "SUCCESS")
-                return data[key]
-        
+                return data[key], None
+
         log_debug("No stores array found in standard keys", "WARN")
-        return []
-    
-    # Try HTML with JS
+        return [], None
+
+    # HTML with JS - use multi-technique or single
     log_debug("Attempting HTML/JavaScript extraction", "DEBUG")
-    return extract_stores_from_html_js(data)
+    if compare_techniques:
+        def _fetch(u):
+            r = fetch_data(u, headers=custom_headers)
+            return r if isinstance(r, str) else ""
+        stores, metrics = run_extraction_with_techniques(
+            data,
+            extract_html_fn=extract_stores_from_html_js,
+            fetch_fn=_fetch,
+            is_html=True,
+        )
+        _print_technique_comparison(metrics)
+        return stores, metrics
+    # Default: try original, then generic if few stores
+    stores = extract_stores_from_html_js(data)
+    if len(stores) < 5:
+        generic = extract_stores_from_html_generic(data)
+        if len(generic) > len(stores):
+            log_debug(f"Generic extraction found more stores ({len(generic)} vs {len(stores)})", "SUCCESS")
+            stores = generic
+    return stores, None
 
 
-def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", custom_headers: Dict = None) -> List[Dict]:
+def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", custom_headers: Optional[Dict] = None) -> List[Dict]:
     """Expand radius-based API using multiple center points worldwide"""
     import requests
     
@@ -663,11 +840,10 @@ def scrape_viewport_expansion(url: str, url_params: Dict, region: str = "world")
                         if k not in ["northEastLat", "northEastLng", "southWestLat", "southWestLng", "lat", "lng"]}
     
     # Use larger grid size to reduce API calls and focus on land areas
-    # 20 degrees = ~180 viewports (much faster than 10 degrees = 648 viewports)
-    grid_size = 20
+    grid_size = DEFAULT_VIEWPORT_GRID_SIZE
     grid_type = "world" if region == "world" else "focused"
     focus_region = None if region == "world" else get_region_preset(region)
-    
+
     stores = scrape_viewport_api(
         base_url=url.split('?')[0],
         viewport_params=viewport_params,
@@ -675,7 +851,7 @@ def scrape_viewport_expansion(url: str, url_params: Dict, region: str = "world")
         grid_size=grid_size,
         data_path="",
         additional_params=additional_params,
-        delay_between_requests=0.5,
+        delay_between_requests=DEFAULT_DELAY_BETWEEN_REQUESTS,
         focus_region=focus_region
     )
     
@@ -693,7 +869,7 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
         try:
             with open(watch_countries_file, 'r') as f:
                 watch_countries_data = json.load(f)
-        except:
+        except (OSError, json.JSONDecodeError):
             pass
     
     # Priority: custom countries > watch_store_countries > fallback
@@ -743,6 +919,13 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
             qp_param = key
     if not country_param:
         country_param = "country"
+
+    # OpenCart/other APIs use numeric country_id - map ISO codes via country_id_map
+    country_id_map = brand_config.get("country_id_map", {}) if brand_config else {}
+    if country_id_map and country_param and "country_id" in country_param.lower():
+        countries_list = [c for c in countries_list if c in country_id_map]
+        country_names = {c: country_names.get(c, c) for c in countries_list}
+        print(f"   Using country_id_map: {len(countries_list)} countries (ISO->numeric)")
     
     # Check if pagination is needed (has offset or per parameter)
     has_pagination = "offset" in url_params or "per" in url_params or "per_page" in url_params
@@ -753,7 +936,8 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
     
     for i, country_code in enumerate(countries_list, 1):
         country_name = country_names.get(country_code, country_code)
-        
+        param_value = country_id_map.get(country_code, country_code) if country_id_map else country_code
+
         # Handle pagination for this country
         if has_pagination:
             offset = 0
@@ -761,7 +945,7 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
             
             while True:
                 params = url_params.copy()
-                params[country_param] = country_code
+                params[country_param] = param_value
                 if qp_param:
                     params[qp_param] = country_name
                 if "offset" in url_params:
@@ -848,7 +1032,7 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
         else:
             # No pagination - single request per country
             params = url_params.copy()
-            params[country_param] = country_code
+            params[country_param] = param_value
             if qp_param:
                 params[qp_param] = country_name
             
@@ -901,7 +1085,7 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
     return all_stores
 
 
-def scrape_paginated(url: str, url_params: Dict, is_token_based: bool = False, custom_headers: Dict = None) -> List[Dict]:
+def scrape_paginated(url: str, url_params: Dict, is_token_based: bool = False, custom_headers: Optional[Dict] = None) -> List[Dict]:
     """Expand paginated API by following all pages (supports both page numbers, tokens, and offset)"""
     import requests
     
@@ -1100,7 +1284,8 @@ def universal_scrape(
     region: str = "world",
     force_type: Optional[str] = None,
     validate_output: bool = True,
-    brand_config: Optional[Dict] = None
+    brand_config: Optional[Dict] = None,
+    compare_techniques: bool = False,
 ) -> Dict[str, Any]:
     """
     Universal scraper - auto-detects and handles everything
@@ -1123,7 +1308,8 @@ def universal_scrape(
         "expansion_used": False,
         "stores_found": 0,
         "stores_normalized": 0,
-        "output_file": output_file
+        "output_file": output_file,
+        "technique_metrics": None,  # Populated when compare_techniques=True
     }
     
     print("=" * 80)
@@ -1153,14 +1339,16 @@ def universal_scrape(
     
     # Detect locator type
     log_debug("Running locator type detection...", "DEBUG")
+    locator_analysis = detect_locator_type(url, sample_data)
     if not force_type:
-        locator_analysis = detect_locator_type(url, sample_data)
         detected_type = locator_analysis["detected_type"]
         is_region_specific = locator_analysis["is_region_specific"]
         log_debug(f"Detected type: {detected_type} | Region-specific: {is_region_specific}", "DEBUG")
     else:
         detected_type = force_type
         is_region_specific = force_type in ["viewport", "country_filter", "radius_search"]
+        locator_analysis["detected_type"] = detected_type
+        locator_analysis["is_region_specific"] = is_region_specific
         log_debug(f"Forced type: {detected_type} | Region-specific: {is_region_specific}", "DEBUG")
     
     results["detected_type"] = detected_type
@@ -1284,21 +1472,21 @@ def universal_scrape(
         elif not is_region_specific or detected_type == "single_call":
             # Single call
             log_debug("Strategy: Single API call", "INFO")
-            # Check if custom headers are needed
             custom_headers = None
             if "bellross.com" in url or "stores.bellross.com" in url:
                 custom_headers = {"Accept": "application/json"}
-            stores = scrape_single_call(url, custom_headers=custom_headers)
+            stores, tech_metrics = scrape_single_call(url, custom_headers=custom_headers, compare_techniques=compare_techniques)
+            results["technique_metrics"] = tech_metrics
             results["expansion_used"] = False
-        
+
         else:
             # Default to single call
             log_debug("Strategy: Default single call", "INFO")
-            # Check if custom headers are needed
             custom_headers = None
             if "bellross.com" in url or "stores.bellross.com" in url:
                 custom_headers = {"Accept": "application/json"}
-            stores = scrape_single_call(url, custom_headers=custom_headers)
+            stores, tech_metrics = scrape_single_call(url, custom_headers=custom_headers, compare_techniques=compare_techniques)
+            results["technique_metrics"] = tech_metrics
             results["expansion_used"] = False
         
         scrape_time = time.time() - scrape_start
@@ -1326,6 +1514,13 @@ def universal_scrape(
     print(f"   Processing {len(stores)} raw store records...")
     log_debug(f"Input: {len(stores)} raw records", "DEBUG")
     log_debug(f"Field mapping rules: {len(field_mapping)} fields", "DEBUG")
+    
+    # Add base URL for resolving partial store URLs (e.g. Bulgari: en-us/storelocator/...)
+    parsed = urlparse(url)
+    base_url = f"{parsed.scheme}://{parsed.netloc}/" if parsed.scheme and parsed.netloc else None
+    if base_url:
+        field_mapping = dict(field_mapping)  # Copy so we don't mutate brand config
+        field_mapping["_base_url"] = base_url
     
     normalized = batch_normalize(stores, field_mapping)
     results["stores_normalized"] = len(normalized)
@@ -1496,7 +1691,8 @@ Auto-detects everything and uses the right strategy!
     parser.add_argument('--no-validate', action='store_true', help='Skip validation')
     parser.add_argument('--json-output', help='Also save results as JSON')
     parser.add_argument('--brand-config', help='Brand configuration JSON string (for field mapping)')
-    
+    parser.add_argument('--compare-techniques', action='store_true',
+                        help='Run multiple extraction techniques and compare data quality (HTML pages only)')
     args = parser.parse_args()
     
     # Parse brand config if provided
@@ -1515,7 +1711,8 @@ Auto-detects everything and uses the right strategy!
         region=args.region,
         force_type=args.type,
         validate_output=not args.no_validate,
-        brand_config=brand_config
+        brand_config=brand_config,
+        compare_techniques=args.compare_techniques,
     )
     
     # Summary

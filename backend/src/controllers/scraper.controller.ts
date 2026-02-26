@@ -4,8 +4,11 @@ import { scraperService } from '../services/scraper.service';
 import uploadService from '../services/upload.service';
 import fs from 'fs';
 import path from 'path';
+import Papa from 'papaparse';
 
 const prisma = new PrismaClient();
+
+const COORD_MATCH_TOLERANCE_METERS = 50;
 
 // Helper functions for brand config similarity detection
 function calculateSimilarity(str1: string, str2: string): number {
@@ -442,6 +445,129 @@ export const scraperController = {
     }
   },
 
+  // GET /api/scraper/jobs/:id/records - Get CSV records for a completed job
+  async getJobRecords(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+
+      const job = await prisma.scraperJob.findUnique({
+        where: { id },
+        include: { upload: true }
+      });
+
+      if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+
+      if (job.status !== 'completed') {
+        return res.status(400).json({ error: 'Only completed jobs have viewable records' });
+      }
+
+      if (!job.uploadId || !job.upload) {
+        return res.status(404).json({ error: 'No upload linked to this job' });
+      }
+
+      const filePath = await uploadService.getFilePath(job.upload.filename);
+      if (!filePath || !fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'Job CSV file not found' });
+      }
+
+      const fileContent = fs.readFileSync(filePath, 'utf-8');
+      const parseResult = Papa.parse(fileContent, {
+        header: true,
+        skipEmptyLines: true,
+        transformHeader: (h: string) => h.trim()
+      });
+
+      const rows = parseResult.data as Record<string, string>[];
+
+      res.json({
+        jobId: job.id,
+        brandName: job.brandName,
+        columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+        records: rows
+      });
+    } catch (error: any) {
+      console.error('Error fetching job records:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // PATCH /api/scraper/master-csv - Update rows in master CSV
+  async updateMasterCsvRows(req: Request, res: Response) {
+    try {
+      const { rows: updates } = req.body as { rows: Record<string, string>[] };
+
+      if (!Array.isArray(updates) || updates.length === 0) {
+        return res.status(400).json({ error: 'rows array with at least one record is required' });
+      }
+
+      const masterCsvPath = await uploadService.getMasterCSVPath();
+      if (!masterCsvPath || !fs.existsSync(masterCsvPath)) {
+        return res.status(404).json({ error: 'Master CSV not found' });
+      }
+
+      const fileContent = fs.readFileSync(masterCsvPath, 'utf-8');
+      const parseResult = Papa.parse(fileContent, {
+        header: true,
+        skipEmptyLines: true,
+        transformHeader: (h: string) => h.trim()
+      });
+
+      const masterRows = parseResult.data as Record<string, string>[];
+
+      let updatedCount = 0;
+
+      for (const update of updates) {
+        const handle = (update.Handle || update.handle || '').trim();
+        const latStr = (update.Latitude || '').trim();
+        const lonStr = (update.Longitude || '').trim();
+
+        const idx = masterRows.findIndex((r) => {
+          const rHandle = (r.Handle || '').trim();
+          if (handle && rHandle === handle) return true;
+          if (latStr && lonStr && r.Latitude && r.Longitude) {
+            const rLat = parseFloat(r.Latitude);
+            const rLon = parseFloat(r.Longitude);
+            const lat = parseFloat(latStr);
+            const lon = parseFloat(lonStr);
+            if (!isNaN(lat) && !isNaN(lon) && !isNaN(rLat) && !isNaN(rLon)) {
+              const dist = Math.hypot(
+                (lat - rLat) * 111320,  // rough meters per degree lat
+                (lon - rLon) * 111320 * Math.cos(lat * Math.PI / 180)
+              );
+              return dist <= COORD_MATCH_TOLERANCE_METERS;
+            }
+          }
+          return false;
+        });
+
+        if (idx >= 0) {
+          const schemaKeys = new Set(Object.keys(masterRows[0] || {}));
+          const readonlyColumns = new Set(['Handle']);
+          for (const [key, value] of Object.entries(update)) {
+            if (value !== undefined && schemaKeys.has(key) && !readonlyColumns.has(key)) {
+              masterRows[idx][key] = String(value).trim();
+            }
+          }
+          updatedCount++;
+        }
+      }
+
+      const csvContent = Papa.unparse(masterRows);
+      fs.writeFileSync(masterCsvPath, csvContent, 'utf-8');
+
+      res.json({
+        message: 'Master CSV updated successfully',
+        updatedCount,
+        totalRequested: updates.length
+      });
+    } catch (error: any) {
+      console.error('Error updating master CSV:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
   // POST /api/scraper/discover - Discover endpoints from store locator page
   async discoverEndpoints(req: Request, res: Response) {
     try {
@@ -466,7 +592,6 @@ export const scraperController = {
         '..',
         '..',
         'Prototypes',
-        'Data_Scrappers',
         'endpoint_discoverer',
         'endpoint_discoverer.py'
       );
@@ -583,15 +708,16 @@ export const scraperController = {
           }
         });
 
-        // Set timeout (2 minutes for discovery)
+        // Set timeout (5 minutes for discovery - some store locators load slowly)
+        const DISCOVERY_TIMEOUT_MS = 5 * 60 * 1000;
         const timeoutId = setTimeout(() => {
           if (!pythonProcess.killed && !responseSent) {
             pythonProcess.kill();
             sendResponse(500, {
-              error: 'Endpoint discovery timed out after 2 minutes'
+              error: 'Endpoint discovery timed out after 5 minutes'
             });
           }
-        }, 120000);
+        }, DISCOVERY_TIMEOUT_MS);
 
         pythonProcess.on('error', (error: Error) => {
           // Clear timeout when process fails to start

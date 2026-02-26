@@ -270,6 +270,32 @@
   max-height: 95vh;
 }
 
+/* Records modal: scroll happens inside table wrapper so sticky header works */
+.modal-records {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-records .modal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-records .records-hint {
+  flex-shrink: 0;
+}
+
+.modal-records .records-table-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  max-height: none;
+}
+
 .modal-header {
   display: flex;
   justify-content: space-between;
@@ -434,6 +460,144 @@
 .tab-button.active {
   color: #2563eb;
   border-bottom-color: #2563eb;
+}
+
+/* Job Records Edit Table */
+.records-hint {
+  margin-bottom: 1rem;
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+.records-view-toggle {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.records-view-btn {
+  padding: 0.5rem 1rem;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: #6b7280;
+  transition: all 0.2s;
+}
+
+.records-view-btn:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+  color: #374151;
+}
+
+.records-view-btn.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.record-warning-col {
+  width: 2rem;
+  min-width: 2rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.record-warning-header {
+  font-size: 0.9rem;
+  opacity: 0.6;
+}
+
+.record-warning-icon {
+  display: inline-block;
+  color: #d97706;
+  font-size: 1rem;
+  cursor: help;
+}
+
+.record-warning-empty {
+  display: inline-block;
+  width: 1rem;
+}
+
+.records-edit-table tbody tr.row-incomplete {
+  background: #fffbeb;
+}
+
+.records-edit-table tbody tr.row-incomplete:hover {
+  background: #fef3c7;
+}
+
+.records-edit-table tbody tr.row-incomplete.row-edited {
+  background: #fef3c7;
+}
+
+.records-empty-state {
+  padding: 2rem;
+  text-align: center;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.records-table-wrapper {
+  overflow: auto;
+  max-height: 60vh;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+/* Sticky header: each th stays above its column when scrolling */
+.records-edit-table .record-header-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f3f4f6;
+  box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.06);
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.records-edit-table {
+  min-width: max-content;
+  width: 100%;
+}
+
+.records-edit-table th {
+  background: #f3f4f6;
+  white-space: nowrap;
+}
+
+.records-edit-table .record-cell-readonly {
+  display: block;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  color: #6b7280;
+  background: #f9fafb;
+  border-radius: 4px;
+}
+
+.records-edit-table .record-cell-input {
+  width: 100%;
+  min-width: 100px;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.records-edit-table .record-cell-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.records-edit-table tbody tr.row-edited {
+  background: #fef3c7;
+}
+
+.records-edit-table tbody tr.row-edited:hover {
+  background: #fde68a;
 }
 
 /* Responsive */

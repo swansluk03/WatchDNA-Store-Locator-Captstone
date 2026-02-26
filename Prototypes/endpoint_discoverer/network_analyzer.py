@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""
-Network Request Analyzer
-========================
-
-Analyzes network requests captured from browser to identify store locator API endpoints.
-"""
+"""Analyzes network requests to identify store locator API endpoints."""
 
 import json
 import re
@@ -12,17 +7,25 @@ from typing import Dict, List, Optional, Any
 from urllib.parse import urlparse, parse_qs, urljoin, urlencode
 import requests
 
+DISCOVERY_SAMPLE_LIMIT = 15
+
+
+def _url_with_sample_limit(url: str, limit: int = DISCOVERY_SAMPLE_LIMIT) -> str:
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    param_keys_lower = [k.lower() for k in params.keys()]
+    limit_params = ['limit', 'per', 'per_page', 'take', 'page_size']
+    if any(p in param_keys_lower for p in limit_params):
+        return url  # Already has limit, don't modify
+    sep = '&' if parsed.query else '?'
+    return f"{url}{sep}limit={limit}"
+
 
 class NetworkAnalyzer:
-    """Analyze network requests to find store locator endpoints"""
-    
-    # Keywords that indicate store/location data
     STORE_KEYWORDS = [
         'store', 'location', 'retailer', 'establishment', 'point', 'dealer',
         'boutique', 'outlet', 'shop', 'branch', 'venue', 'place'
     ]
-    
-    # URL patterns that suggest API endpoints
     API_PATTERNS = [
         r'/api/',
         r'\.json',
@@ -37,20 +40,9 @@ class NetworkAnalyzer:
     ]
     
     def __init__(self):
-        """Initialize the network analyzer"""
         pass
-    
+
     def analyze_requests(self, requests: List[Dict], base_url: str) -> List[Dict]:
-        """
-        Analyze network requests to find store locator endpoints
-        
-        Args:
-            requests: List of network request dictionaries
-            base_url: Base URL of the store locator page
-            
-        Returns:
-            List of analyzed endpoints with confidence scores
-        """
         analyzed = []
         
         for req in requests:
@@ -144,7 +136,7 @@ class NetworkAnalyzer:
         parsed = urlparse(url)
         params = parse_qs(parsed.query)
         
-        # Location-specific parameters to remove
+        # Location-specific parameters to remove (country-region, per, offset are filters - kept)
         location_params = [
             'keyword', 'query', 'q', 'search', 'location', 'city', 'zip', 'zipcode',
             'postal', 'address', 'state', 'region', 'country', 'lat', 'lng', 
@@ -299,8 +291,9 @@ class NetworkAnalyzer:
                 if response:
                     store_count = self._count_stores(response)
                     
-                    # Special handling for HTML pages - check for embedded store data
-                    if endpoint_type == 'html' and isinstance(response, dict) and 'html' in response:
+                    # Special handling for HTML content - check for embedded store data
+                    # (country_filter URLs like ?country-region=US can also return HTML)
+                    if isinstance(response, dict) and 'html' in response:
                         html_content = response['html']
                         # Check for embedded store data patterns
                         store_patterns = [
@@ -367,8 +360,8 @@ class NetworkAnalyzer:
         if any(param.lower() in param_keys_lower for param in ['radius', 'distance', 'r']) or 'r=' in url_lower:
             return 'radius'
         
-        # Check for country-based
-        country_params = ['country', 'countrycode', 'region', 'state']
+        # Check for country-based (including hyphenated variants like country-region)
+        country_params = ['country', 'countrycode', 'region', 'state', 'country-region', 'country_region']
         if any(param.lower() in param_keys_lower for param in country_params):
             return 'country_filter'
         
@@ -386,7 +379,7 @@ class NetworkAnalyzer:
     
     def _fetch_endpoint(self, url: str, request: Dict) -> Optional[Dict]:
         """
-        Try to fetch endpoint data
+        Try to fetch endpoint data. Uses sample limit first for large APIs (avoids 1600+ store downloads).
         
         Args:
             url: Endpoint URL
@@ -395,42 +388,52 @@ class NetworkAnalyzer:
         Returns:
             Response data or None
         """
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json, text/html, */*'
+        }
+        req_headers = request.get('headers', {})
+        if 'accept' in req_headers:
+            headers['Accept'] = req_headers['accept']
+        timeout = 15 if 'html' in request.get('mimeType', '').lower() else 10
+        
+        # Try limited URL first for JSON/API endpoints (avoids fetching 1600+ stores)
+        mime = request.get('mimeType', '').lower()
+        url_lower = url.lower()
+        is_json_api = 'json' in mime or '/api/' in url_lower or 'location' in url_lower or 'store' in url_lower
+        if is_json_api:
+            limited_url = _url_with_sample_limit(url)
+            if limited_url != url:
+                try:
+                    response = requests.get(limited_url, headers=headers, timeout=timeout)
+                    response.raise_for_status()
+                    data = self._parse_response(response)
+                    count = self._count_stores(data) if data else None
+                    if count is not None and count > 0:
+                        return data  # Limit worked, use smaller payload
+                except Exception:
+                    pass  # Fall through to full URL
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'application/json, text/html, */*'
-            }
-            
-            # Add Accept header if it was in original request
-            req_headers = request.get('headers', {})
-            if 'accept' in req_headers:
-                headers['Accept'] = req_headers['accept']
-            
-            # Increase timeout for HTML pages (they may be slower)
-            timeout = 15 if 'html' in request.get('mimeType', '').lower() else 10
-            
             response = requests.get(url, headers=headers, timeout=timeout)
             response.raise_for_status()
-            
-            content_type = response.headers.get('content-type', '').lower()
-            if 'json' in content_type:
-                return response.json()
-            elif 'html' in content_type or 'text/html' in content_type:
-                return {'html': response.text}
-            else:
-                # Try to parse as JSON anyway
-                try:
-                    return response.json()
-                except:
-                    # If not JSON, might be HTML or other text
-                    if 'text' in content_type or len(response.text) > 100:
-                        return {'html': response.text}
-                    return None
-                    
+            return self._parse_response(response)
         except requests.exceptions.Timeout:
-            # Timeout is OK for some endpoints - return None to skip
             return None
-        except Exception as e:
+        except Exception:
+            return None
+    
+    def _parse_response(self, response: requests.Response) -> Optional[Dict]:
+        """Parse response into dict (JSON) or html wrapper."""
+        content_type = response.headers.get('content-type', '').lower()
+        if 'json' in content_type:
+            return response.json()
+        if 'html' in content_type or 'text/html' in content_type:
+            return {'html': response.text}
+        try:
+            return response.json()
+        except Exception:
+            if 'text' in content_type or len(response.text) > 100:
+                return {'html': response.text}
             return None
     
     def _count_stores(self, data: Any, depth: int = 0) -> Optional[int]:

@@ -1,22 +1,5 @@
 #!/usr/bin/env python3
-"""
-Master CSV Manager
-==================
-
-Manages a master CSV file that accumulates all scraped stores from all brands.
-Handles deduplication and merging of stores with the same address, tracking
-which brands each store sells.
-
-Usage:
-    from master_csv_manager import append_to_master_csv
-    
-    # Append new stores to master CSV, merging stores with same address
-    result = append_to_master_csv(
-        new_stores_csv="path/to/new_stores.csv",
-        master_csv="path/to/master_stores.csv",
-        brand_name="rolex_retailers"
-    )
-"""
+"""Manages master CSV: accumulates scraped stores, deduplicates, merges by address."""
 
 import csv
 import os
@@ -26,27 +9,15 @@ import sys
 import time
 import copy
 from datetime import datetime
-from typing import List, Dict, Set, Tuple, Optional
+from typing import List, Dict, Set, Tuple, Optional, Any
 from pathlib import Path
 
-# Geocoding support (optional - only used if geopy is available)
-try:
-    from geopy.geocoders import Nominatim
-    from geopy.exc import GeocoderTimedOut, GeocoderServiceError, GeocoderUnavailable
-    GEOPY_AVAILABLE = True
-except ImportError:
-    GEOPY_AVAILABLE = False
-    Nominatim = None
+from geocoding_utils import GEOPY_AVAILABLE, geocode_address
+from data_normalizer import clean_address, strip_redundant_address_parts
+from spatial_index import build_store_index
 
 
 def log_sync(message: str, level: str = "INFO"):
-    """
-    Log sync operations to stdout (captured by admin console)
-    
-    Args:
-        message: Log message
-        level: Log level (INFO, SUCCESS, WARN, ERROR)
-    """
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     prefix = {
         "INFO": "[SYNC INFO]",
@@ -54,28 +25,13 @@ def log_sync(message: str, level: str = "INFO"):
         "WARN": "[SYNC ⚠]",
         "ERROR": "[SYNC ✗]"
     }.get(level, "[SYNC]")
-    
-    # Print to stdout so it's captured by Node.js backend
     print(f"{timestamp} {prefix} {message}", flush=True)
 
 
 def normalize_brand_name(brand_config_name: str) -> str:
-    """
-    Convert brand config name (e.g., "rolex_retailers") to display name (e.g., "ROLEX")
-    
-    Args:
-        brand_config_name: Brand name from config (e.g., "rolex_retailers", "omega_stores")
-    
-    Returns:
-        Normalized brand display name (e.g., "ROLEX", "OMEGA")
-    """
-    # Remove common suffixes
     name = brand_config_name.replace('_stores', '').replace('_retailers', '').replace('_dealers', '')
     
-    # Convert snake_case to Title Case, then uppercase
     name = name.replace('_', ' ').title().upper()
-    
-    # Handle special cases
     brand_mappings = {
         'ALANGE SOEHNE': 'A. LANGE & SÖHNE',
         'BAUME ET MERCIER': 'BAUME & MERCIER',
@@ -90,22 +46,10 @@ def normalize_brand_name(brand_config_name: str) -> str:
 
 
 def extract_brands_from_custom_brands(custom_brands_str: str) -> Set[str]:
-    """
-    Extract brand names from Custom Brands column (HTML format)
-    
-    Args:
-        custom_brands_str: HTML-formatted brand string like '<a href="...">BRAND</A>, <a href="...">BRAND</A>'
-    
-    Returns:
-        Set of brand names (uppercase)
-    """
     if not custom_brands_str or not custom_brands_str.strip():
         return set()
-    
-    # Extract text between > and </A> tags
     brands = re.findall(r'>([^<]+)</A>', custom_brands_str, re.IGNORECASE)
     
-    # Clean and normalize brand names
     normalized_brands = set()
     for brand in brands:
         brand = brand.strip().upper()
@@ -116,26 +60,12 @@ def extract_brands_from_custom_brands(custom_brands_str: str) -> Set[str]:
 
 
 def extract_all_brands_from_store(store: Dict[str, str]) -> Set[str]:
-    """
-    Extract all brands from a store record, checking both Custom Brands and Brands columns
-    
-    Args:
-        store: Store dictionary
-    
-    Returns:
-        Set of brand names (uppercase)
-    """
     brands = set()
-    
-    # Extract from Custom Brands column (HTML format)
     custom_brands_str = store.get('Custom Brands', '').strip()
     if custom_brands_str:
         brands.update(extract_brands_from_custom_brands(custom_brands_str))
-    
-    # Extract from Brands column (plain text, comma-separated)
     brands_str = store.get('Brands', '').strip()
     if brands_str:
-        # Split by comma and clean
         for brand in brands_str.split(','):
             brand = brand.strip().upper()
             if brand:
@@ -145,25 +75,11 @@ def extract_all_brands_from_store(store: Dict[str, str]) -> Set[str]:
 
 
 def format_brands_for_custom_brands(brands: Set[str]) -> str:
-    """
-    Format brand names as HTML links for Custom Brands column
-    
-    Args:
-        brands: Set of brand names
-    
-    Returns:
-        HTML-formatted string like '<a href="...">BRAND</A>, <a href="...">BRAND</A>'
-    """
     if not brands:
         return ""
-    
-    # Sort brands for consistency
     sorted_brands = sorted(brands)
-    
-    # Format as HTML links
     brand_links = []
     for brand in sorted_brands:
-        # Create URL-friendly brand name (for href)
         brand_slug = brand.replace(' & ', '-').replace(' ', '-').replace('.', '').upper()
         brand_link = f'<a href="https://watchdna.com/blogs/history/{brand_slug}">{brand}</A>'
         brand_links.append(brand_link)
@@ -172,201 +88,21 @@ def format_brands_for_custom_brands(brands: Set[str]) -> str:
 
 
 def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """
-    Calculate distance between two coordinates using Haversine formula
-    
-    Returns distance in meters
-    """
-    # Earth radius in meters
-    R = 6371000
-    
-    # Convert to radians
+    from coordinate_utils import EARTH_RADIUS_METERS
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
     delta_lambda = math.radians(lon2 - lon1)
-    
-    # Haversine formula
     a = math.sin(delta_phi / 2) ** 2 + \
         math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    
-    return R * c
 
-
-# =============================================================================
-# GEOCODING FUNCTIONS (for coordinate validation)
-# =============================================================================
-
-# Global geocoder instance (lazy initialization)
-_geocoder = None
-_last_geocode_time = 0
-_geocode_cache = {}  # Cache geocoding results to avoid duplicate API calls
-
-def get_geocoder():
-    """Get or create Nominatim geocoder instance"""
-    global _geocoder
-    if not GEOPY_AVAILABLE:
-        return None
-    
-    if _geocoder is None:
-        # Use Nominatim (OpenStreetMap) - free, no API key required
-        # User agent is required by Nominatim usage policy
-        _geocoder = Nominatim(
-            user_agent="WatchDNA-StoreLocator/1.0 (https://watchdna.com)",
-            timeout=10  # 10 second timeout
-        )
-    
-    return _geocoder
-
-
-def geocode_address(
-    address: str,
-    city: str = "",
-    state: str = "",
-    country: str = ""
-) -> Optional[Tuple[float, float]]:
-    """
-    Geocode an address to get latitude and longitude using Nominatim (OpenStreetMap).
-    
-    This is a free geocoding service that doesn't require an API key.
-    Rate limit: 1 request per second (enforced automatically).
-    
-    Args:
-        address: Address line 1
-        city: City name
-        state: State/Province/Region
-        country: Country name
-    
-    Returns:
-        Tuple of (latitude, longitude) if found, None otherwise
-    """
-    if not GEOPY_AVAILABLE:
-        return None
-    
-    # Build full address string
-    address_parts = []
-    if address:
-        address_parts.append(address)
-    if city:
-        address_parts.append(city)
-    if state:
-        address_parts.append(state)
-    if country:
-        address_parts.append(country)
-    
-    if not address_parts:
-        return None
-    
-    full_address = ", ".join(address_parts)
-    
-    # Check cache first
-    cache_key = full_address.lower().strip()
-    if cache_key in _geocode_cache:
-        return _geocode_cache[cache_key]
-    
-    geocoder = get_geocoder()
-    if not geocoder:
-        return None
-    
-    # Rate limiting: Nominatim requires max 1 request per second
-    global _last_geocode_time
-    current_time = time.time()
-    time_since_last = current_time - _last_geocode_time
-    if time_since_last < 1.0:
-        time.sleep(1.0 - time_since_last)
-    
-    try:
-        _last_geocode_time = time.time()
-        location = geocoder.geocode(full_address, exactly_one=True, timeout=10)
-        
-        if location:
-            lat = location.latitude
-            lon = location.longitude
-            result = (lat, lon)
-            # Cache the result
-            _geocode_cache[cache_key] = result
-            return result
-        else:
-            # Cache None result to avoid retrying failed addresses
-            _geocode_cache[cache_key] = None
-            return None
-            
-    except (GeocoderTimedOut, GeocoderServiceError, GeocoderUnavailable) as e:
-        # Log but don't fail - geocoding is optional
-        return None
-    except Exception as e:
-        # Any other error - return None
-        return None
-
-
-def verify_coordinates_match_address(
-    store: Dict[str, str],
-    tolerance_meters: float = 1000.0
-) -> Tuple[bool, Optional[float], Optional[str]]:
-    """
-    Verify that the coordinates in a store record match the address using geocoding.
-    
-    Args:
-        store: Store dictionary with Latitude, Longitude, Address Line 1, City, State/Province/Region, Country
-        tolerance_meters: Maximum distance in meters between provided coordinates and geocoded address (default: 1000m = 1km)
-    
-    Returns:
-        Tuple of (is_valid, distance_meters, error_message)
-        - is_valid: True if coordinates match address within tolerance, False otherwise
-        - distance_meters: Distance between provided and geocoded coordinates (None if geocoding failed)
-        - error_message: Error message if validation failed (None if valid)
-    """
-    # Get coordinates from store
-    lat_str = store.get('Latitude', '').strip()
-    lon_str = store.get('Longitude', '').strip()
-    
-    if not lat_str or not lon_str:
-        return (False, None, "Missing coordinates")
-    
-    try:
-        provided_lat = float(lat_str)
-        provided_lon = float(lon_str)
-    except (ValueError, TypeError):
-        return (False, None, "Invalid coordinate format")
-    
-    # Get address components
-    address = store.get('Address Line 1', '').strip()
-    city = store.get('City', '').strip()
-    state = store.get('State/Province/Region', '').strip()
-    country = store.get('Country', '').strip()
-    
-    if not address and not city:
-        return (False, None, "Insufficient address information")
-    
-    # Geocode the address
-    geocoded_coords = geocode_address(address, city, state, country)
-    
-    if geocoded_coords is None:
-        return (False, None, "Could not geocode address")
-    
-    geocoded_lat, geocoded_lon = geocoded_coords
-    
-    # Calculate distance between provided and geocoded coordinates
-    distance = calculate_distance(provided_lat, provided_lon, geocoded_lat, geocoded_lon)
-    
-    # Check if within tolerance
-    is_valid = distance <= tolerance_meters
-    
-    if is_valid:
-        return (True, distance, None)
-    else:
-        return (False, distance, f"Coordinates mismatch: {distance:.0f}m from geocoded address (tolerance: {tolerance_meters:.0f}m)")
+    return EARTH_RADIUS_METERS * c
 
 
 def normalize_store_name(name: str) -> str:
-    """
-    Normalize store name for comparison (remove common words, lowercase, etc.)
-    """
     if not name:
         return ""
-    
-    # Convert to lowercase and remove extra spaces
     normalized = re.sub(r'\s+', ' ', name.lower().strip())
     
     # Remove common prefixes/suffixes that might differ between brands
@@ -459,16 +195,19 @@ def find_matching_store(
     new_store: Dict[str, str],
     existing_stores: List[Dict[str, str]],
     coordinate_tolerance_meters: float = 100.0,
-    brand_name: str = ""
+    brand_name: str = "",
+    store_index: Optional[Any] = None
 ) -> Optional[Dict[str, str]]:
     """
-    Find a matching store from existing stores using name + coordinate matching
+    Find a matching store from existing stores using name + coordinate matching.
+    Uses spatial index when provided for O(k) lookup instead of O(M) scan.
     
     Args:
         new_store: New store to match
         existing_stores: List of existing stores to search
         coordinate_tolerance_meters: Maximum distance in meters to consider a match (default: 100m)
         brand_name: Brand name for logging purposes
+        store_index: Optional pre-built spatial index (from build_store_index) for faster lookups
     
     Returns:
         Matching store dictionary if found, None otherwise
@@ -490,71 +229,40 @@ def find_matching_store(
         except (ValueError, TypeError):
             pass
     
-    # PRIORITY 1: If we have coordinates, use coordinate matching FIRST (geolocation is most reliable)
-    # Coordinates are the primary matching criteria - name/address are secondary
     if new_lat is not None and new_lng is not None:
-        for existing_store in existing_stores:
-            existing_name = existing_store.get('Name', '').strip()
-            existing_lat_str = existing_store.get('Latitude', '').strip()
-            existing_lng_str = existing_store.get('Longitude', '').strip()
-            existing_brands = existing_store.get('Brands', '').strip()
+        if store_index is None:
+            store_index = build_store_index(existing_stores, coordinate_tolerance_meters)
+        nearby = store_index.find_nearby(new_lat, new_lng, coordinate_tolerance_meters)
+        for existing_store, idx in nearby:
+            current_store = existing_stores[idx] if idx < len(existing_stores) else existing_store
+            existing_name = current_store.get('Name', '').strip()
+            existing_lat_str = current_store.get('Latitude', '').strip()
+            existing_lng_str = current_store.get('Longitude', '').strip()
+            existing_brands = current_store.get('Brands', '').strip()
+            names_match = names_similar(new_name, existing_name)
+            if names_match:
+                log_sync(
+                    f"MATCH FOUND (coordinate + name): '{new_name}' ({brand_name}) matches existing store '{existing_name}'",
+                    "SUCCESS"
+                )
+            else:
+                log_sync(
+                    f"MATCH FOUND (coordinate only): '{new_name}' ({brand_name}) matches existing store '{existing_name}'",
+                    "SUCCESS"
+                )
+                log_sync(
+                    f"  ⚠️  Names differ but coordinates match (same physical location)",
+                    "WARN"
+                )
             
-            # Check coordinates if available - THIS IS THE PRIMARY MATCHING CRITERIA
-            if existing_lat_str and existing_lng_str:
-                try:
-                    existing_lat = float(existing_lat_str)
-                    existing_lng = float(existing_lng_str)
-                    
-                    # Calculate distance
-                    distance = calculate_distance(new_lat, new_lng, existing_lat, existing_lng)
-                    
-                    # If within tolerance, it's a match (same physical location)
-                    # Name similarity is checked for logging but NOT required - coordinates are primary
-                    if distance <= coordinate_tolerance_meters:
-                        # Check name similarity for logging purposes
-                        names_match = names_similar(new_name, existing_name)
-                        
-                        # Log the match
-                        if names_match:
-                            log_sync(
-                                f"MATCH FOUND (coordinate + name): '{new_name}' ({brand_name}) matches existing store '{existing_name}'",
-                                "SUCCESS"
-                            )
-                        else:
-                            log_sync(
-                                f"MATCH FOUND (coordinate only): '{new_name}' ({brand_name}) matches existing store '{existing_name}'",
-                                "SUCCESS"
-                            )
-                            log_sync(
-                                f"  ⚠️  Names differ but coordinates match (same physical location)",
-                                "WARN"
-                            )
-                        
-                        log_sync(
-                            f"  Location: {new_addr}, {new_city}, {new_country}",
-                            "INFO"
-                        )
-                        log_sync(
-                            f"  Coordinates: ({new_lat_str}, {new_lng_str}) vs ({existing_lat_str}, {existing_lng_str})",
-                            "INFO"
-                        )
-                        log_sync(
-                            f"  Distance: {distance:.2f} meters (tolerance: {coordinate_tolerance_meters}m)",
-                            "INFO"
-                        )
-                        if existing_brands:
-                            log_sync(
-                                f"  Existing brands: {existing_brands} → Will merge with {brand_name}",
-                                "INFO"
-                            )
-                        else:
-                            log_sync(
-                                f"  Existing brands: None → Will add {brand_name}",
-                                "INFO"
-                            )
-                        return existing_store
-                except (ValueError, TypeError):
-                    pass
+            log_sync(f"  Location: {new_addr}, {new_city}, {new_country}", "INFO")
+            log_sync(f"  Coordinates: ({new_lat_str}, {new_lng_str}) vs ({existing_lat_str}, {existing_lng_str})", "INFO")
+            log_sync(f"  Distance: within {coordinate_tolerance_meters}m tolerance", "INFO")
+            if existing_brands:
+                log_sync(f"  Existing brands: {existing_brands} → Will merge with {brand_name}", "INFO")
+            else:
+                log_sync(f"  Existing brands: None → Will add {brand_name}", "INFO")
+            return current_store
     
     # Fallback: use address-based matching if no coordinates
     new_addr_key = get_address_key(new_store)
@@ -562,11 +270,9 @@ def find_matching_store(
         for existing_store in existing_stores:
             existing_addr_key = get_address_key(existing_store)
             if existing_addr_key == new_addr_key:
-                # Also check name similarity for address matches
                 existing_name = existing_store.get('Name', '').strip()
                 existing_brands = existing_store.get('Brands', '').strip()
                 if names_similar(new_name, existing_name):
-                    # Log the match
                     log_sync(
                         f"MATCH FOUND (by address): '{new_name}' ({brand_name}) matches existing store '{existing_name}'",
                         "SUCCESS"
@@ -590,7 +296,7 @@ def find_matching_store(
     return None
 
 
-def merge_store_data(existing_store: Dict[str, str], new_store: Dict[str, str], new_brand: str = None) -> Dict[str, str]:
+def merge_store_data(existing_store: Dict[str, str], new_store: Dict[str, str], new_brand: str = None) -> Tuple[Dict[str, str], Set[str]]:
     """
     Merge two store records, combining brands and keeping most complete data
     
@@ -600,10 +306,11 @@ def merge_store_data(existing_store: Dict[str, str], new_store: Dict[str, str], 
         new_brand: Optional brand name for the new store (if None, extracts from new_store)
     
     Returns:
-        Merged store dictionary
+        Tuple of (merged store dictionary, set of field names that were updated)
     """
     # Use deep copy to avoid mutating nested structures in the original store
     merged = copy.deepcopy(existing_store)
+    updated_fields: Set[str] = set()
     
     # Extract existing brands from both columns
     existing_brands = extract_all_brands_from_store(existing_store)
@@ -615,11 +322,7 @@ def merge_store_data(existing_store: Dict[str, str], new_store: Dict[str, str], 
     if new_brand:
         new_brand_normalized = normalize_brand_name(new_brand)
         new_store_brands.add(new_brand_normalized)
-    
-    # Combine all brands
     all_brands = existing_brands.union(new_store_brands)
-    
-    # Update brands columns
     merged['Custom Brands'] = format_brands_for_custom_brands(all_brands)
     merged['Brands'] = ', '.join(sorted(all_brands))  # Simple comma-separated for easy reading
     
@@ -634,16 +337,26 @@ def merge_store_data(existing_store: Dict[str, str], new_store: Dict[str, str], 
         # If existing is empty and new has value, use new
         if not existing_value and new_value_str:
             merged[key] = new_value_str
+            updated_fields.add(key)
         # If both have values, prefer new (assumes newer data is more accurate)
         elif existing_value and new_value_str and existing_value != new_value_str:
             # For critical fields, keep existing if it's more complete
             if key in ['Name', 'Address Line 1', 'City', 'Country']:
+                # Exception: if existing has formatting issues (e.g. "Junction500"), prefer new
+                # so that correctly normalized data from fresh scrapes overrides old master data
+                if key in ['Address Line 1', 'Address Line 2']:
+                    existing_cleaned = clean_address(existing_value)
+                    if existing_cleaned != existing_value:
+                        merged[key] = new_value_str
+                        updated_fields.add(key)
+                        continue
                 # Keep existing if it's longer (more complete)
                 if len(existing_value) >= len(new_value_str):
                     continue
             merged[key] = new_value_str
+            updated_fields.add(key)
     
-    return merged
+    return merged, updated_fields
 
 
 def read_csv_to_dict_list(filename: str) -> List[Dict[str, str]]:
@@ -713,12 +426,65 @@ def write_dict_list_to_csv(data: List[Dict[str, str]], filename: str, fieldnames
         f.write(content)
 
 
+def renormalize_master_csv(master_csv: str) -> Dict[str, Any]:
+    """
+    Re-apply address formatting (clean_address, strip_redundant) to all stores in master CSV.
+    Use when master has older data with formatting issues (e.g. "Junction500") that predate fixes.
+
+    Args:
+        master_csv: Path to master CSV file
+
+    Returns:
+        Dict with counts: stores_processed, addresses_fixed, addresses_stripped
+    """
+    if not os.path.exists(master_csv):
+        return {"error": "File not found", "stores_processed": 0}
+
+    stores = read_csv_to_dict_list(master_csv)
+    if not stores:
+        return {"stores_processed": 0, "addresses_fixed": 0, "addresses_stripped": 0}
+
+    addresses_fixed = 0
+    addresses_stripped = 0
+    fieldnames = list(stores[0].keys())
+
+    for store in stores:
+        for key in ["Address Line 1", "Address Line 2"]:
+            val = store.get(key, "").strip()
+            if not val:
+                continue
+            cleaned = clean_address(val)
+            if cleaned != val:
+                store[key] = cleaned
+                addresses_fixed += 1
+        # Strip redundant city/state/country from Address Line 1
+        addr1 = store.get("Address Line 1", "").strip()
+        if addr1:
+            stripped = strip_redundant_address_parts(
+                addr1,
+                store.get("City", "").strip(),
+                store.get("State/Province/Region", "").strip(),
+                store.get("Country", "").strip(),
+                store.get("Postal/ZIP Code", "").strip(),
+            )
+            if stripped != addr1:
+                store["Address Line 1"] = stripped
+                addresses_stripped += 1
+
+    write_dict_list_to_csv(stores, master_csv, fieldnames)
+    return {
+        "stores_processed": len(stores),
+        "addresses_fixed": addresses_fixed,
+        "addresses_stripped": addresses_stripped,
+    }
+
+
 def append_to_master_csv(
     new_stores_csv: str,
     master_csv: str,
     brand_name: str,
     merge_by_address: bool = True
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Append new stores to master CSV with address-based merging and brand tracking
     
@@ -780,9 +546,13 @@ def append_to_master_csv(
     # We'll use the improved matching logic that handles coordinate tolerance
     master_store_list: List[Dict[str, str]] = master_stores.copy()
     
+    # Build spatial index once for O(k) lookups instead of O(M) scans per new store
+    store_index = build_store_index(master_store_list, tolerance_meters=50.0)
+    
     # Process new stores
     stores_merged = 0
     stores_added = 0
+    field_update_counts: Dict[str, int] = {}
     
     for idx, new_store in enumerate(new_stores, 1):
         new_store_name = new_store.get('Name', '').strip()
@@ -801,18 +571,23 @@ def append_to_master_csv(
                 new_store, 
                 master_store_list, 
                 coordinate_tolerance_meters=50.0,  # 50 meters - handles GPS variations while being precise
-                brand_name=normalized_brand
+                brand_name=normalized_brand,
+                store_index=store_index
             )
             
             if matching_store:
                 # Merge with existing store
                 existing_brands_before = matching_store.get('Brands', '').strip()
-                merged_store = merge_store_data(matching_store, new_store, brand_name)
+                merged_store, updated_fields = merge_store_data(matching_store, new_store, brand_name)
                 existing_brands_after = merged_store.get('Brands', '').strip()
+                
+                for field in updated_fields:
+                    field_update_counts[field] = field_update_counts.get(field, 0) + 1
                 
                 # Replace the matching store with merged version
                 index = master_store_list.index(matching_store)
                 master_store_list[index] = merged_store
+                store_index.update_at(index, merged_store)
                 stores_merged += 1
                 
                 # Log successful merge
@@ -827,6 +602,7 @@ def append_to_master_csv(
             else:
                 # New store - add to master
                 master_store_list.append(new_store)
+                store_index.add(new_store, len(master_store_list) - 1)
                 stores_added += 1
                 log_sync(
                     f"+ ADDED [{idx}/{new_stores_count}]: '{new_store_name}' ({new_store_addr}, {new_store_city})",
@@ -882,29 +658,43 @@ def append_to_master_csv(
     
     # Update return stats with validation results
     final_stores_count = validate_result.get("stores_after", master_stores_after)
+    dup_by_location = validate_result.get("duplicates_by_location", 0)
+    dup_by_name = validate_result.get("duplicates_by_name", 0)
+    total_deduped = dup_by_location + dup_by_name
     
-    # Log final comprehensive summary
-    log_sync("", "INFO")  # Empty line
+    # Clear final summary
+    log_sync("", "INFO")
     log_sync("=" * 80, "INFO")
     log_sync("FINAL SUMMARY", "SUCCESS")
     log_sync("=" * 80, "INFO")
-    log_sync(f"  Brand processed: {normalized_brand}", "INFO")
-    log_sync(f"  New stores scraped: {new_stores_count}", "INFO")
-    log_sync(f"  Stores matched & merged: {stores_merged}", "SUCCESS")
-    log_sync(f"  New stores added: {stores_added}", "SUCCESS")
+    log_sync(f"  Brand: {normalized_brand}", "INFO")
     log_sync("", "INFO")
-    log_sync(f"  Master CSV before: {master_stores_before} stores", "INFO")
-    log_sync(f"  Master CSV after sync: {master_stores_after} stores", "INFO")
-    log_sync(f"  Duplicates removed (location): {validate_result.get('duplicates_by_location', 0)}", "INFO")
-    log_sync(f"  Duplicates removed (name): {validate_result.get('duplicates_by_name', 0)}", "INFO")
-    log_sync(f"  Master CSV final: {final_stores_count} stores", "SUCCESS")
-    log_sync(f"  Total deduplicated: {master_stores_after - final_stores_count} stores", "SUCCESS")
+    log_sync("  STORES UPDATED (existing locations matched & merged):", "INFO")
+    log_sync(f"    Total: {stores_merged}", "SUCCESS" if stores_merged > 0 else "INFO")
+    if field_update_counts:
+        log_sync(f"    Field updates (address/phone/etc filled or improved):", "INFO")
+        for field in sorted(field_update_counts.keys()):
+            count = field_update_counts[field]
+            log_sync(f"      • {field}: {count}", "INFO")
+    log_sync("", "INFO")
+    log_sync("  NEW STORES ADDED:", "INFO")
+    log_sync(f"    {stores_added}", "SUCCESS" if stores_added > 0 else "INFO")
+    log_sync("", "INFO")
+    log_sync("  DUPLICATES REMOVED:", "INFO")
+    log_sync(f"    By location (within tolerance): {dup_by_location}", "INFO")
+    log_sync(f"    By name: {dup_by_name}", "INFO")
+    log_sync(f"    Total removed: {total_deduped}", "SUCCESS" if total_deduped > 0 else "INFO")
+    log_sync("", "INFO")
+    log_sync("  MASTER CSV:", "INFO")
+    log_sync(f"    Before sync: {master_stores_before} stores", "INFO")
+    log_sync(f"    After sync: {master_stores_after} stores", "INFO")
+    log_sync(f"    Final (after dedup): {final_stores_count} stores", "SUCCESS")
     final_warnings = validate_result.get("warnings", [])
     if final_warnings:
         log_sync("", "INFO")
-        log_sync("WARNINGS (data quality):", "INFO")
+        log_sync("  WARNINGS (data quality):", "INFO")
         for msg in final_warnings:
-            log_sync(f"  ⚠️  {msg}", "INFO")
+            log_sync(f"    ⚠️  {msg}", "INFO")
     log_sync("=" * 80, "INFO")
     
     return {
@@ -913,16 +703,17 @@ def append_to_master_csv(
         "stores_merged": stores_merged,
         "stores_added": stores_added,
         "master_stores_after": master_stores_after,
+        "field_update_counts": field_update_counts,
         "validation": {
             "stores_before_validation": validate_result.get("stores_before", master_stores_after),
-            "duplicates_by_location": validate_result.get("duplicates_by_location", 0),
-            "duplicates_by_name": validate_result.get("duplicates_by_name", 0),
+            "duplicates_by_location": dup_by_location,
+            "duplicates_by_name": dup_by_name,
             "stores_after_validation": final_stores_count
         }
     }
 
 
-def validate_and_deduplicate_master_csv(master_csv: str, coordinate_validation_tolerance_meters: float = 1000.0) -> Dict[str, any]:
+def validate_and_deduplicate_master_csv(master_csv: str, coordinate_validation_tolerance_meters: float = 1000.0) -> Dict[str, Any]:
     """
     Validate and deduplicate the master CSV file
     
@@ -992,6 +783,9 @@ def validate_and_deduplicate_master_csv(master_csv: str, coordinate_validation_t
     processed_indices = set()
     duplicates_by_location = 0
     
+    # Build spatial index for O(k) lookups instead of O(N^2) nested loop
+    location_index = build_store_index(stores, tolerance_meters=dedup_tolerance_meters)
+    
     for i, store in enumerate(stores):
         if i in processed_indices:
             continue
@@ -1009,33 +803,10 @@ def validate_and_deduplicate_master_csv(master_csv: str, coordinate_validation_t
             lat = float(lat_str)
             lon = float(lon_str)
             
-            # Find all stores within tolerance distance
-            matching_stores = [store]  # Start with current store
-            matching_indices = [i]
-            
-            for j, other_store in enumerate(stores[i+1:], start=i+1):
-                if j in processed_indices:
-                    continue
-                    
-                other_lat_str = other_store.get('Latitude', '').strip()
-                other_lon_str = other_store.get('Longitude', '').strip()
-                
-                if not other_lat_str or not other_lon_str:
-                    continue
-                
-                try:
-                    other_lat = float(other_lat_str)
-                    other_lon = float(other_lon_str)
-                    
-                    # Calculate distance
-                    distance = calculate_distance(lat, lon, other_lat, other_lon)
-                    
-                    # If within tolerance, it's a match (same physical location)
-                    if distance <= dedup_tolerance_meters:
-                        matching_stores.append(other_store)
-                        matching_indices.append(j)
-                except (ValueError, TypeError):
-                    continue
+            # Find all stores within tolerance using spatial index
+            nearby = location_index.find_nearby(lat, lon, dedup_tolerance_meters)
+            matching_indices = sorted(set(idx for _, idx in nearby))
+            matching_stores = [stores[idx] for idx in matching_indices]
             
             # If we found matches, merge them
             if len(matching_stores) > 1:
@@ -1066,7 +837,7 @@ def validate_and_deduplicate_master_csv(master_csv: str, coordinate_validation_t
                             pass
                     
                     # Merge store data (combines brands and other fields)
-                    merged_store = merge_store_data(merged_store, matching_store)
+                    merged_store, _ = merge_store_data(merged_store, matching_store)
                     
                     if match_distance is not None:
                         log_sync(
@@ -1100,7 +871,7 @@ def validate_and_deduplicate_master_csv(master_csv: str, coordinate_validation_t
                         temp_merged = copy.deepcopy(matching_store)
                         for other_store in matching_stores:
                             if other_store is not matching_store:
-                                temp_merged = merge_store_data(temp_merged, other_store)
+                                temp_merged, _ = merge_store_data(temp_merged, other_store)
                         # Restore brands
                         temp_merged['Custom Brands'] = format_brands_for_custom_brands(all_brands)
                         temp_merged['Brands'] = ', '.join(sorted(all_brands))
@@ -1204,7 +975,7 @@ def validate_and_deduplicate_master_csv(master_csv: str, coordinate_validation_t
                 combined_brands = existing_brands_before.union(current_brands)
                 
                 # Merge the stores, combining brands
-                merged_store = merge_store_data(matching_existing, store)
+                merged_store, _ = merge_store_data(matching_existing, store)
                 
                 # Prefer entry with phone number for base data
                 existing_has_phone = bool(matching_existing.get('Phone', '').strip())
@@ -1212,7 +983,7 @@ def validate_and_deduplicate_master_csv(master_csv: str, coordinate_validation_t
                 
                 if current_has_phone and not existing_has_phone:
                     # Use current store as base, but keep merged brands
-                    merged_store = merge_store_data(store, matching_existing)
+                    merged_store, _ = merge_store_data(store, matching_existing)
                     log_sync(
                         f"  Name duplicate (coordinates close): Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - has phone, distance: {distance:.1f}m)",
                         "INFO"
@@ -1229,7 +1000,7 @@ def validate_and_deduplicate_master_csv(master_csv: str, coordinate_validation_t
                     current_addr = len(store.get('Address Line 1', '').strip())
                     
                     if current_addr > existing_addr:
-                        merged_store = merge_store_data(store, matching_existing)
+                        merged_store, _ = merge_store_data(store, matching_existing)
                         log_sync(
                             f"  Name duplicate (coordinates close): Merging '{current_name}' + '{existing_name}' (keeping '{current_name}' as base - more complete, distance: {distance:.1f}m)",
                             "INFO"
@@ -1380,7 +1151,27 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python3 master_csv_manager.py <new_stores.csv> <master_stores.csv> [brand_name]")
         print("  or:   python3 master_csv_manager.py --validate-only <master_stores.csv>")
+        print("  or:   python3 master_csv_manager.py --renormalize <master_stores.csv>")
         sys.exit(1)
+    
+    # Re-normalize: fix address formatting in existing master data
+    if sys.argv[1] == '--renormalize':
+        if len(sys.argv) < 3:
+            print("Usage: python3 master_csv_manager.py --renormalize <master_stores.csv>")
+            sys.exit(1)
+        master_csv = sys.argv[2]
+        result = renormalize_master_csv(master_csv)
+        if "error" in result:
+            print(f"Error: {result['error']}")
+            sys.exit(1)
+        print(f"\n{'='*80}")
+        print(f"RENORMALIZE SUMMARY")
+        print(f"{'='*80}")
+        print(f"  Stores processed: {result['stores_processed']}")
+        print(f"  Addresses fixed (spacing/formatting): {result['addresses_fixed']}")
+        print(f"  Addresses stripped (redundant city/state/country): {result['addresses_stripped']}")
+        print(f"{'='*80}")
+        sys.exit(0)
     
     # Check if this is a validation-only call
     if sys.argv[1] == '--validate-only':

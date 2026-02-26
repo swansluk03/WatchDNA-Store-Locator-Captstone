@@ -111,27 +111,6 @@
       "Longitude": "longitude"
     }
   },
-  "baume_et_mercier_stores": {
-    "type": "json",
-    "url": "https://www.baume-et-mercier.com/us/en/stores.stores-with-hours.retailer-other.json",
-    "description": "Baume & Mercier Store Locator - Single call API returns all stores worldwide ✅",
-    "method": "GET",
-    "data_path": "",
-    "field_mapping": {
-      "Handle": "id",
-      "Name": "name",
-      "Address Line 1": "address.street",
-      "Address Line 2": "address.street2",
-      "City": "address.city",
-      "State/Province/Region": "address.region",
-      "Country": "countryCode",
-      "Phone": "phoneNumber",
-      "Email": "email",
-      "Website": "website",
-      "Latitude": "location.latitude",
-      "Longitude": "location.longitude"
-    }
-  },
   "custom_json_api": {
     "type": "json",
     "url": "https://api.yourbrand.com/stores",
@@ -388,5 +367,137 @@
       "Handle": "meta.id"
     },
     "_note": "This endpoint uses pagination. The universal scraper will automatically follow all pages."
+  },
+  "bulgari_stores": {
+    "type": "radius",
+    "url": "https://www.bulgari.com/en-us/storelocator?country-region=US&l=en_US&per=50&offset=0",
+    "method": "GET",
+    "description": "Country-filter API - Change country param (e.g. country-region=US to IT, FR) for worldwide stores. Universal scraper iterates through all countries automatically.",
+    "enabled": true,
+    "data_path": "response.entities",
+    "field_mapping": {
+      "Latitude": "profile.geocodedCoordinate.lat",
+      "Longitude": "profile.geocodedCoordinate.long",
+      "City": "profile.address.city",
+      "Name": "profile.name",
+      "Address Line 1": "profile.address.line1",
+      "State/Province/Region": "profile.address.region",
+      "Country": "derivedData.address.countryName",
+      "Postal/ZIP Code": "profile.address.postalCode",
+      "Phone": "profile.mainPhone.display",
+      "Email": "profile.c_baaEmail",
+      "Website": "profile.websiteUrl.url",
+      "Handle": "profile.meta.id"
+    },
+    "_note": "This endpoint filters by country. To get all stores worldwide, iterate country-region (or country) param: US, IT, FR, DE, etc. Scraper uses comprehensive country list."
+  },
+  "benrus": {
+    "type": "single_call",
+    "url": "https://benrus.com/en-us/retailers",
+    "method": "GET",
+    "description": "Pure HTML - no API. Retailer locations rendered in page. Scraper extracts from retailer card DOM.",
+    "enabled": true,
+    "_note": "No network API - stores extracted from server-rendered HTML (retailer cards with h3, address, Google Maps link)."
+  },
+  "ball_watch": {
+    "type": "country_filter",
+    "url": "https://www.ballwatch.com/index.php?route=tool%2Fstore_locator&ajax=1&is_locate_me=1&country_id=223",
+    "method": "GET",
+    "description": "OpenCart store locator - country_id filters by country. 223=US. Returns JSON with stores array.",
+    "enabled": true,
+    "data_path": "stores",
+    "field_mapping": {
+      "Name": "name",
+      "Address Line 1": "address",
+      "City": "city",
+      "State/Province/Region": "zone_name",
+      "Country": "country_name",
+      "Postal/ZIP Code": "postcode",
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "website",
+      "Latitude": "lat",
+      "Longitude": "lng",
+      "Handle": "store_id"
+    },
+    "use_watch_store_countries": true,
+    "country_id_map": {
+      "US": "223",
+      "CA": "38",
+      "GB": "222",
+      "FR": "75",
+      "DE": "81",
+      "IT": "105",
+      "ES": "195",
+      "CH": "205",
+      "AU": "13",
+      "JP": "107"
+    },
+    "_note": "country_id uses OpenCart numeric IDs. Scraper iterates countries via country_id_map (ISO->numeric). Add more mappings as needed - IDs may vary by OpenCart install."
+  },
+  "bomberg_watches": {
+    "type": "json",
+    "url": "https://storemapper-herokuapp-com.global.ssl.fastly.net/api/users/36220-oTIkXUu6J1dXYjyu/stores.js?callback=SMcallback2",
+    "method": "GET",
+    "description": "JSON API - Single call returns all stores",
+    "enabled": true,
+    "data_path": "stores",
+    "field_mapping": {
+      "Latitude": "latitude",
+      "Longitude": "longitude",
+      "Name": "name",
+      "Address Line 1": "address",
+      "Address Line 2": "address",
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "directions_url",
+      "Handle": "id"
+    }
+  },
+  "bremont_watches": {
+    "type": "json",
+    "url": "https://stockist.co/api/v1/u3131/locations/all",
+    "method": "GET",
+    "description": "JSON API - Single call returns all stores",
+    "enabled": true,
+    "field_mapping": {
+      "Latitude": "latitude",
+      "Longitude": "longitude",
+      "Name": "name",
+      "Phone": "phone",
+      "Website": "website",
+      "Handle": "id",
+      "Address Line 1": [
+        "address_line_1",
+        "full_address"
+      ],
+      "Address Line 2": "address_line_2",
+      "City": "city",
+      "State/Province/Region": "state",
+      "Country": "country",
+      "Postal/ZIP Code": "postal_code"
+    }
+  },
+  "baume_mercier": {
+    "type": "json",
+    "url": "https://www.baume-et-mercier.com/us/en/stores.stores-with-hours.retailer-other.json",
+    "method": "GET",
+    "description": "JSON API - Single call returns all stores",
+    "enabled": true,
+    "field_mapping": {
+      "Latitude": "location.latitude",
+      "Longitude": "location.longitude",
+      "City": "address.city",
+      "Name": "name",
+      "Address Line 1": "address.street",
+      "Address Line 2": "address.street2",
+      "State/Province/Region": "address.state",
+      "Country": "address.country",
+      "Postal/ZIP Code": "address.zipCode",
+      "Phone": "phoneNumber",
+      "Email": "email",
+      "Website": "website",
+      "Handle": "id"
+    }
   }
 }

@@ -128,6 +128,27 @@ export const scraperService = {
   async getBrandConfig(brandId: string): Promise<{ brandId: string; config: any }> {
     const response = await api.get(`/scraper/brands/${brandId}`);
     return response.data;
+  },
+
+  // Get CSV records for a completed job
+  async getJobRecords(jobId: string): Promise<{
+    jobId: string;
+    brandName: string;
+    columns: string[];
+    records: Record<string, string>[];
+  }> {
+    const response = await api.get(`/scraper/jobs/${jobId}/records`);
+    return response.data;
+  },
+
+  // Update rows in master CSV
+  async updateMasterCsvRows(rows: Record<string, string>[]): Promise<{
+    message: string;
+    updatedCount: number;
+    totalRequested: number;
+  }> {
+    const response = await api.patch('/scraper/master-csv', { rows });
+    return response.data;
   }
 };
 

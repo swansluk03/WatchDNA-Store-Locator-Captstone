@@ -1,29 +1,11 @@
 #!/usr/bin/env python3
-"""
-Store Locator Pattern Detector
-================================
-
-Auto-detects how store locator data is structured and generates field mappings.
-Works with common patterns across different platforms (Shopify, WordPress, custom APIs).
-
-Usage:
-    from pattern_detector import detect_data_pattern, auto_generate_field_mapping
-    
-    pattern = detect_data_pattern(sample_data, source_type="json")
-    field_mapping = auto_generate_field_mapping(sample_data)
-"""
+"""Auto-detects store locator data structure and generates field mappings."""
 
 import re
 import json
 from typing import Dict, List, Any, Optional, Tuple
-from collections import Counter
 
 
-# =============================================================================
-# COMMON FIELD PATTERNS
-# =============================================================================
-
-# These are the common ways different platforms store the same data
 FIELD_PATTERNS = {
     "Handle": [
         "id", "store_id", "location_id", "dealer_id", "shop_id",
@@ -86,8 +68,6 @@ FIELD_PATTERNS = {
     "Sunday": ["sunday", "sun", "Sunday"]
 }
 
-
-# Common data structure patterns
 DATA_STRUCTURE_PATTERNS = {
     "flat_array": "Array of flat objects at root",
     "nested_array": "Array nested within response object",
@@ -99,21 +79,7 @@ DATA_STRUCTURE_PATTERNS = {
 }
 
 
-# =============================================================================
-# PATTERN DETECTION FUNCTIONS
-# =============================================================================
-
 def detect_data_structure(data: Any, url: str = "") -> Dict[str, Any]:
-    """
-    Detect the structure pattern of store locator data
-    
-    Args:
-        data: Raw response data (dict, list, or string)
-        url: Optional URL to help detect viewport-based patterns
-    
-    Returns:
-        Dict with structure info: type, data_path, is_paginated, etc.
-    """
     result = {
         "type": "unknown",
         "data_path": "",
@@ -124,14 +90,10 @@ def detect_data_structure(data: Any, url: str = "") -> Dict[str, Any]:
         "is_geojson": False,
         "confidence": 0.0
     }
-    
-    # Check if it's a viewport-based API (from URL)
     viewport_keywords = ["viewport", "bounds", "bbox", "ne_lat", "sw_lat", "northEast", "southWest"]
     if url and any(kw in url.lower() for kw in viewport_keywords):
         result["is_viewport_based"] = True
         result["confidence"] += 0.3
-    
-    # Handle different data types
     if isinstance(data, list):
         result["is_array"] = True
         result["type"] = "flat_array"
@@ -140,21 +102,16 @@ def detect_data_structure(data: Any, url: str = "") -> Dict[str, Any]:
         return result
     
     if isinstance(data, dict):
-        # Check for GeoJSON
         if "type" in data and "features" in data and data.get("type") == "FeatureCollection":
             result["type"] = "geojson"
             result["is_geojson"] = True
             result["data_path"] = "features"
             result["confidence"] = 1.0
             return result
-        
-        # Check for common pagination patterns
         pagination_keys = ["page", "pages", "total", "count", "next", "prev", "pagination"]
         if any(key in data for key in pagination_keys):
             result["is_paginated"] = True
             result["confidence"] += 0.3
-        
-        # Look for array of stores in nested structure
         common_data_keys = [
             "data", "results", "items", "stores", "locations", "retailers",
             "dealers", "shops", "establishments", "places", "markers"
@@ -397,12 +354,12 @@ def extract_sample_data(data: Any, data_path: str = "", limit: int = 3) -> List[
 
 def detect_data_pattern(url: str, sample_response: Any) -> Dict[str, Any]:
     """
-    Main function to detect complete data pattern
-    
+    Main function to detect complete data pattern.
+
     Args:
         url: API endpoint or page URL
-        sample_response: Sample response data
-    
+        sample_response: Sample response data (dict, list, or HTML string)
+
     Returns:
         Complete pattern analysis with structure, fields, and recommendations
     """
@@ -526,12 +483,7 @@ def print_pattern_analysis(pattern: Dict[str, Any], verbose: bool = True):
     print("=" * 80)
 
 
-# =============================================================================
-# MAIN CLI
-# =============================================================================
-
 def main():
-    """CLI for testing pattern detection"""
     import argparse
     import requests
     
@@ -580,13 +532,8 @@ Examples:
         print("❌ Please provide --url or --file")
         return 1
     
-    # Detect pattern
     pattern = detect_data_pattern(url, data)
-    
-    # Print results
     print_pattern_analysis(pattern, verbose=args.verbose)
-    
-    # Export mapping
     if pattern["mapping_score"]["confidence"] in ["high", "medium"]:
         output_file = "detected_mapping.json"
         with open(output_file, 'w') as f:

@@ -1,46 +1,14 @@
 #!/usr/bin/env python3
-"""
-Definitive Data Normalizer for Store Locations
-===============================================
-
-This module provides the standard algorithm for transforming any scraped data
-into the canonical locations.csv format. It handles:
-- Field mapping from source schemas to target schema
-- Data validation (coordinates, phone numbers, URLs, etc.)
-- Data normalization (formatting, cleaning, type conversion)
-- Handle generation for missing handles
-- Status/boolean field standardization
-
-Usage:
-    from data_normalizer import normalize_location, batch_normalize
-
-    # Single location
-    raw_data = {"store_name": "Example Store", "lat": "40.7128", ...}
-    normalized = normalize_location(raw_data, field_mapping)
-
-    # Batch processing
-    normalized_batch = batch_normalize(raw_data_list, field_mapping)
-"""
+"""Transforms scraped data into canonical locations.csv format. Handles field mapping, validation, normalization."""
 
 import re
 import csv
 import os
 import json
 import time
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Set
 from urllib.parse import urlparse, urljoin
-from urllib.parse import urlparse
 
-# Geocoding support (optional - only used if geopy is available)
-try:
-    from geopy.geocoders import Nominatim
-    from geopy.exc import GeocoderTimedOut, GeocoderServiceError, GeocoderUnavailable
-    GEOPY_AVAILABLE = True
-except ImportError:
-    GEOPY_AVAILABLE = False
-    Nominatim = None
-
-# The canonical schema for locations.csv (loaded from root locations.csv)
 CANONICAL_SCHEMA = [
     "Handle", "Name", "Status", "Address Line 1", "Address Line 2", "Postal/ZIP Code",
     "City", "State/Province/Region", "Country", "Phone", "Email", "Website", "Image URL",
@@ -57,10 +25,7 @@ CANONICAL_SCHEMA = [
     "Custom Button URL 2 - ES"
 ]
 
-# Try to load schema from the repository's locations2.csv (the master template)
 def load_canonical_schema():
-    """Load the canonical schema from locations2.csv if it exists"""
-    # Try locations2.csv first (this is the master template with correct formatting)
     csv_path2 = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "locations2.csv"))
     if os.path.exists(csv_path2):
         try:
@@ -71,8 +36,6 @@ def load_canonical_schema():
                     return [h for h in header_line.split(',')]
         except Exception as e:
             print(f"⚠️  Could not load schema from locations2.csv: {e}")
-    
-    # Fall back to locations.csv if locations2.csv doesn't exist
     csv_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "locations.csv"))
     if os.path.exists(csv_path):
         try:
@@ -88,37 +51,18 @@ def load_canonical_schema():
 SCHEMA = load_canonical_schema()
 
 
-# =============================================================================
-# DATA VALIDATION FUNCTIONS
-# =============================================================================
-
 def clean_html_tags(text: Any) -> str:
-    """
-    Remove HTML tags and Unicode control characters from text
-    
-    Args:
-        text: Text that may contain HTML tags or Unicode control chars
-    
-    Returns:
-        Cleaned text string
-    """
     if not text:
         return ""
     
     text_str = str(text).strip()
     
-    # Replace common HTML tags
-    import re
     # Replace <br>, <br/>, <br />, etc. with space
     text_str = re.sub(r'<br\s*/?>', ' ', text_str, flags=re.IGNORECASE)
     # Remove any other HTML tags
     text_str = re.sub(r'<[^>]+>', '', text_str)
     
-    # Remove Unicode control characters (like RTL/LTR marks)
-    # These include: U+200E, U+200F, U+202A-U+202E, U+2066-U+2069
     text_str = re.sub(r'[\u200E\u200F\u202A-\u202E\u2066-\u2069]', '', text_str)
-    
-    # Clean up multiple spaces
     text_str = re.sub(r'\s+', ' ', text_str)
     
     return text_str.strip()
@@ -159,46 +103,95 @@ def clean_address(address: Any) -> str:
     # Note: In the CSV string, \\ represents a literal backslash, so we need to match literal \\
     address_str = re.sub(r'\\\\+', ', ', address_str)
     
+    # Fix missing space between word and number (e.g. "Junction500" -> "Junction 500", "500Oxford" -> "500 Oxford")
+    # Common when source JSON/HTML concatenates address parts without separators.
+    # Conservative: only fix word+digits (2+ letters) and digits+word (3+ letters, excluding ordinals st/nd/rd/th)
+    address_str = re.sub(r'([a-zA-Z]{2,})(\d+)', r'\1 \2', address_str)  # Junction500 -> Junction 500
+    address_str = re.sub(
+        r'(\d+)(?!(?:st|nd|rd|th)\b)([a-zA-Z]{3,})',
+        r'\1 \2',
+        address_str,
+        flags=re.IGNORECASE,
+    )  # 500Oxford -> 500 Oxford; preserves 41st, 5th, 115A
+
     # Clean up any double spaces or spaces before commas that might have been created
     address_str = re.sub(r'\s+', ' ', address_str)
     address_str = re.sub(r'\s*,', ',', address_str)  # Remove space before comma
     address_str = re.sub(r',\s*,', ',', address_str)  # Remove double commas
-    
+
     return address_str.strip()
 
 
-def validate_coordinate(value: Any, coord_type: str = "latitude") -> Optional[str]:
+def strip_redundant_address_parts(
+    addr1: str, city: str, state: str, country: str, postal: str = ""
+) -> str:
     """
-    Validate and normalize a coordinate value
-    
+    Remove trailing city, state, country (and optionally state+postal) from Address Line 1
+    when they exist in separate fields. Prevents display duplication when full_address or
+    combined address is used for Address Line 1.
+
+    Args:
+        addr1: Address Line 1 (may contain full address with city/state/country)
+        city: City from separate field
+        state: State/Province/Region from separate field
+        country: Country from separate field
+        postal: Postal/ZIP Code from separate field (optional, used to strip ", state postal")
+
+    Returns:
+        Address Line 1 with redundant trailing parts stripped
+    """
+    if not addr1 or not addr1.strip():
+        return addr1
+    result = addr1.strip()
+    # Strip from right: country, state+postal (or state), city (reverse order)
+    # 1. Country
+    if country and country.strip():
+        part_clean = country.strip()
+        for suffix in [f", {part_clean}", f",{part_clean}"]:
+            if result.lower().endswith(suffix.lower()) and len(result) > len(suffix):
+                result = result[:-len(suffix)].rstrip().rstrip(',').strip()
+                break
+    # 2. State (possibly followed by postal, e.g. ", NH 1071 AZ")
+    if state and state.strip():
+        part_clean = state.strip()
+        stripped = False
+        if postal and postal.strip():
+            postal_clean = postal.strip()
+            for suffix in [
+                f", {part_clean} {postal_clean}",
+                f",{part_clean} {postal_clean}",
+            ]:
+                if result.lower().endswith(suffix.lower()) and len(result) > len(suffix):
+                    result = result[:-len(suffix)].rstrip().rstrip(',').strip()
+                    stripped = True
+                    break
+        if not stripped:
+            for suffix in [f", {part_clean}", f",{part_clean}"]:
+                if result.lower().endswith(suffix.lower()) and len(result) > len(suffix):
+                    result = result[:-len(suffix)].rstrip().rstrip(',').strip()
+                    break
+    # 3. City
+    if city and city.strip():
+        part_clean = city.strip()
+        for suffix in [f", {part_clean}", f",{part_clean}"]:
+            if result.lower().endswith(suffix.lower()) and len(result) > len(suffix):
+                result = result[:-len(suffix)].rstrip().rstrip(',').strip()
+                break
+    return result
+
+
+def validate_coordinate(value: Any, coord_type: str = "latitude") -> str:
+    """
+    Validate and normalize a coordinate value.
+
     Args:
         value: Raw coordinate value (string, float, int, etc.)
         coord_type: "latitude" or "longitude"
-    
+
     Returns:
         Normalized coordinate string with 7 decimal places, or empty string if invalid
     """
-    if value is None or value == "":
-        return ""
-    
-    try:
-        coord = float(str(value).strip())
-        
-        # Validate range
-        if coord_type.lower() == "latitude":
-            if not (-90 <= coord <= 90):
-                return ""
-        else:  # longitude
-            if not (-180 <= coord <= 180):
-                return ""
-        
-        # Check for NaN/Inf
-        if not (-180 <= coord <= 180):  # Catches NaN and Inf
-            return ""
-        
-        return f"{coord:.7f}"
-    except (ValueError, TypeError):
-        return ""
+    return normalize_coordinate_string(value, coord_type)
 
 
 def validate_phone(phone: Any) -> str:
@@ -243,17 +236,57 @@ def validate_email(email: Any) -> str:
     return ""
 
 
-def validate_url(url: Any, validate_http: bool = False) -> str:
+def _is_url_partial(url_str: str) -> bool:
+    """
+    Detect if a URL is partial (path-only or has invalid host like locale code).
+    E.g. 'https://en-us/storelocator/...' has host 'en-us' which is a path segment, not a domain.
+    """
+    parsed = urlparse(url_str)
+    if not parsed.scheme:
+        return True
+    netloc = (parsed.netloc or "").lower()
+    if not netloc:
+        return True
+    # No TLD: real domains have a dot (e.g. www.bulgari.com)
+    if "." not in netloc:
+        return True
+    # Locale-like host (e.g. en-us, fr-fr) - these are path segments, not domains
+    if re.match(r"^[a-z]{2}-[a-z]{2}$", netloc):
+        return True
+    return False
+
+
+def _is_image_url(url_str: str) -> bool:
+    """
+    Check if URL points to an image file (not a store page).
+    Only returns True when the path's last segment ends with an image extension,
+    avoiding false positives like 'store-locator-jpg-guide.html' or paths containing
+    'png' or 'jpg' as substrings.
+    """
+    parsed = urlparse(url_str)
+    path = (parsed.path or "").strip()
+    if not path:
+        return False
+    last_segment = path.rstrip("/").split("/")[-1].lower()
+    image_extensions = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")
+    return any(last_segment.endswith(ext) for ext in image_extensions)
+
+
+def validate_url(url: Any, validate_http: bool = False, base_url: Optional[str] = None, field_context: Optional[str] = None) -> str:
     """
     Validate and normalize URL
     
     Ensures URL has a scheme (defaults to https://)
     Converts relative Omega store detail URLs to full URLs
+    Resolves partial URLs (path-only or locale-as-host) against base_url when provided
+    Rejects image URLs when field_context is "Website" (store page, not store photo)
     Optionally validates URLs via HTTP request
     
     Args:
         url: URL string to validate
         validate_http: If True, make HTTP request to verify URL is accessible
+        base_url: Optional base URL (e.g. https://www.bulgari.com/) for resolving partial URLs
+        field_context: Optional field name - when "Website", image URLs are rejected
     
     Returns:
         Validated and normalized URL, or empty string if invalid
@@ -280,11 +313,28 @@ def validate_url(url: Any, validate_http: bool = False) -> str:
     if url_str and not urlparse(url_str).scheme:
         url_str = f"https://{url_str}"
     
+    # Resolve partial URLs (path-only or host that looks like locale/path) against base_url
+    if base_url and _is_url_partial(url_str):
+        parsed_partial = urlparse(url_str)
+        base = base_url.rstrip("/") + "/"
+        # If netloc looks like a path segment (e.g. en-us), treat netloc+path as the path
+        if parsed_partial.netloc and "." not in parsed_partial.netloc:
+            path_part = f"{parsed_partial.netloc}{parsed_partial.path or ''}"
+        else:
+            path_part = parsed_partial.path or url_str.lstrip("/")
+        if parsed_partial.query:
+            path_part += "?" + parsed_partial.query
+        url_str = urljoin(base, path_part)
+    
     # Basic validation - must have scheme and netloc
     parsed = urlparse(url_str)
     if not (parsed.scheme and parsed.netloc):
         return ""
-    
+
+    # Reject image URLs when this is the Website field (store page, not store photo)
+    if field_context == "Website" and _is_image_url(url_str):
+        return ""
+
     # Optional HTTP validation
     if validate_http:
         try:
@@ -333,7 +383,7 @@ def validate_boolean(value: Any, default: bool = True) -> str:
     return "TRUE" if default else "FALSE"
 
 
-def generate_handle(name: str, city: str = "", existing_handles: set = None) -> str:
+def generate_handle(name: str, city: str = "", existing_handles: Optional[Set[str]] = None) -> str:
     """
     Generate a URL-friendly handle from name and city
     
@@ -368,9 +418,56 @@ def generate_handle(name: str, city: str = "", existing_handles: set = None) -> 
     return handle
 
 
-# =============================================================================
 # FIELD MAPPING AND EXTRACTION
-# =============================================================================
+
+# Canonical field aliases for fuzzy key matching (when explicit mapping is missing/empty)
+FIELD_MAPPING_ALIASES = {
+    "Name": ["name", "title", "storeName", "store_name", "establishment_name", "nameTranslated", "shortName"],
+    "Address Line 1": ["address", "address1", "streetAddress", "street_address", "line1", "adr", "shortAddress", "full_address", "address_line_1"],
+    "Address Line 2": ["address2", "address_line_2", "street2", "line2"],
+    "City": ["city", "cityName", "city_name", "locality"],
+    "State/Province/Region": ["state", "region", "stateName", "regionName", "province", "stateCode", "isoRegionCode"],
+    "Country": ["country", "countryName", "country_name", "countryCode"],
+    "Postal/ZIP Code": ["zip", "zipcode", "postalCode", "postal_code", "postcode"],
+    "Phone": ["phone", "phone1", "phone2", "mainPhone", "telephone", "tel", "mobile", "dealerPhone"],
+    "Email": ["email", "emails", "contact_email", "mail"],
+    "Website": ["website", "url", "websiteUrl", "permalink", "dealerSiteUrl"],
+    "Latitude": ["lat", "latitude", "y"],
+    "Longitude": ["lng", "lon", "longitude", "x"],
+    "Handle": ["id", "handle", "store_id", "dealerId", "rolexId", "meta.id"],
+}
+
+
+def normalize_field_value(value: Any) -> str:
+    """
+    Convert extracted field value to string, handling arrays and objects.
+    Used for APIs that return emails as ['x@y.com'] or phone as {display: "..."}.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        # Take first non-empty element, or join if multiple
+        non_empty = [normalize_field_value(v) for v in value if v is not None]
+        non_empty = [s for s in non_empty if s]
+        if not non_empty:
+            return ""
+        if len(non_empty) == 1:
+            return non_empty[0]
+        return ", ".join(non_empty[:3])  # Cap at 3 to avoid huge strings
+    if isinstance(value, dict):
+        # Try common keys for phone/email objects
+        for key in ["display", "value", "number", "raw", "formatted"]:
+            if key in value and value[key]:
+                return normalize_field_value(value[key])
+        # Fallback: first non-empty value
+        for v in value.values():
+            if v and isinstance(v, str):
+                return v.strip()
+        return ""
+    return str(value).strip()
+
 
 def get_nested_value(obj: Dict, path: str) -> Any:
     """
@@ -400,76 +497,85 @@ def get_nested_value(obj: Dict, path: str) -> Any:
     return value
 
 
-def extract_field(raw_data: Dict, field_config: Any) -> Any:
+def _extract_value_by_path(raw_data: Dict, path: str) -> Any:
+    """Extract value using dot notation or direct key. Returns raw value (not normalized)."""
+    if '.' in path:
+        parts = path.split('.')
+        value = raw_data
+        for part in parts:
+            if value is None:
+                return None
+            if isinstance(value, dict):
+                value = value.get(part)
+            elif isinstance(value, list):
+                try:
+                    idx = int(part)
+                    if 0 <= idx < len(value):
+                        value = value[idx]
+                    else:
+                        return None
+                except ValueError:
+                    return None
+            else:
+                return None
+        return value
+    return raw_data.get(path)
+
+
+def _fuzzy_extract(raw_data: Dict, canonical_field: str) -> str:
+    """Try to find value using alias keys when explicit mapping returned empty."""
+    aliases = FIELD_MAPPING_ALIASES.get(canonical_field, [])
+    for alias in aliases:
+        value = _extract_value_by_path(raw_data, alias)
+        if value is not None and value != "":
+            return normalize_field_value(value)
+    if isinstance(raw_data, dict):
+        for key, val in raw_data.items():
+            if val and isinstance(val, (str, int, float)):
+                key_lower = key.lower()
+                if canonical_field == "Phone" and any(p in key_lower for p in ["phone", "tel"]):
+                    return normalize_field_value(val)
+                if canonical_field == "Email" and any(p in key_lower for p in ["email", "mail"]):
+                    return normalize_field_value(val)
+                if canonical_field == "Address Line 1" and any(p in key_lower for p in ["address", "street", "line1"]):
+                    return normalize_field_value(val)
+            if isinstance(val, dict) and canonical_field in ["Phone", "Email", "Address Line 1"]:
+                nested = _fuzzy_extract(val, canonical_field)
+                if nested:
+                    return nested
+    return ""
+
+
+def extract_field(raw_data: Dict, field_config: Any, canonical_field: str = "", use_fuzzy_fallback: bool = True) -> Any:
     """
-    Extract a field value from raw data using various accessor methods
-    
-    Args:
-        raw_data: Raw scraped data dictionary
-        field_config: Can be:
-            - str: Direct key lookup or dot-notation path (e.g., "address.city")
-            - list: Try multiple keys in order, return first non-empty
-            - dict: {"key": "field_name", "default": "value", "transform": func}
+    Extract a field value from raw data. Handles arrays/objects via normalize_field_value.
+    Optionally uses fuzzy key matching when explicit mapping returns empty.
     
     Returns:
-        Extracted value or empty string
+        Extracted value as string (normalized)
     """
-    # Simple string key (supports dot notation for nested paths and array indices)
+    value = None
     if isinstance(field_config, str):
-        if '.' in field_config:
-            # Use dot notation for nested paths (supports array indices like "emails.0")
-            parts = field_config.split('.')
-            value = raw_data
-            for part in parts:
-                if value is None:
-                    return ""
-                if isinstance(value, dict):
-                    value = value.get(part)
-                elif isinstance(value, list):
-                    try:
-                        idx = int(part)
-                        if 0 <= idx < len(value):
-                            value = value[idx]
-                        else:
-                            return ""
-                    except ValueError:
-                        return ""
-                else:
-                    return ""
-            return value if value is not None else ""
-        else:
-            return raw_data.get(field_config, "")
-    
-    # List of alternative keys (try in order, supports dot notation)
-    if isinstance(field_config, list):
+        value = _extract_value_by_path(raw_data, field_config)
+    elif isinstance(field_config, list):
         for key in field_config:
-            if '.' in key:
-                value = get_nested_value(raw_data, key)
-            else:
-                value = raw_data.get(key, "")
-            if value:
-                return value
-        return ""
-    
-    # Dict with advanced options
-    if isinstance(field_config, dict):
+            value = get_nested_value(raw_data, key) if '.' in key else raw_data.get(key)
+            if value is not None and value != "":
+                break
+    elif isinstance(field_config, dict):
         key = field_config.get("key", "")
         default = field_config.get("default", "")
-        
-        if '.' in key:
-            value = get_nested_value(raw_data, key)
-            value = value if value is not None else default
-        else:
-            value = raw_data.get(key, default)
-        
-        # Apply transformation if provided
+        value = get_nested_value(raw_data, key) if '.' in key else raw_data.get(key, default)
+        if value is None:
+            value = default
         transform = field_config.get("transform")
         if transform and callable(transform):
             value = transform(value)
-        
-        return value
     
-    return ""
+    result = normalize_field_value(value) if value is not None else ""
+    if not result and use_fuzzy_fallback and canonical_field:
+        result = _fuzzy_extract(raw_data, canonical_field)
+    return result
 
 
 def apply_field_mapping(raw_data: Dict, field_mapping: Dict[str, Any]) -> Dict[str, str]:
@@ -484,16 +590,15 @@ def apply_field_mapping(raw_data: Dict, field_mapping: Dict[str, Any]) -> Dict[s
         Dictionary with canonical field names and extracted values
     """
     mapped_data = {}
-    
     for canonical_field, source_config in field_mapping.items():
-        mapped_data[canonical_field] = extract_field(raw_data, source_config)
-    
+        # Skip special keys (e.g. _base_url for URL resolution context)
+        if canonical_field.startswith("_"):
+            continue
+        mapped_data[canonical_field] = extract_field(raw_data, source_config, canonical_field=canonical_field)
     return mapped_data
 
 
-# =============================================================================
 # COUNTRY INFERENCE FUNCTION
-# =============================================================================
 
 def infer_country_from_address(
     address: str,
@@ -703,120 +808,23 @@ def infer_country_from_address(
     return ""
 
 
-# =============================================================================
-# GEOCODING FUNCTION (for missing coordinates)
-# =============================================================================
+# COORDINATE & GEOCODING (delegate to shared utilities)
 
-# Global geocoder instance (lazy initialization)
-_geocoder = None
-_last_geocode_time = 0
-_geocode_cache = {}  # Cache geocoding results to avoid duplicate API calls
-
-def get_geocoder():
-    """Get or create Nominatim geocoder instance"""
-    global _geocoder
-    if not GEOPY_AVAILABLE:
-        return None
-    
-    if _geocoder is None:
-        # Use Nominatim (OpenStreetMap) - free, no API key required
-        # User agent is required by Nominatim usage policy
-        _geocoder = Nominatim(
-            user_agent="WatchDNA-StoreLocator/1.0 (https://watchdna.com)",
-            timeout=10  # 10 second timeout
-        )
-    
-    return _geocoder
+from coordinate_utils import normalize_coordinate_string
+from geocoding_utils import (
+    GEOPY_AVAILABLE as _GEOPY_AVAILABLE,
+    get_geocoder,
+    geocode_address,
+)
+GEOPY_AVAILABLE = _GEOPY_AVAILABLE
 
 
-def geocode_address(
-    address: str,
-    city: str = "",
-    state: str = "",
-    country: str = ""
-) -> Optional[Tuple[float, float]]:
-    """
-    Geocode an address to get latitude and longitude using Nominatim (OpenStreetMap).
-    
-    This is a free geocoding service that doesn't require an API key.
-    Rate limit: 1 request per second (enforced automatically).
-    
-    Args:
-        address: Address line 1
-        city: City name
-        state: State/Province/Region
-        country: Country name
-    
-    Returns:
-        Tuple of (latitude, longitude) if found, None otherwise
-    """
-    if not GEOPY_AVAILABLE:
-        return None
-    
-    # Build full address string
-    address_parts = []
-    if address:
-        address_parts.append(address)
-    if city:
-        address_parts.append(city)
-    if state:
-        address_parts.append(state)
-    if country:
-        address_parts.append(country)
-    
-    if not address_parts:
-        return None
-    
-    full_address = ", ".join(address_parts)
-    
-    # Check cache first
-    cache_key = full_address.lower().strip()
-    if cache_key in _geocode_cache:
-        return _geocode_cache[cache_key]
-    
-    geocoder = get_geocoder()
-    if not geocoder:
-        return None
-    
-    # Rate limiting: Nominatim requires max 1 request per second
-    global _last_geocode_time
-    current_time = time.time()
-    time_since_last = current_time - _last_geocode_time
-    if time_since_last < 1.0:
-        time.sleep(1.0 - time_since_last)
-    
-    try:
-        _last_geocode_time = time.time()
-        location = geocoder.geocode(full_address, exactly_one=True, timeout=10)
-        
-        if location:
-            lat = location.latitude
-            lon = location.longitude
-            result = (lat, lon)
-            # Cache the result
-            _geocode_cache[cache_key] = result
-            return result
-        else:
-            # Cache None result to avoid retrying failed addresses
-            _geocode_cache[cache_key] = None
-            return None
-            
-    except (GeocoderTimedOut, GeocoderServiceError, GeocoderUnavailable) as e:
-        # Log but don't fail - geocoding is optional
-        return None
-    except Exception as e:
-        # Any other error - return None
-        return None
-
-
-# =============================================================================
 # MAIN NORMALIZATION FUNCTION
-# =============================================================================
 
 def normalize_location(
     raw_data: Dict[str, Any],
     field_mapping: Optional[Dict[str, Any]] = None,
-    existing_handles: Optional[set] = None
+    existing_handles: Optional[Set[str]] = None
 ) -> Dict[str, str]:
     """
     The definitive algorithm for normalizing store location data
@@ -835,8 +843,9 @@ def normalize_location(
     # Initialize with empty values for all canonical fields
     normalized = {field: "" for field in SCHEMA}
     
-    # Apply field mapping if provided
-    if field_mapping:
+    # Apply field mapping if provided (and has actual field rules, not just _base_url etc.)
+    data_fields = [k for k in (field_mapping or {}) if not k.startswith("_")]
+    if field_mapping and data_fields:
         mapped_data = apply_field_mapping(raw_data, field_mapping)
     else:
         mapped_data = raw_data
@@ -844,7 +853,16 @@ def normalize_location(
     # Basic fields (direct copy with cleaning - also clean HTML tags)
     normalized["Name"] = clean_html_tags(mapped_data.get("Name", ""))
     # Address fields need special cleaning for backslash issues
-    normalized["Address Line 1"] = clean_address(clean_html_tags(mapped_data.get("Address Line 1", "")))
+    addr1 = clean_address(clean_html_tags(mapped_data.get("Address Line 1", "")))
+    # Universal fallback: when address_line_1/address1 is blank but full_address exists, use it
+    if not addr1 and raw_data:
+        for key in ["full_address", "address_line_1", "addressLine1", "address1", "address", "streetAddress"]:
+            val = raw_data.get(key)
+            if val and isinstance(val, str) and val.strip():
+                addr1 = clean_address(clean_html_tags(val.strip()))
+                if addr1:
+                    break
+    normalized["Address Line 1"] = addr1
     normalized["Address Line 2"] = clean_address(clean_html_tags(mapped_data.get("Address Line 2", "")))
     normalized["Postal/ZIP Code"] = clean_html_tags(mapped_data.get("Postal/ZIP Code", ""))
     normalized["City"] = clean_html_tags(mapped_data.get("City", ""))
@@ -866,14 +884,26 @@ def normalize_location(
     else:
         normalized["Country"] = country_raw
     
+    # Strip redundant city/state/country from Address Line 1 when in separate fields (avoids display duplication)
+    normalized["Address Line 1"] = strip_redundant_address_parts(
+        normalized["Address Line 1"],
+        normalized["City"],
+        normalized["State/Province/Region"],
+        normalized["Country"],
+        normalized.get("Postal/ZIP Code", ""),
+    )
+    
     normalized["Priority"] = clean_html_tags(mapped_data.get("Priority", ""))
     
+    # Base URL for resolving partial store URLs (e.g. Bulgari paths like en-us/storelocator/...)
+    base_url = field_mapping.get("_base_url") if field_mapping else None
+
     # Validated fields
     normalized["Status"] = validate_boolean(mapped_data.get("Status", True), default=True)
     normalized["Phone"] = validate_phone(mapped_data.get("Phone", ""))
     normalized["Email"] = validate_email(mapped_data.get("Email", ""))
-    normalized["Website"] = validate_url(mapped_data.get("Website", ""))
-    normalized["Image URL"] = validate_url(mapped_data.get("Image URL", ""))
+    normalized["Website"] = validate_url(mapped_data.get("Website", ""), base_url=base_url, field_context="Website")
+    normalized["Image URL"] = validate_url(mapped_data.get("Image URL", ""), base_url=base_url)
     
     # Coordinates (critical for mapping)
     normalized["Latitude"] = validate_coordinate(mapped_data.get("Latitude", ""), "latitude")
@@ -930,14 +960,14 @@ def normalize_location(
     for btn_num in ["1", "2"]:
         # English
         normalized[f"Custom Button title {btn_num}"] = str(mapped_data.get(f"Custom Button title {btn_num}", "")).strip()
-        normalized[f"Custom Button URL {btn_num}"] = validate_url(mapped_data.get(f"Custom Button URL {btn_num}", ""))
+        normalized[f"Custom Button URL {btn_num}"] = validate_url(mapped_data.get(f"Custom Button URL {btn_num}", ""), base_url=base_url)
         
         # Localized
         for lang in [" - FR", " - ZH-CN", " - ES"]:
             title_key = f"Custom Button title {btn_num}{lang}"
             url_key = f"Custom Button URL {btn_num}{lang}"
             normalized[title_key] = str(mapped_data.get(title_key, "")).strip()
-            normalized[url_key] = validate_url(mapped_data.get(url_key, ""))
+            normalized[url_key] = validate_url(mapped_data.get(url_key, ""), base_url=base_url)
     
     return normalized
 
@@ -1048,9 +1078,7 @@ def batch_normalize(
     return normalized_list
 
 
-# =============================================================================
 # CSV I/O FUNCTIONS
-# =============================================================================
 
 def write_normalized_csv(data: List[Dict[str, str]], filename: str = "output/locations.csv"):
     """
@@ -1095,9 +1123,7 @@ def read_csv_to_dict(filename: str) -> List[Dict[str, str]]:
         return list(reader)
 
 
-# =============================================================================
 # EXAMPLE USAGE
-# =============================================================================
 
 if __name__ == "__main__":
     # Example 1: Normalize with direct field names

@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""
-Pattern Detector
-================
-
-Detects endpoint patterns and suggests brand configuration based on
-existing patterns from brand_configs.json.
-"""
+"""Detects endpoint patterns and suggests brand configuration from brand_configs.json."""
 
 import json
 import re
@@ -14,9 +8,6 @@ from urllib.parse import urlparse, parse_qs
 
 
 class PatternDetector:
-    """Detect patterns and suggest brand configurations"""
-    
-    # Common field name patterns from brand_configs.json
     FIELD_PATTERNS = {
         "Name": ["name", "nameTranslated", "shortName", "establishment_name", "title"],
         "Address Line 1": ["streetAddress", "shortAddress", "address", "address1", "address.line1", "address.street"],
@@ -25,8 +16,8 @@ class PatternDetector:
         "State/Province/Region": ["regionName", "state", "province", "region", "stateCode", "address.region", "address.state"],
         "Country": ["countryName", "country", "countryCode", "address.countryCode", "address.country"],
         "Postal/ZIP Code": ["postalCode", "zipCode", "zip", "postal", "postcode", "address.postalCode"],
-        "Phone": ["phone1", "phone", "phoneNumber", "mainPhone", "mainPhone.display", "telephone"],
-        "Email": ["email", "emails.0", "contact_email"],
+        "Phone": ["mainPhone.display", "mainPhone.number", "phone1", "phone", "phoneNumber", "mainPhone", "telephone"],
+        "Email": ["c_baaEmail", "emails.0", "emails", "email", "contact_email"],
         "Website": ["urlRolexV7", "website", "url", "permalink"],
         "Latitude": ["lat", "latitude"],  # Dynamic detection handles nested paths (e.g., .lat, .latitude suffixes)
         "Longitude": ["lng", "longitude", "lon", "long"],  # Dynamic detection handles nested paths (e.g., .lng, .longitude suffixes)
@@ -34,21 +25,9 @@ class PatternDetector:
     }
     
     def __init__(self):
-        """Initialize pattern detector"""
         pass
-    
+
     def detect_and_suggest(self, endpoints: List[Dict], html_analysis: Optional[Dict], base_url: str) -> Optional[Dict]:
-        """
-        Detect patterns and suggest brand configuration
-        
-        Args:
-            endpoints: List of analyzed endpoints
-            html_analysis: HTML analysis results
-            base_url: Base URL of store locator page
-            
-        Returns:
-            Suggested brand configuration dictionary
-        """
         if not endpoints:
             # If no endpoints found, check HTML
             if html_analysis:
@@ -99,10 +78,11 @@ class PatternDetector:
             print(f"     Base:     {url[:100]}")
         
         params = endpoint.get('params', {})
-        endpoint_type = endpoint.get('type', 'json')
+        # Prefer verified_type from verifier (it actually fetches and analyzes) over network_analyzer type
+        endpoint_type = endpoint.get('verified_type') or endpoint.get('type', 'json')
         
-        # For radius-based endpoints, ensure URL has center point, large radius, and pagination
-        # This builds on top of any optimization already done by the verifier
+        # For radius-based endpoints only - do NOT add radius/center for country_filter
+        # Country-filter endpoints (e.g. Bulgari country-region=US) need country iteration, not radius
         if endpoint_type == 'radius':
             url = self._build_optimized_radius_url(url, endpoint)
             print(f"  💡 Built optimized radius URL with center point and large radius")
@@ -168,11 +148,19 @@ class PatternDetector:
                     traceback.print_exc()
                     # Don't use verified_mapping if detection failed
         
-        # If no verified data, try to fetch and analyze
+        # If no verified data, try to fetch and analyze (use limit=15 to avoid 1600+ store downloads)
         if not field_mapping:
             try:
                 import requests
-                response = requests.get(url, timeout=10, headers={
+                from urllib.parse import urlparse, parse_qs
+                fetch_url = url
+                parsed = urlparse(url)
+                params = parse_qs(parsed.query, keep_blank_values=True)
+                param_keys = [k.lower() for k in params.keys()]
+                if not any(p in param_keys for p in ['limit', 'per', 'per_page']):
+                    sep = '&' if parsed.query else '?'
+                    fetch_url = f"{url}{sep}limit=15"
+                response = requests.get(fetch_url, timeout=10, headers={
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     'Accept': 'application/json'
                 })
@@ -197,10 +185,17 @@ class PatternDetector:
         final_data_path = data_path or endpoint.get('data_path', '')
         if not final_data_path and endpoint.get('verified'):
             # If verified but no data_path, try to detect from endpoint structure
-            # This handles cases where verification found stores but didn't set data_path
             try:
                 import requests
-                response = requests.get(url, timeout=5, headers={
+                from urllib.parse import urlparse, parse_qs
+                fetch_url = url
+                parsed = urlparse(url)
+                params = parse_qs(parsed.query, keep_blank_values=True)
+                param_keys = [k.lower() for k in params.keys()]
+                if not any(p in param_keys for p in ['limit', 'per', 'per_page']):
+                    sep = '&' if parsed.query else '?'
+                    fetch_url = f"{url}{sep}limit=15"
+                response = requests.get(fetch_url, timeout=5, headers={
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     'Accept': 'application/json'
                 })
@@ -254,8 +249,11 @@ class PatternDetector:
             config["description"] = f"Radius-based search API{pagination_info}. Uses radius={radius_val}km from {center_point}. Scraper follows all pages (offset 0, 50, 100…) and uses multiple center points worldwide to get all stores ✅"
             config["_note"] = "This endpoint uses radius search. When paginated (per=50&offset=0), the scraper automatically follows all pages to get every store; it also uses multiple center points worldwide when needed."
         elif endpoint_type == 'country_filter':
-            config["description"] += " - Universal scraper handles country iteration automatically"
-            config["_note"] = "This endpoint filters by country. The universal scraper will automatically iterate through all countries."
+            # Ensure URL has country param for iteration - use base URL with example country
+            # Scraper will replace country-region=US with IT, FR, etc. for worldwide coverage
+            config["description"] = "Country-filter API - Change country param (e.g. country-region=US to IT, FR) for worldwide stores. Universal scraper iterates through all countries automatically."
+            config["_note"] = "This endpoint filters by country. To get all stores worldwide, iterate country-region (or country) param: US, IT, FR, DE, etc. Scraper uses comprehensive country list."
+            config["use_watch_store_countries"] = True  # Use 88-country list for worldwide coverage
         elif endpoint_type == 'paginated':
             config["description"] += " - Universal scraper handles pagination automatically"
             config["_note"] = "This endpoint uses pagination. The universal scraper will automatically follow all pages."
@@ -593,41 +591,103 @@ class PatternDetector:
             if best_city_match:
                 mapping["City"] = best_city_match
         
+        # Optional fields: can be edited in admin if missing - use lower presence threshold
+        OPTIONAL_FIELDS = ["Phone", "Email"]
+        MIN_PRESENCE_OPTIONAL = 0.3  # Accept if present in >= 30% of stores
+
         # Second pass: Detect all other fields
         for canonical_field, patterns in self.FIELD_PATTERNS.items():
             # Skip coordinates and City (already handled)
             if canonical_field in coordinate_fields.keys() or canonical_field == "City":
                 continue
-                
+
+            is_optional = canonical_field in OPTIONAL_FIELDS
+            min_matches = len(all_flat_stores) if not is_optional else max(1, int(len(all_flat_stores) * MIN_PRESENCE_OPTIONAL))
+
             best_match = None
-            best_score = 0
-            
-            # First, try predefined patterns (prioritize known patterns)
+            best_score = 0.0
+            best_presence = 0
+
+            # First, try predefined patterns - match flexibly (pattern works for any nesting depth)
             for pattern in patterns:
-                matches = sum(1 for flat_store in all_flat_stores if self._get_nested_value(flat_store, pattern) is not None)
-                if matches == len(all_flat_stores):  # Found in all stores
-                    mapping[canonical_field] = pattern
-                    best_match = pattern
-                    best_score = 1.0
-                    break
-            
-            # If no predefined pattern matched, search all keys intelligently
+                matching_keys = self._find_keys_matching_pattern(all_keys, pattern)
+                for key in matching_keys:
+                    presence = sum(1 for flat_store in all_flat_stores if self._get_nested_value(flat_store, key) is not None)
+                    if presence >= min_matches:
+                        sample_val = next((self._get_nested_value(s, key) for s in all_flat_stores if self._get_nested_value(s, key) is not None), None)
+                        # For Phone: prefer actual numbers over labels (c_phoneOrder.title -> "PHONE ORDER")
+                        if canonical_field == "Phone" and not self._looks_like_phone(sample_val):
+                            continue
+                        # For Email: prefer values that look like email
+                        if canonical_field == "Email" and sample_val and not self._looks_like_email(sample_val):
+                            continue
+                        # Prefer higher presence when quality is equal
+                        if presence > best_presence or (presence == best_presence and 1.0 > best_score):
+                            best_match = key
+                            best_score = 1.0
+                            best_presence = presence
+                if best_match:
+                    break  # Found match from predefined patterns
+
+            # If no predefined pattern matched, search all keys - prefer quality over presence
             if not best_match:
                 for key in all_keys:
-                    # Calculate similarity score
                     score = self._calculate_field_similarity(canonical_field, key)
-                    if score > best_score and score >= 0.6:  # Minimum threshold
-                        # Verify this key exists in all stores
-                        matches = sum(1 for flat_store in all_flat_stores if self._get_nested_value(flat_store, key) is not None)
-                        if matches == len(all_flat_stores):  # Found in all stores
-                            best_match = key
-                            best_score = score
-            
+                    if score >= 0.6:
+                        presence = sum(1 for flat_store in all_flat_stores if self._get_nested_value(flat_store, key) is not None)
+                        if presence >= min_matches:
+                            sample_val = next((self._get_nested_value(s, key) for s in all_flat_stores if self._get_nested_value(s, key) is not None), None)
+                            if canonical_field == "Phone" and not self._looks_like_phone(sample_val):
+                                continue
+                            if canonical_field == "Email" and sample_val and not self._looks_like_email(sample_val):
+                                continue
+                            # Prefer: higher quality score, then higher presence
+                            if (score > best_score) or (score == best_score and presence > best_presence):
+                                best_match = key
+                                best_score = score
+                                best_presence = presence
+
             if best_match:
                 mapping[canonical_field] = best_match
         
         return mapping
     
+    def _looks_like_phone(self, value: Any) -> bool:
+        """Check if value looks like a real phone number, not a label (e.g. 'PHONE ORDER')"""
+        if value is None:
+            return False
+        s = str(value).strip()
+        if not s:
+            return False
+        # Handle arrays (e.g. from API) - take first element
+        if isinstance(value, list) and value:
+            return self._looks_like_phone(value[0])
+        # Labels like "PHONE ORDER", "READ MORE" - no digits or very few
+        digit_count = sum(1 for c in s if c.isdigit())
+        if digit_count < 5:  # Real phone has at least 5+ digits
+            return False
+        # Reject known label patterns
+        reject_patterns = ["phone order", "read more", "click", "contact us"]
+        if any(p in s.lower() for p in reject_patterns):
+            return False
+        return True
+
+    def _looks_like_email(self, value: Any) -> bool:
+        """Check if value looks like an email address (has @ and domain)"""
+        if value is None:
+            return False
+        if isinstance(value, list) and value:
+            return self._looks_like_email(value[0])
+        s = str(value).strip()
+        if not s or len(s) < 5:
+            return False
+        if "@" not in s or "." not in s.split("@")[-1]:
+            return False
+        # Reject URLs and labels
+        if s.startswith("http") or " " in s:
+            return False
+        return True
+
     def _is_valid_coordinate(self, value: Any) -> bool:
         """Check if a value is a valid coordinate (number)"""
         if value is None:
@@ -647,6 +707,22 @@ class PatternDetector:
             # Return value even if it's 0, False, or empty string (but not None)
             return value
         return None
+
+    def _find_keys_matching_pattern(self, all_keys: set, pattern: str) -> List[str]:
+        """
+        Find keys that match a pattern - works for any API nesting (profile.X, response.X, etc).
+        Matches: exact key, or key ending with .pattern (e.g. mainPhone.display matches profile.mainPhone.display)
+        """
+        pattern_lower = pattern.lower()
+        pattern_dotted = pattern_lower.replace("_", ".")
+        matches = []
+        for key in all_keys:
+            key_lower = key.lower().replace("_", ".")
+            if key_lower == pattern_dotted:
+                matches.append(key)
+            elif key_lower.endswith("." + pattern_dotted):
+                matches.append(key)
+        return matches
     
     def _calculate_field_similarity(self, canonical_field: str, candidate_key: str) -> float:
         """
