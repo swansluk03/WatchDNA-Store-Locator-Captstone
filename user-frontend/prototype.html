@@ -15,6 +15,13 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
+  <!-- MapLibre GL -->
+  <link href="https://unpkg.com/maplibre-gl/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
+
+  <!-- MapLibre GL Leaflet -->
+  <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet/leaflet-maplibre-gl.js"></script>
+
   <!-- PapaParse for CSV -->
   <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
 
@@ -141,8 +148,11 @@
 
   <script>
     // --- Map bootstrap ---
-    const map = L.map('map');
-    map.setView([20, 0], 2); // will be replaced by fitBounds if we have data
+    // NEW MAP THEME CODE
+    const map = L.map('map', {maxZoom: 19}).setView([20, 0], 2); // Using the longitude, latitude, and zoom level from original map
+    L.maplibreGL({
+      style: 'https://tiles.openfreemap.org/styles/positron',
+    }).addTo(map);
 
     // Default zoom out logic. Will be used if user did not use Near Me features
     const originalCenter = map.getCenter();
@@ -157,11 +167,6 @@
         resetFocusedStore();
       }
     });
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(map);
 
     // --- URL parameter helpers (CSV + initial filters) ---
     const params = new URLSearchParams(window.location.search);
