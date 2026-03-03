@@ -770,6 +770,7 @@
         if (show) clusterGroup.addLayer(marker);
       });
 
+      renderStoreListingsFromLayers(getVisibleMarkers());
     }
 
     // --- Near Me radius filter ---
@@ -796,6 +797,8 @@
 
       setNearMeStatus(`Showing ${kept} location(s) within ${(radiusMeters / 1609.344).toFixed(0)} mi`);
       if (kept > 0) map.fitBounds(radiusCircle.getBounds().pad(0.2));
+
+      renderStoreListingsFromLayers(getVisibleMarkers());
     }
 
     function locateAndFilterWithinRadius() {
@@ -874,6 +877,67 @@
       const rec = allMarkers.find(x => x.marker === marker);
       return rec ? rec.row : {};
     }
+
+    // Build sidebar list from the currently-visible markers prioritizing premium first
+    function renderStoreListingsFromLayers(layers) {
+      const storeList = document.getElementById('storeListings');
+      if (!storeList) return;
+
+      storeList.innerHTML = '';
+
+      // Pair each marker with its row
+      const items = (layers || []).map(marker => ({
+        marker,
+        row: getRowForMarker(marker)
+      }));
+
+      // Premium first ordering, then alphabetical
+      items.sort((a, b) => {
+        const aPremium = a.row && a.row._isPremium === true ? 1 : 0;
+        const bPremium = b.row && b.row._isPremium === true ? 1 : 0;
+
+        if (aPremium !== bPremium) return bPremium - aPremium;
+
+        const aName = String(a.row?.['Name'] || '').toLowerCase();
+        const bName = String(b.row?.['Name'] || '').toLowerCase();
+        return aName.localeCompare(bName);
+      });
+
+      items.forEach(({ row, marker }) => {
+        const item = document.createElement('div');
+        item.className = 'store';
+
+        const addressLine = row['Address Line 1'] || '';
+
+        const locationParts = [
+          row['City'],
+          row['State/Province/Region'],
+          row['Country']
+      ].filter(Boolean);
+
+      const locationLine = locationParts.join(', ');
+
+      item.innerHTML = `
+        <strong>${row['Name'] || 'Unnamed'}</strong><br>
+        ${addressLine}<br>
+        ${locationLine}
+      `;
+
+      item.addEventListener('click', () => {
+        const latitude = parseFloat(row.Latitude);
+        const longitude = parseFloat(row.Longitude);
+
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+          map.flyTo([latitude, longitude], 14, { animate: true, duration: 0.8 });
+        }
+
+        focusedMarker = marker;
+        openStoreDetail(row, marker);
+      });
+
+      storeList.appendChild(item);
+    });
+  }
 
     // Find the nearest marker among a given set (visible layers)
     function findNearestAmong(targetLatLng, layers) {
