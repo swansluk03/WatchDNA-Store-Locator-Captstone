@@ -4,7 +4,25 @@ import { scraperService, type Brand, type ScraperJob, type ScraperStats } from '
 import EndpointDiscovery from '../components/EndpointDiscovery';
 import '../styles/Scraper.css';
 
-type TabType = 'jobs' | 'discovery';
+type TabType = 'jobs' | 'discovery' | 'master';
+
+/** Escape a value for CSV (quotes and commas) */
+function escapeCsvValue(val: string): string {
+  const s = String(val ?? '');
+  if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+/** Convert columns and records to CSV string */
+function recordsToCsv(columns: string[], records: Record<string, string>[]): string {
+  const header = columns.map(escapeCsvValue).join(',');
+  const rows = records.map((r) =>
+    columns.map((col) => escapeCsvValue(r[col] ?? '')).join(',')
+  );
+  return [header, ...rows].join('\r\n');
+}
 
 const Scraper: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('jobs');
@@ -33,6 +51,23 @@ const Scraper: React.FC = () => {
   const [editedRecords, setEditedRecords] = useState<Map<number, Record<string, string>>>(new Map());
   const [savingRecords, setSavingRecords] = useState(false);
   const [recordsViewMode, setRecordsViewMode] = useState<'all' | 'incomplete'>('all');
+  const [recordsModalTab, setRecordsModalTab] = useState<'records' | 'dropped'>('records');
+  const [droppedRecordsData, setDroppedRecordsData] = useState<{
+    excludedStores: { name: string; address: string; reason: string }[];
+    count: number;
+  } | null>(null);
+  const [loadingDroppedRecords, setLoadingDroppedRecords] = useState(false);
+  // Master store data tab
+  const [masterBrandFilter, setMasterBrandFilter] = useState<string>('');
+  const [showMasterRecordsModal, setShowMasterRecordsModal] = useState(false);
+  const [masterRecordsData, setMasterRecordsData] = useState<{
+    columns: string[];
+    records: Record<string, string>[];
+  } | null>(null);
+  const [loadingMasterRecords, setLoadingMasterRecords] = useState(false);
+  const [editedMasterRecords, setEditedMasterRecords] = useState<Map<number, Record<string, string>>>(new Map());
+  const [savingMasterRecords, setSavingMasterRecords] = useState(false);
+  const [masterRecordsViewMode, setMasterRecordsViewMode] = useState<'all' | 'incomplete'>('all');
 
   const loadJobs = useCallback(async () => {
     try {
@@ -169,6 +204,8 @@ const Scraper: React.FC = () => {
     setLoadingRecords(true);
     setEditedRecords(new Map());
     setRecordsViewMode('all');
+    setRecordsModalTab('records');
+    setDroppedRecordsData(null);
     setError(null);
 
     try {
@@ -179,6 +216,21 @@ const Scraper: React.FC = () => {
       setError(err.response?.data?.error || 'Failed to load job records');
     } finally {
       setLoadingRecords(false);
+    }
+  };
+
+  const handleLoadDroppedRecords = async () => {
+    if (!recordsJobId || droppedRecordsData !== null) return;
+    setLoadingDroppedRecords(true);
+    setError(null);
+    try {
+      const data = await scraperService.getJobDroppedRecords(recordsJobId);
+      setDroppedRecordsData({ excludedStores: data.excludedStores, count: data.count });
+    } catch (err: any) {
+      setDroppedRecordsData({ excludedStores: [], count: 0 });
+      setError(err.response?.data?.error || 'Failed to load dropped records');
+    } finally {
+      setLoadingDroppedRecords(false);
     }
   };
 
@@ -222,20 +274,140 @@ const Scraper: React.FC = () => {
     : 0;
 
   const handleSaveRecords = async () => {
-    if (!recordsData || editedRecords.size === 0) return;
+    if (!recordsData || !recordsJobId || editedRecords.size === 0) return;
     setSavingRecords(true);
     setError(null);
     try {
-      const rowsToUpdate = Array.from(editedRecords.values());
-      const result = await scraperService.updateMasterCsvRows(rowsToUpdate);
+      const fullRecords = recordsData.records.map((r, i) =>
+        editedRecords.has(i) ? editedRecords.get(i)! : r
+      );
+      const result = await scraperService.saveJobRecords(recordsJobId, fullRecords);
       setEditedRecords(new Map());
       setShowRecordsModal(false);
+      loadData();
+      const parts = [`Saved ${result.savedToJob} records to job CSV`];
+      if (result.appendedToMaster > 0) parts.push(`${result.appendedToMaster} complete record(s) added to master`);
+      if (result.skippedIncomplete > 0) parts.push(`${result.skippedIncomplete} incomplete record(s) kept in job only`);
+      if (result.validationErrors) parts.push(`Validation blocked ${result.validationErrors} record(s)`);
+      alert(parts.join('. '));
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to save records');
+    } finally {
+      setSavingRecords(false);
+    }
+  };
+
+  const handleEditMasterRecords = async () => {
+    setShowMasterRecordsModal(true);
+    setLoadingMasterRecords(true);
+    setEditedMasterRecords(new Map());
+    setMasterRecordsViewMode('all');
+    setError(null);
+    try {
+      const data = await scraperService.getMasterCsvRecords(masterBrandFilter || undefined);
+      setMasterRecordsData({ columns: data.columns, records: data.records });
+    } catch (err: any) {
+      setMasterRecordsData(null);
+      setError(err.response?.data?.error || 'Failed to load master store data');
+    } finally {
+      setLoadingMasterRecords(false);
+    }
+  };
+
+  const handleDownloadStoresCsv = async () => {
+    setError(null);
+    try {
+      const data = await scraperService.getMasterCsvRecords(masterBrandFilter || undefined);
+      const csv = recordsToCsv(data.columns, data.records);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const brandSlug = masterBrandFilter ? masterBrandFilter.replace(/_/g, '-') : 'all';
+      link.download = `stores-${brandSlug}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to download stores CSV');
+    }
+  };
+
+  const handleMasterRecordCellChange = (rowIndex: number, column: string, value: string) => {
+    if (!masterRecordsData) return;
+    const base = editedMasterRecords.get(rowIndex) ?? masterRecordsData.records[rowIndex];
+    const updated = { ...base, [column]: value };
+    setEditedMasterRecords(new Map(editedMasterRecords).set(rowIndex, updated));
+  };
+
+  const getMasterRecordValue = (rowIndex: number, column: string): string => {
+    const edited = editedMasterRecords.get(rowIndex);
+    const base = masterRecordsData?.records[rowIndex];
+    if (edited && column in edited) return edited[column];
+    return base?.[column] ?? '';
+  };
+
+  const masterStoreHasMissingImportantData = (record: Record<string, string>): boolean => {
+    const phone = (record['Phone'] ?? '').trim();
+    const addr1 = (record['Address Line 1'] ?? '').trim();
+    const addr2 = (record['Address Line 2'] ?? '').trim();
+    const hasAddress = addr1.length > 0 || addr2.length > 0;
+    const hasPhone = phone.length > 0;
+    return !hasPhone || !hasAddress;
+  };
+
+  const displayedMasterRecords = (() => {
+    if (!masterRecordsData) return [];
+    if (masterRecordsViewMode === 'all') {
+      return masterRecordsData.records.map((r, i) => ({ record: r, originalIndex: i }));
+    }
+    return masterRecordsData.records
+      .map((r, i) => ({ record: r, originalIndex: i }))
+      .filter(({ record }) => masterStoreHasMissingImportantData(record));
+  })();
+
+  const masterIncompleteCount = masterRecordsData
+    ? masterRecordsData.records.filter(masterStoreHasMissingImportantData).length
+    : 0;
+
+  const handleSaveMasterRecords = async () => {
+    if (!masterRecordsData || editedMasterRecords.size === 0) return;
+    setSavingMasterRecords(true);
+    setError(null);
+    try {
+      const rowsToUpdate = Array.from(editedMasterRecords.values());
+      const result = await scraperService.updateMasterCsvRows(rowsToUpdate);
+      setEditedMasterRecords(new Map());
+      setShowMasterRecordsModal(false);
       loadData();
       alert(`Saved ${result.updatedCount} of ${result.totalRequested} records to master CSV.`);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to save records');
     } finally {
-      setSavingRecords(false);
+      setSavingMasterRecords(false);
+    }
+  };
+
+  const handleRemoveMasterRecord = async (record: Record<string, string>) => {
+    const handle = (record['Handle'] ?? record['handle'] ?? '').trim();
+    const name = (record['Name'] ?? '').trim() || 'this store';
+    if (!handle) {
+      setError('Cannot remove: record has no Handle');
+      return;
+    }
+    if (!confirm(`Remove "${name}" from the master CSV? This cannot be undone.`)) return;
+    setError(null);
+    try {
+      const { removed } = await scraperService.deleteMasterRecord(handle);
+      if (removed) {
+        setEditedMasterRecords(new Map());
+        const data = await scraperService.getMasterCsvRecords(masterBrandFilter || undefined);
+        setMasterRecordsData({ columns: data.columns, records: data.records });
+        loadData();
+      } else {
+        setError('Store not found in master CSV');
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to remove store');
     }
   };
 
@@ -328,11 +500,54 @@ const Scraper: React.FC = () => {
         >
           Endpoint Discovery
         </button>
+        <button
+          className={`tab-button ${activeTab === 'master' ? 'active' : ''}`}
+          onClick={() => setActiveTab('master')}
+        >
+          Master Store Data
+        </button>
       </div>
 
       {/* Tab Content */}
       {activeTab === 'discovery' ? (
         <EndpointDiscovery onConfigSaved={loadData} />
+      ) : activeTab === 'master' ? (
+        <div className="content-section">
+          <div className="section-header">
+            <h2>Edit Master Store Data</h2>
+            <div className="filter-controls">
+              <select
+                value={masterBrandFilter}
+                onChange={(e) => setMasterBrandFilter(e.target.value)}
+                className="filter-select"
+              >
+                <option value="">All brands</option>
+                {brands.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn btn-primary"
+                onClick={handleEditMasterRecords}
+              >
+                Load & Edit Master Data
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={handleDownloadStoresCsv}
+                title={masterBrandFilter ? `Download stores for ${brands.find((b) => b.id === masterBrandFilter)?.name ?? masterBrandFilter}` : 'Download all stores'}
+              >
+                Download CSV
+              </button>
+            </div>
+          </div>
+          <p className="records-hint">
+            Filter by brand to reduce clutter. Stores with multiple brands appear when any of their brands is selected.
+            Click &quot;Load & Edit Master Data&quot; to open the editor, or &quot;Download CSV&quot; to export stores.
+          </p>
+        </div>
       ) : (
         <>
 
@@ -631,12 +846,36 @@ const Scraper: React.FC = () => {
 
             <div className="modal-body">
               {error && <div className="error-message">{error}</div>}
-              {loadingRecords ? (
+              <div className="records-view-toggle" style={{ marginBottom: '1rem' }}>
+                <button
+                  type="button"
+                  className={`records-view-btn ${recordsModalTab === 'records' ? 'active' : ''}`}
+                  onClick={() => {
+                    setError(null);
+                    setRecordsModalTab('records');
+                  }}
+                >
+                  Records {recordsData ? `(${recordsData.records.length})` : ''}
+                </button>
+                <button
+                  type="button"
+                  className={`records-view-btn ${recordsModalTab === 'dropped' ? 'active' : ''}`}
+                  onClick={() => {
+                    setError(null);
+                    setRecordsModalTab('dropped');
+                    handleLoadDroppedRecords();
+                  }}
+                >
+                  Dropped {droppedRecordsData !== null ? `(${droppedRecordsData.count})` : ''}
+                </button>
+              </div>
+              {recordsModalTab === 'records' ? (
+              loadingRecords ? (
                 <div className="loading">Loading records...</div>
               ) : recordsData ? (
                 <>
                   <p className="records-hint">
-                    Edit incorrect or missing fields below. Changes are saved to the master CSV when you click Save.
+                    Edit incorrect or missing fields below. All changes are saved to this job&apos;s CSV. Only complete records (with phone and address) are validated and added to the master CSV. Incomplete records stay in the job for editing.
                   </p>
                   <div className="records-view-toggle">
                     <button
@@ -676,9 +915,19 @@ const Scraper: React.FC = () => {
                                 </td>
                               </tr>
                             ) : displayedRecords.map(({ record, originalIndex }) => {
-                              const hasMissing = storeHasMissingImportantData(
-                                editedRecords.get(originalIndex) ?? record
-                              );
+                              const currentRecord = editedRecords.get(originalIndex) ?? record;
+                              const hasMissing = storeHasMissingImportantData(currentRecord);
+                              const isColumnIncomplete = (col: string) => {
+                                if (!hasMissing) return false;
+                                const val = (currentRecord[col] ?? '').trim();
+                                if (col === 'Phone') return val.length === 0;
+                                if (col === 'Address Line 1' || col === 'Address Line 2') {
+                                  const addr1 = (currentRecord['Address Line 1'] ?? '').trim();
+                                  const addr2 = (currentRecord['Address Line 2'] ?? '').trim();
+                                  return addr1.length === 0 && addr2.length === 0;
+                                }
+                                return false;
+                              };
                               return (
                                 <tr
                                   key={originalIndex}
@@ -703,7 +952,7 @@ const Scraper: React.FC = () => {
                                       ) : (
                                         <input
                                           type="text"
-                                          className="record-cell-input"
+                                          className={`record-cell-input ${isColumnIncomplete(col) ? 'record-cell-incomplete' : ''}`}
                                           value={getRecordValue(originalIndex, col)}
                                           onChange={(e) => handleRecordCellChange(originalIndex, col, e.target.value)}
                                         />
@@ -719,6 +968,46 @@ const Scraper: React.FC = () => {
                 </>
               ) : (
                 <div className="error-message">Could not load records</div>
+              )
+              ) : (
+                <>
+                  {loadingDroppedRecords ? (
+                    <div className="loading">Loading dropped records...</div>
+                  ) : droppedRecordsData && droppedRecordsData.count > 0 ? (
+                    <>
+                      <p className="records-hint">
+                        These stores were excluded from the output because they lack Latitude/Longitude coordinates
+                        (geocoding failed or insufficient address data).
+                      </p>
+                      <div className="records-table-wrapper">
+                        <table className="records-edit-table">
+                          <thead>
+                            <tr>
+                              <th>#</th>
+                              <th>Store Name</th>
+                              <th>Address</th>
+                              <th>Reason</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {droppedRecordsData.excludedStores.map((store, i) => (
+                              <tr key={i} className="row-incomplete">
+                                <td>{i + 1}</td>
+                                <td>{store.name}</td>
+                                <td>{store.address}</td>
+                                <td>{store.reason}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="records-empty-state" style={{ padding: '2rem' }}>
+                      No dropped records for this run.
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -729,18 +1018,168 @@ const Scraper: React.FC = () => {
               >
                 Cancel
               </button>
+              {recordsModalTab === 'records' && (
               <button
                 className="btn btn-primary"
                 onClick={handleSaveRecords}
                 disabled={editedRecords.size === 0 || savingRecords}
               >
-                {savingRecords ? 'Saving...' : `Save ${editedRecords.size} change(s) to master CSV`}
+                {savingRecords ? 'Saving...' : `Save ${editedRecords.size} change(s) (complete records → master)`}
               </button>
+              )}
             </div>
           </div>
         </div>
       )}
         </>
+      )}
+
+      {/* Master Store Data Edit Modal - rendered at root so it works from master tab */}
+      {showMasterRecordsModal && (
+        <div className="modal-overlay" onClick={() => setShowMasterRecordsModal(false)}>
+          <div className="modal modal-xlarge modal-records" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>
+                Edit Master Store Data
+                {masterBrandFilter ? ` – ${brands.find((b) => b.id === masterBrandFilter)?.name ?? masterBrandFilter}` : ' – All brands'}
+              </h2>
+              <button className="modal-close" onClick={() => setShowMasterRecordsModal(false)}>
+                ×
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {error && <div className="error-message">{error}</div>}
+              {loadingMasterRecords ? (
+                <div className="loading">Loading master store data...</div>
+              ) : masterRecordsData ? (
+                <>
+                  <p className="records-hint">
+                    Edit incorrect or missing fields below. Changes are saved to the master CSV when you click Save.
+                    Stores with missing phone or address are highlighted.
+                  </p>
+                  <div className="records-view-toggle">
+                    <button
+                      type="button"
+                      className={`records-view-btn ${masterRecordsViewMode === 'all' ? 'active' : ''}`}
+                      onClick={() => setMasterRecordsViewMode('all')}
+                    >
+                      All records ({masterRecordsData.records.length})
+                    </button>
+                    <button
+                      type="button"
+                      className={`records-view-btn ${masterRecordsViewMode === 'incomplete' ? 'active' : ''}`}
+                      onClick={() => setMasterRecordsViewMode('incomplete')}
+                    >
+                      Incomplete only ({masterIncompleteCount})
+                    </button>
+                  </div>
+                  <div className="records-table-wrapper">
+                    <table className="records-edit-table">
+                      <thead>
+                        <tr>
+                          <th className="record-actions-col record-header-sticky">Actions</th>
+                          <th className="record-warning-col record-header-sticky" title="Stores with missing phone or address">
+                            <span className="record-warning-header">⚠</span>
+                          </th>
+                          {masterRecordsData.columns.map((col) => (
+                            <th key={col} className="record-header-sticky">{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {displayedMasterRecords.length === 0 ? (
+                          <tr>
+                            <td colSpan={(masterRecordsData.columns.length + 2)} className="records-empty-state">
+                              {masterRecordsViewMode === 'incomplete'
+                                ? 'No records with missing phone or address.'
+                                : 'No records.'}
+                            </td>
+                          </tr>
+                        ) : displayedMasterRecords.map(({ record, originalIndex }) => {
+                          const currentRecord = editedMasterRecords.get(originalIndex) ?? record;
+                          const hasMissing = masterStoreHasMissingImportantData(currentRecord);
+                          const isColumnIncomplete = (col: string) => {
+                            if (!hasMissing) return false;
+                            const val = (currentRecord[col] ?? '').trim();
+                            if (col === 'Phone') return val.length === 0;
+                            if (col === 'Address Line 1' || col === 'Address Line 2') {
+                              const addr1 = (currentRecord['Address Line 1'] ?? '').trim();
+                              const addr2 = (currentRecord['Address Line 2'] ?? '').trim();
+                              return addr1.length === 0 && addr2.length === 0;
+                            }
+                            return false;
+                          };
+                          return (
+                            <tr
+                              key={originalIndex}
+                              className={`${editedMasterRecords.has(originalIndex) ? 'row-edited' : ''} ${hasMissing ? 'row-incomplete' : ''}`}
+                            >
+                              <td className="record-actions-col">
+                                <button
+                                  type="button"
+                                  className="btn-remove-record"
+                                  onClick={() => handleRemoveMasterRecord(record)}
+                                  title="Remove this store from master CSV"
+                                >
+                                  Remove
+                                </button>
+                              </td>
+                              <td className="record-warning-col">
+                                {hasMissing ? (
+                                  <span
+                                    className="record-warning-icon"
+                                    title="Missing phone number or address"
+                                  >
+                                    ⚠
+                                  </span>
+                                ) : (
+                                  <span className="record-warning-empty" />
+                                )}
+                              </td>
+                              {masterRecordsData.columns.map((col) => (
+                                <td key={col}>
+                                  {col === 'Handle' ? (
+                                    <span className="record-cell-readonly">{getMasterRecordValue(originalIndex, col)}</span>
+                                  ) : (
+                                    <input
+                                      type="text"
+                                      className={`record-cell-input ${isColumnIncomplete(col) ? 'record-cell-incomplete' : ''}`}
+                                      value={getMasterRecordValue(originalIndex, col)}
+                                      onChange={(e) => handleMasterRecordCellChange(originalIndex, col, e.target.value)}
+                                    />
+                                  )}
+                                </td>
+                              ))}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <div className="error-message">Could not load master store data</div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowMasterRecordsModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleSaveMasterRecords}
+                disabled={editedMasterRecords.size === 0 || savingMasterRecords}
+              >
+                {savingMasterRecords ? 'Saving...' : `Save ${editedMasterRecords.size} change(s) to master CSV`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

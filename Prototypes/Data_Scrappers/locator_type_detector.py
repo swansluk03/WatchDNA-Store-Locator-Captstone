@@ -285,7 +285,7 @@ def print_analysis(analysis: Dict[str, Any]):
         print("   ⚠️  Use viewport expansion scraper:")
         print(f"   python3 scrape_worldwide.py --url \"...\" --type viewport")
         print()
-        print("   Or adapt scrape_rolex_worldwide.py for this API")
+        print("   Configure a brand entry in brand_configs.json and run universal_scraper.py")
     
     elif analysis["detected_type"] == "country_filter":
         print("   ⚠️  Use country iteration:")

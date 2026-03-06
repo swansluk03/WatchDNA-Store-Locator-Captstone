@@ -78,8 +78,11 @@ class PatternDetector:
             print(f"     Base:     {url[:100]}")
         
         params = endpoint.get('params', {})
-        # Prefer verified_type from verifier (it actually fetches and analyzes) over network_analyzer type
-        endpoint_type = endpoint.get('verified_type') or endpoint.get('type', 'json')
+        # Prefer verified_type from verifier only when it's a real classification.
+        # 'unknown' means verification failed (e.g. 403 block) - fall back to network_analyzer type.
+        _VALID_TYPES = {'viewport', 'radius', 'country_filter', 'paginated', 'single_call', 'json', 'html'}
+        verified_type = endpoint.get('verified_type')
+        endpoint_type = (verified_type if verified_type in _VALID_TYPES else None) or endpoint.get('type', 'json')
         
         # For radius-based endpoints only - do NOT add radius/center for country_filter
         # Country-filter endpoints (e.g. Bulgari country-region=US) need country iteration, not radius
@@ -208,8 +211,9 @@ class PatternDetector:
         # Use detected field_mapping if it has any keys, otherwise use defaults
         final_field_mapping = field_mapping if field_mapping and len(field_mapping) > 0 else self._get_default_field_mapping()
         
+        _JSON_LIKE_TYPES = {'json', 'paginated', 'viewport', 'radius', 'country_filter', 'single_call'}
         config = {
-            "type": "json",
+            "type": endpoint_type if endpoint_type in _JSON_LIKE_TYPES else "json",
             "url": url,
             "description": description,
             "method": "GET",
@@ -933,7 +937,7 @@ class PatternDetector:
             "Country": ["countryName", "country", "countryCode"],
             "Postal/ZIP Code": ["postalCode", "zipCode", "zip"],
             "Phone": ["phone1", "phone", "phoneNumber"],
-            "Email": "email",
+            "Email": ["email", "contact_email"],
             "Website": ["website", "url"],
             "Latitude": ["lat", "latitude"],
             "Longitude": ["lng", "longitude"]

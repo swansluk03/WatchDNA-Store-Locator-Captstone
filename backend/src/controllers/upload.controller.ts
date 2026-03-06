@@ -79,6 +79,13 @@ export class UploadController {
         status: status as string
       });
 
+      // Parse JSON fields so frontend gets arrays, not string lengths
+      result.uploads = result.uploads.map((u: any) => ({
+        ...u,
+        validationErrors: u.validationErrors ? JSON.parse(u.validationErrors) : [],
+        validationWarnings: u.validationWarnings ? JSON.parse(u.validationWarnings) : []
+      }));
+
       res.json(result);
 
     } catch (error: any) {

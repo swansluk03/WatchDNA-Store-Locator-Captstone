@@ -2,6 +2,7 @@
 """Manages master CSV: accumulates scraped stores, deduplicates, merges by address."""
 
 import csv
+import json
 import os
 import re
 import math
@@ -13,36 +14,44 @@ from typing import List, Dict, Set, Tuple, Optional, Any
 from pathlib import Path
 
 from geocoding_utils import GEOPY_AVAILABLE, geocode_address
-from data_normalizer import clean_address, strip_redundant_address_parts
-from spatial_index import build_store_index
+from data_normalizer import clean_address, strip_redundant_address_parts, read_csv_to_dict
+from spatial_index import build_store_index, calculate_distance
+from scraper_utils import log_debug
+
+_BRAND_CONFIGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brand_configs.json")
+
+def _load_all_brand_configs() -> Dict[str, Any]:
+    """Load brand_configs.json once; returns empty dict on error."""
+    try:
+        with open(_BRAND_CONFIGS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+_ALL_BRAND_CONFIGS: Dict[str, Any] = _load_all_brand_configs()
 
 
 def log_sync(message: str, level: str = "INFO"):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    prefix = {
-        "INFO": "[SYNC INFO]",
-        "SUCCESS": "[SYNC ✓]",
-        "WARN": "[SYNC ⚠]",
-        "ERROR": "[SYNC ✗]"
-    }.get(level, "[SYNC]")
-    print(f"{timestamp} {prefix} {message}", flush=True)
+    prefix_map = {
+        "INFO": "SYNC INFO",
+        "SUCCESS": "SYNC ✓",
+        "WARN": "SYNC ⚠",
+        "ERROR": "SYNC ✗",
+    }
+    log_debug(f"[{prefix_map.get(level, 'SYNC')}] {message}", level if level in ("INFO", "SUCCESS", "ERROR", "WARN") else "INFO")
 
 
 def normalize_brand_name(brand_config_name: str) -> str:
+    """Return the canonical display name for a brand config key.
+
+    Reads ``display_name`` from brand_configs.json first. Falls back to
+    stripping known suffixes and uppercasing.
+    """
+    cfg = _ALL_BRAND_CONFIGS.get(brand_config_name, {})
+    if isinstance(cfg, dict) and cfg.get("display_name"):
+        return cfg["display_name"]
     name = brand_config_name.replace('_stores', '').replace('_retailers', '').replace('_dealers', '')
-    
-    name = name.replace('_', ' ').title().upper()
-    brand_mappings = {
-        'ALANGE SOEHNE': 'A. LANGE & SÖHNE',
-        'BAUME ET MERCIER': 'BAUME & MERCIER',
-        'BELL ROSS': 'BELL & ROSS',
-        'TAG HEUER': 'TAG HEUER',
-        'GRAND SEIKO': 'GRAND SEIKO',
-        'AUDEMARS PIGUET': 'AUDEMARS PIGUET',
-        'BLANCPAIN': 'BLANCPAIN',
-    }
-    
-    return brand_mappings.get(name, name)
+    return name.replace('_', ' ').upper()
 
 
 def extract_brands_from_custom_brands(custom_brands_str: str) -> Set[str]:
@@ -87,24 +96,30 @@ def format_brands_for_custom_brands(brands: Set[str]) -> str:
     return ', '.join(brand_links)
 
 
-def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    from coordinate_utils import EARTH_RADIUS_METERS
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    delta_phi = math.radians(lat2 - lat1)
-    delta_lambda = math.radians(lon2 - lon1)
-    a = math.sin(delta_phi / 2) ** 2 + \
-        math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+def _build_brand_name_pattern() -> str:
+    """Build a regex alternation of all known brand display names from brand_configs.json."""
+    names = set()
+    for key, cfg in _ALL_BRAND_CONFIGS.items():
+        if key.startswith("_") or not isinstance(cfg, dict):
+            continue
+        display = cfg.get("display_name", "")
+        if display:
+            names.add(display.lower())
+        else:
+            # Fallback: strip suffixes and normalize
+            fallback = key.replace('_stores', '').replace('_retailers', '').replace('_dealers', '')
+            names.add(fallback.replace('_', ' ').lower())
+    return '|'.join(re.escape(n) for n in sorted(names, key=len, reverse=True)) if names else r'(?!)'
 
-    return EARTH_RADIUS_METERS * c
+
+_BRAND_NAME_PATTERN: str = _build_brand_name_pattern()
 
 
 def normalize_store_name(name: str) -> str:
     if not name:
         return ""
     normalized = re.sub(r'\s+', ' ', name.lower().strip())
-    
+
     # Remove common prefixes/suffixes that might differ between brands
     prefixes = ['boutique', 'store', 'shop', 'retailer', 'dealer']
     for prefix in prefixes:
@@ -112,11 +127,12 @@ def normalize_store_name(name: str) -> str:
             normalized = normalized[len(prefix) + 1:].strip()
         if normalized.endswith(' ' + prefix):
             normalized = normalized[:-len(prefix) - 1].strip()
-    
-    # Remove brand names (OMEGA, ROLEX, etc.) for comparison
-    normalized = re.sub(r'\b(omega|rolex|alpina|tag heuer|breitling|patek philippe|audemars piguet)\b', '', normalized)
+
+    # Remove known brand names dynamically from brand_configs.json
+    if _BRAND_NAME_PATTERN:
+        normalized = re.sub(r'\b(?:' + _BRAND_NAME_PATTERN + r')\b', '', normalized)
     normalized = re.sub(r'\s+', ' ', normalized).strip()
-    
+
     return normalized
 
 
@@ -359,22 +375,24 @@ def merge_store_data(existing_store: Dict[str, str], new_store: Dict[str, str], 
     return merged, updated_fields
 
 
+def is_store_complete(store: Dict[str, str]) -> bool:
+    """
+    Check if a store has required contact data (phone and address).
+    Incomplete stores are excluded from master CSV merge but visible in Edit Records.
+    """
+    phone = (store.get('Phone') or '').strip()
+    addr1 = (store.get('Address Line 1') or '').strip()
+    addr2 = (store.get('Address Line 2') or '').strip()
+    has_phone = len(phone) > 0
+    has_address = len(addr1) > 0 or len(addr2) > 0
+    return has_phone and has_address
+
+
 def read_csv_to_dict_list(filename: str) -> List[Dict[str, str]]:
-    """
-    Read CSV file into list of dictionaries
-    
-    Args:
-        filename: Path to CSV file
-    
-    Returns:
-        List of dictionaries (one per row)
-    """
+    """Read CSV file into list of dictionaries (delegates to data_normalizer.read_csv_to_dict)."""
     if not os.path.exists(filename):
         return []
-    
-    with open(filename, 'r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        return list(reader)
+    return read_csv_to_dict(filename)
 
 
 def write_dict_list_to_csv(data: List[Dict[str, str]], filename: str, fieldnames: List[str] = None):
@@ -517,9 +535,14 @@ def append_to_master_csv(
     master_stores = read_csv_to_dict_list(master_csv)
     master_stores_before = len(master_stores)
     
-    # Read new stores
-    new_stores = read_csv_to_dict_list(new_stores_csv)
+    # Read new stores - exclude incomplete (missing phone or address)
+    all_new_stores = read_csv_to_dict_list(new_stores_csv)
+    new_stores = [s for s in all_new_stores if is_store_complete(s)]
+    skipped_incomplete = len(all_new_stores) - len(new_stores)
     new_stores_count = len(new_stores)
+    
+    if skipped_incomplete > 0:
+        log_sync(f"Skipped {skipped_incomplete} incomplete record(s) (missing phone or address)", "INFO")
     
     if not new_stores:
         return {
@@ -527,7 +550,8 @@ def append_to_master_csv(
             "new_stores": 0,
             "stores_merged": 0,
             "stores_added": 0,
-            "master_stores_after": master_stores_before
+            "master_stores_after": master_stores_before,
+            "skipped_incomplete": skipped_incomplete
         }
     
     # Normalize brand name
@@ -703,6 +727,7 @@ def append_to_master_csv(
         "stores_merged": stores_merged,
         "stores_added": stores_added,
         "master_stores_after": master_stores_after,
+        "skipped_incomplete": skipped_incomplete,
         "field_update_counts": field_update_counts,
         "validation": {
             "stores_before_validation": validate_result.get("stores_before", master_stores_after),

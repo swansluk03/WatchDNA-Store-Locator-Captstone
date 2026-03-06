@@ -7,7 +7,8 @@ from typing import Dict, List, Tuple, Optional
 from coordinate_utils import EARTH_RADIUS_METERS
 
 
-def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Haversine distance in metres between two lat/lng points."""
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
@@ -16,6 +17,10 @@ def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> f
         math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return EARTH_RADIUS_METERS * c
+
+
+# Alias kept for internal use within this module
+_calculate_distance = calculate_distance
 
 
 _CELL_SIZE_DEGREES = 0.0005

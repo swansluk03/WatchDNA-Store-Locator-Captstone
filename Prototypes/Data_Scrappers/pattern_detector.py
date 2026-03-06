@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Optional, Tuple
 FIELD_PATTERNS = {
     "Handle": [
         "id", "store_id", "location_id", "dealer_id", "shop_id",
-        "rolexId", "dealerId", "retailer_id", "handle", "slug"
+        "dealerId", "retailer_id", "handle", "slug"
     ],
     "Name": [
         "name", "store_name", "location_name", "title", "dealer_name",

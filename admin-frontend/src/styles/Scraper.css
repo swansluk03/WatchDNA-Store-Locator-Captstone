@@ -522,6 +522,27 @@
   width: 1rem;
 }
 
+.record-actions-col {
+  width: 6rem;
+  min-width: 6rem;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.btn-remove-record {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  color: #dc2626;
+  background: transparent;
+  border: 1px solid #dc2626;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-remove-record:hover {
+  background: #fef2f2;
+}
+
 .records-edit-table tbody tr.row-incomplete {
   background: #fffbeb;
 }
@@ -590,6 +611,16 @@
   outline: none;
   border-color: #2563eb;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.records-edit-table .record-cell-input.record-cell-incomplete {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.records-edit-table .record-cell-input.record-cell-incomplete:focus {
+  background: #ffebeb;
+  border-color: #f87171;
 }
 
 .records-edit-table tbody tr.row-edited {

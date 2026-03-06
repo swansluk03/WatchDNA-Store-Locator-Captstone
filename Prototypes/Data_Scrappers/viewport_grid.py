@@ -104,6 +104,11 @@ def build_viewport_url(
         return f"{base_url}?{urlencode(params)}"
 
 
+_VIEWPORT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+}
+
+
 def fetch_viewport_data(
     url: str,
     data_path: str = "",
@@ -112,7 +117,7 @@ def fetch_viewport_data(
 ) -> List[Dict[str, Any]]:
     for attempt in range(retry_count):
         try:
-            resp = requests.get(url, timeout=timeout)
+            resp = requests.get(url, timeout=timeout, headers=_VIEWPORT_HEADERS)
             resp.raise_for_status()
             if not resp.text or resp.text.strip() == '':
                 return []
@@ -149,7 +154,7 @@ def fetch_viewport_data(
 def deduplicate_stores(stores: List[Dict[str, Any]], key_field: str = "id") -> List[Dict[str, Any]]:
     seen = set()
     unique_stores = []
-    possible_keys = [key_field, "id", "storeId", "rolexId", "dealerId", "handle", "Handle"]
+    possible_keys = [key_field, "id", "storeId", "dealerId", "handle", "Handle"]
     
     for store in stores:
         # Find the first available ID field
@@ -303,28 +308,26 @@ def get_region_preset(region_name: str) -> Optional[Dict[str, float]]:
 
 
 if __name__ == "__main__":
-    print("Viewport Scraper - Example Usage\n")
-    print("Example 1: Rolex retailers in North America (test)")
-    
-    stores = scrape_viewport_api(
-        base_url="https://retailers.rolex.com/app/establishments/by_viewport/light",
-        viewport_params={
-            "northEastLat": "northEastLat",
-            "northEastLng": "northEastLng",
-            "southWestLat": "southWestLat",
-            "southWestLng": "southWestLng"
-        },
-        grid_type="focused",
-        grid_size=15,
-        additional_params={
-            "brand": "RLX",
-            "langCode": "en-us",
-            "establishmentType": "STORE"
-        },
-        focus_region=get_region_preset("north_america"),
-        delay_between_requests=0.3
-    )
-    
-    print(f"\n✅ Test complete: {len(stores)} stores found")
-    print(f"   First store: {stores[0].get('nameTranslated', 'N/A') if stores else 'None'}")
+    # Basic self-test with a synthetic viewport grid (no real HTTP calls)
+    print("viewport_grid.py — self-test\n")
+
+    cells = generate_world_grid(grid_size=40)
+    print(f"World grid (40°): {len(cells)} cells")
+    assert len(cells) > 0, "World grid must produce at least one cell"
+
+    na = get_region_preset("north_america")
+    assert na is not None, "north_america preset missing"
+    focused = generate_focused_grid(na["center_lat"], na["center_lng"], radius_degrees=30, grid_size=10)
+    print(f"Focused grid (30°, 10° cells): {len(focused)} cells")
+
+    sample_stores = [
+        {"id": "A", "name": "Store A", "lat": 40.7, "lng": -74.0},
+        {"id": "A", "name": "Store A dup", "lat": 40.7, "lng": -74.0},
+        {"id": "B", "name": "Store B", "lat": 51.5, "lng": -0.1},
+    ]
+    deduped = deduplicate_stores(sample_stores)
+    assert len(deduped) == 2, f"Expected 2 unique stores, got {len(deduped)}"
+    print(f"Deduplication: {len(sample_stores)} → {len(deduped)} stores")
+
+    print("\n✅ All self-tests passed")
 

@@ -9,6 +9,8 @@ import time
 from typing import Dict, List, Any, Optional, Tuple, Set
 from urllib.parse import urlparse, urljoin
 
+from scraper_utils import resolve_partial_url
+
 CANONICAL_SCHEMA = [
     "Handle", "Name", "Status", "Address Line 1", "Address Line 2", "Postal/ZIP Code",
     "City", "State/Province/Region", "Country", "Phone", "Email", "Website", "Image URL",
@@ -51,11 +53,30 @@ def load_canonical_schema():
 SCHEMA = load_canonical_schema()
 
 
+def _decode_unicode_escapes(text: str) -> str:
+    """
+    Decode literal Unicode escape sequences (e.g. \\u00e3 or /u00e3) to actual characters.
+    Handles both proper (\\uXXXX) and malformed (/uXXXX) sequences that can appear when
+    JSON/API data is mis-encoded or the backslash is corrupted to forward slash.
+    """
+    def replace_escape(match: re.Match) -> str:
+        try:
+            return chr(int(match.group(1), 16))
+        except (ValueError, OverflowError):
+            return match.group(0)
+
+    # Match \uXXXX or /uXXXX (4 hex digits)
+    return re.sub(r'[\\/]u([0-9a-fA-F]{4})', replace_escape, text)
+
+
 def clean_html_tags(text: Any) -> str:
     if not text:
         return ""
     
     text_str = str(text).strip()
+    
+    # Decode literal Unicode escapes (e.g. /u00e3 -> ã) that may appear in scraped data
+    text_str = _decode_unicode_escapes(text_str)
     
     # Replace <br>, <br/>, <br />, etc. with space
     text_str = re.sub(r'<br\s*/?>', ' ', text_str, flags=re.IGNORECASE)
@@ -73,6 +94,7 @@ def clean_address(address: Any) -> str:
     Clean and normalize address strings by fixing common backslash issues
     
     Fixes:
+    - Literal Unicode escapes (\\u00e3, /u00e3 -> ã) that were not properly decoded
     - Backslash before forward slash (\\/ -> /)
     - Double backslashes (\\\\ -> , ) for address separators
     - Spanish Calle abbreviation (C\\/ -> C/)
@@ -87,6 +109,9 @@ def clean_address(address: Any) -> str:
         return ""
     
     address_str = str(address).strip()
+    
+    # Decode literal Unicode escapes first (e.g. Magalh/u00e3es -> Magalhães)
+    address_str = _decode_unicode_escapes(address_str)
     
     # Fix backslash before forward slash (\/ -> /)
     # This is the most common issue: 1\/F -> 1/F, C\/ -> C/, MA-66\/103 -> MA-66/103, etc.
@@ -194,26 +219,56 @@ def validate_coordinate(value: Any, coord_type: str = "latitude") -> str:
     return normalize_coordinate_string(value, coord_type)
 
 
+def _normalize_phone_for_parse(phone_str: str) -> str:
+    """Preprocess phone string to help phonenumbers parse."""
+    s = phone_str.strip()
+    # (+8628) 12345678 -> +86 28 12345678 (China style with area in parens)
+    s = re.sub(r'\(\+86(\d*)\)\s*', r'+86 \1 ', s)
+    # (+1) or (+44) etc -> +1  or +44
+    s = re.sub(r'\(\+(\d{1,3})\)\s*', r'+\1 ', s)
+    # Remove (0) domestic prefix (e.g. +31 (0)10 -> +31 10)
+    s = re.sub(r'\s*\(0\)\s*', ' ', s)
+    # Strip domestic leading 0 from area codes: (022) -> 22, (010) -> 10 (China, Europe, etc.)
+    s = re.sub(r'\(0(\d+)\)', r'\1', s)
+    return s.strip()
+
+
 def validate_phone(phone: Any) -> str:
     """
-    Normalize phone number format
-    
-    Accepts various formats and standardizes them
-    Examples: 
-        "(555) 123-4567" -> "(555) 123-4567"
-        "555.123.4567" -> "555-123-4567"
-        "+1-555-123-4567" -> "+1-555-123-4567"
+    Normalize phone number format using Google's phonenumbers library.
+    Handles all countries with correct international formatting.
     """
+    import phonenumbers
+    from phonenumbers import PhoneNumberFormat
+
     if not phone:
         return ""
-    
+
     phone_str = str(phone).strip()
-    
+
+    # Preserve extension - extract before parsing (x 123, ext 123, -8008)
+    ext_match = re.search(r'(?:\s+[xX]\s*\d[\d\s]*|\s+ext\.?\s*\d[\d\s]*|-\d{4,})$', phone_str, re.IGNORECASE)
+    extension = ext_match.group(0).strip() if ext_match else ""
+    if extension:
+        phone_str = phone_str[: ext_match.start()].strip()
+
     # Remove common unwanted chars but preserve valid ones
-    # Keep: digits, +, -, (, ), spaces, x/ext for extensions
-    phone_str = re.sub(r'[^\d+\-()xX\s]', '', phone_str)
-    
-    return phone_str
+    phone_str = re.sub(r'[^\d+\-()\s]', '', phone_str)
+    phone_str = re.sub(r'\s+', ' ', phone_str).strip()
+
+    if not phone_str:
+        return ""
+
+    try:
+        normalized = _normalize_phone_for_parse(phone_str)
+        parsed = phonenumbers.parse(normalized, None)
+        if phonenumbers.is_valid_number(parsed) or phonenumbers.is_possible_number(parsed):
+            formatted = phonenumbers.format_number(parsed, PhoneNumberFormat.INTERNATIONAL)
+            return (formatted + " " + extension).strip() if extension else formatted
+    except Exception:
+        pass
+
+    return (phone_str + " " + extension).strip() if extension else phone_str
 
 
 def validate_email(email: Any) -> str:
@@ -272,22 +327,23 @@ def _is_image_url(url_str: str) -> bool:
     return any(last_segment.endswith(ext) for ext in image_extensions)
 
 
-def validate_url(url: Any, validate_http: bool = False, base_url: Optional[str] = None, field_context: Optional[str] = None) -> str:
+def validate_url(url: Any, validate_http: bool = False, base_url: Optional[str] = None,
+                 field_context: Optional[str] = None, url_base: Optional[str] = None, **kwargs) -> str:
     """
-    Validate and normalize URL
-    
-    Ensures URL has a scheme (defaults to https://)
-    Converts relative Omega store detail URLs to full URLs
-    Resolves partial URLs (path-only or locale-as-host) against base_url when provided
-    Rejects image URLs when field_context is "Website" (store page, not store photo)
-    Optionally validates URLs via HTTP request
-    
+    Validate and normalize URL.
+
+    Resolves relative store-detail paths using url_base when provided (brand config key).
+    Resolves other partial URLs against base_url when provided.
+    Rejects image URLs when field_context is "Website".
+    Optionally validates URLs via HTTP request.
+
     Args:
         url: URL string to validate
         validate_http: If True, make HTTP request to verify URL is accessible
-        base_url: Optional base URL (e.g. https://www.bulgari.com/) for resolving partial URLs
+        base_url: Optional base URL for resolving locale-prefixed partial URLs
         field_context: Optional field name - when "Website", image URLs are rejected
-    
+        url_base: Brand's base URL for reconstructing relative store-detail paths (from brand_config)
+
     Returns:
         Validated and normalized URL, or empty string if invalid
     """
@@ -298,17 +354,10 @@ def validate_url(url: Any, validate_http: bool = False, base_url: Optional[str] 
     
     # Fix escaped slashes (\/ -> /)
     url_str = url_str.replace('\\/', '/').replace('\\', '/')
-    
-    # Check if this is an Omega store detail URL (relative or absolute)
-    # Pattern: store/storedetails/XXXX or /store/storedetails/XXXX
-    omega_store_pattern = r'(?:^|/)(?:store[/\\]storedetails[/\\])(\d+[^/]*)/?$'
-    omega_match = re.search(omega_store_pattern, url_str, re.IGNORECASE)
-    
-    if omega_match:
-        # This is an Omega store detail page - convert to full URL
-        store_id = omega_match.group(1)
-        url_str = f"https://www.omegawatches.com/en-us/store/storedetails/{store_id}"
-    
+
+    # Reconstruct relative store-detail URLs using the brand's url_base (brand_config key)
+    url_str = resolve_partial_url(url_str, url_base)
+
     # If it's a relative URL or missing scheme, add https://
     if url_str and not urlparse(url_str).scheme:
         url_str = f"https://{url_str}"
@@ -434,7 +483,7 @@ FIELD_MAPPING_ALIASES = {
     "Website": ["website", "url", "websiteUrl", "permalink", "dealerSiteUrl"],
     "Latitude": ["lat", "latitude", "y"],
     "Longitude": ["lng", "lon", "longitude", "x"],
-    "Handle": ["id", "handle", "store_id", "dealerId", "rolexId", "meta.id"],
+    "Handle": ["id", "handle", "store_id", "dealerId", "meta.id"],
 }
 
 
@@ -897,13 +946,15 @@ def normalize_location(
     
     # Base URL for resolving partial store URLs (e.g. Bulgari paths like en-us/storelocator/...)
     base_url = field_mapping.get("_base_url") if field_mapping else None
+    # Brand's url_base for reconstructing relative store-detail paths (e.g. Omega's storedetails/<id>)
+    url_base = field_mapping.get("_url_base") if field_mapping else None
 
     # Validated fields
     normalized["Status"] = validate_boolean(mapped_data.get("Status", True), default=True)
     normalized["Phone"] = validate_phone(mapped_data.get("Phone", ""))
     normalized["Email"] = validate_email(mapped_data.get("Email", ""))
-    normalized["Website"] = validate_url(mapped_data.get("Website", ""), base_url=base_url, field_context="Website")
-    normalized["Image URL"] = validate_url(mapped_data.get("Image URL", ""), base_url=base_url)
+    normalized["Website"] = validate_url(mapped_data.get("Website", ""), base_url=base_url, url_base=url_base, field_context="Website")
+    normalized["Image URL"] = validate_url(mapped_data.get("Image URL", ""), base_url=base_url, url_base=url_base)
     
     # Coordinates (critical for mapping)
     normalized["Latitude"] = validate_coordinate(mapped_data.get("Latitude", ""), "latitude")
@@ -977,7 +1028,7 @@ def batch_normalize(
     field_mapping: Optional[Dict[str, Any]] = None,
     deduplicate: bool = True,
     geocode_missing: bool = True
-) -> List[Dict[str, str]]:
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
     """
     Normalize a batch of locations with comprehensive deduplication.
     Attempts to geocode stores missing coordinates, then excludes stores without coordinates and logs them clearly.
@@ -989,7 +1040,9 @@ def batch_normalize(
         geocode_missing: If True, attempt to geocode stores missing coordinates (default: True)
     
     Returns:
-        List of normalized location dictionaries (deduplicated, excluding stores without coordinates)
+        Tuple of (normalized_list, excluded_stores).
+        normalized_list: Kept records (deduplicated, with coordinates).
+        excluded_stores: Dropped records with name, address, reason (missing coordinates).
     """
     existing_handles = set() if deduplicate else None
     normalized_list = []
@@ -1075,7 +1128,7 @@ def batch_normalize(
         print("=" * 80, flush=True)
         print(flush=True)
     
-    return normalized_list
+    return normalized_list, excluded_stores
 
 
 # CSV I/O FUNCTIONS
@@ -1109,15 +1162,9 @@ def write_normalized_csv(data: List[Dict[str, str]], filename: str = "output/loc
 
 
 def read_csv_to_dict(filename: str) -> List[Dict[str, str]]:
-    """
-    Read a CSV file into a list of dictionaries
-    
-    Args:
-        filename: Input CSV file path
-    
-    Returns:
-        List of dictionaries (one per row)
-    """
+    """Read a CSV file into a list of dictionaries. Returns [] if file does not exist."""
+    if not os.path.exists(filename):
+        return []
     with open(filename, 'r', newline='', encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile)
         return list(reader)
@@ -1175,7 +1222,7 @@ if __name__ == "__main__":
     # Example 3: Batch normalization
     print("\nExample 3: Batch normalization")
     batch_data = [raw_store, raw_api_data]
-    normalized_batch = batch_normalize(batch_data, field_mapping=None)
+    normalized_batch, excluded = batch_normalize(batch_data, field_mapping=None)
     print(f"  Normalized {len(normalized_batch)} locations")
     print(f"  Handles: {[loc['Handle'] for loc in normalized_batch]}")
 

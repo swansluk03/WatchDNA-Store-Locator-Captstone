@@ -2,13 +2,12 @@ import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { scraperService } from '../services/scraper.service';
 import uploadService from '../services/upload.service';
+import { storeService } from '../services/store.service';
 import fs from 'fs';
 import path from 'path';
 import Papa from 'papaparse';
 
 const prisma = new PrismaClient();
-
-const COORD_MATCH_TOLERANCE_METERS = 50;
 
 // Helper functions for brand config similarity detection
 function calculateSimilarity(str1: string, str2: string): number {
@@ -445,6 +444,51 @@ export const scraperController = {
     }
   },
 
+  // GET /api/scraper/jobs/:id/dropped-records - Get dropped/excluded records for a completed job
+  async getJobDroppedRecords(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+
+      const job = await prisma.scraperJob.findUnique({
+        where: { id },
+        include: { upload: true }
+      });
+
+      if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+
+      if (job.status !== 'completed') {
+        return res.status(400).json({ error: 'Only completed jobs have dropped records' });
+      }
+
+      if (!job.uploadId || !job.upload) {
+        return res.status(404).json({ error: 'No upload linked to this job' });
+      }
+
+      // Dropped file is alongside the CSV: scraped/brand_timestamp.csv -> scraped/brand_timestamp_dropped.json
+      const droppedFilename = job.upload.filename.replace(/\.csv$/i, '_dropped.json');
+      const droppedPath = await uploadService.getFilePath(droppedFilename);
+
+      if (!droppedPath || !fs.existsSync(droppedPath)) {
+        return res.json({ jobId: job.id, excludedStores: [], count: 0 });
+      }
+
+      const fileContent = fs.readFileSync(droppedPath, 'utf-8');
+      const data = JSON.parse(fileContent);
+
+      res.json({
+        jobId: job.id,
+        brandName: job.brandName,
+        excludedStores: data.excluded_stores || [],
+        count: data.count ?? (data.excluded_stores?.length ?? 0)
+      });
+    } catch (error: any) {
+      console.error('Error fetching dropped records:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
   // GET /api/scraper/jobs/:id/records - Get CSV records for a completed job
   async getJobRecords(req: Request, res: Response) {
     try {
@@ -493,7 +537,66 @@ export const scraperController = {
     }
   },
 
-  // PATCH /api/scraper/master-csv - Update rows in master CSV
+  // PATCH /api/scraper/jobs/:id/records - Save job records (to job CSV) and append complete records to master
+  async saveJobRecords(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { records } = req.body as { records: Record<string, string>[] };
+
+      if (!Array.isArray(records) || records.length === 0) {
+        return res.status(400).json({ error: 'records array with at least one record is required' });
+      }
+
+      const result = await scraperService.saveJobRecords(id, records);
+
+      res.json({
+        message: 'Job records saved',
+        savedToJob: result.savedToJob,
+        appendedToMaster: result.appendedToMaster,
+        skippedIncomplete: result.skippedIncomplete,
+        validationErrors: result.validationErrors,
+      });
+    } catch (error: any) {
+      console.error('Error saving job records:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // GET /api/scraper/master-csv/records - Get master store records (optionally filtered by brand)
+  async getMasterCsvRecords(req: Request, res: Response) {
+    try {
+      const brand = (req.query.brand as string) || undefined;
+      const result = await storeService.getMasterRecords(brand);
+      res.json({
+        columns: result.columns,
+        records: result.records,
+        totalCount: result.totalCount,
+      });
+    } catch (error: any) {
+      console.error('Error fetching master CSV records:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // DELETE /api/scraper/master-csv/records - Remove a single store from master by Handle
+  async deleteMasterRecord(req: Request, res: Response) {
+    try {
+      const { handle } = req.body as { handle?: string };
+      if (!handle || typeof handle !== 'string') {
+        return res.status(400).json({ error: 'handle is required' });
+      }
+      const { removed } = await storeService.deleteMasterRecord(handle);
+      res.json({ removed });
+    } catch (error: any) {
+      console.error('Error deleting master record:', error);
+      if (error.message === 'Master CSV not found') {
+        return res.status(404).json({ error: error.message });
+      }
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // PATCH /api/scraper/master-csv - Update rows in master CSV (uses store service for DB-ready abstraction)
   async updateMasterCsvRows(req: Request, res: Response) {
     try {
       const { rows: updates } = req.body as { rows: Record<string, string>[] };
@@ -502,68 +605,18 @@ export const scraperController = {
         return res.status(400).json({ error: 'rows array with at least one record is required' });
       }
 
-      const masterCsvPath = await uploadService.getMasterCSVPath();
-      if (!masterCsvPath || !fs.existsSync(masterCsvPath)) {
-        return res.status(404).json({ error: 'Master CSV not found' });
-      }
-
-      const fileContent = fs.readFileSync(masterCsvPath, 'utf-8');
-      const parseResult = Papa.parse(fileContent, {
-        header: true,
-        skipEmptyLines: true,
-        transformHeader: (h: string) => h.trim()
-      });
-
-      const masterRows = parseResult.data as Record<string, string>[];
-
-      let updatedCount = 0;
-
-      for (const update of updates) {
-        const handle = (update.Handle || update.handle || '').trim();
-        const latStr = (update.Latitude || '').trim();
-        const lonStr = (update.Longitude || '').trim();
-
-        const idx = masterRows.findIndex((r) => {
-          const rHandle = (r.Handle || '').trim();
-          if (handle && rHandle === handle) return true;
-          if (latStr && lonStr && r.Latitude && r.Longitude) {
-            const rLat = parseFloat(r.Latitude);
-            const rLon = parseFloat(r.Longitude);
-            const lat = parseFloat(latStr);
-            const lon = parseFloat(lonStr);
-            if (!isNaN(lat) && !isNaN(lon) && !isNaN(rLat) && !isNaN(rLon)) {
-              const dist = Math.hypot(
-                (lat - rLat) * 111320,  // rough meters per degree lat
-                (lon - rLon) * 111320 * Math.cos(lat * Math.PI / 180)
-              );
-              return dist <= COORD_MATCH_TOLERANCE_METERS;
-            }
-          }
-          return false;
-        });
-
-        if (idx >= 0) {
-          const schemaKeys = new Set(Object.keys(masterRows[0] || {}));
-          const readonlyColumns = new Set(['Handle']);
-          for (const [key, value] of Object.entries(update)) {
-            if (value !== undefined && schemaKeys.has(key) && !readonlyColumns.has(key)) {
-              masterRows[idx][key] = String(value).trim();
-            }
-          }
-          updatedCount++;
-        }
-      }
-
-      const csvContent = Papa.unparse(masterRows);
-      fs.writeFileSync(masterCsvPath, csvContent, 'utf-8');
+      const { updatedCount, totalRequested } = await storeService.updateMasterRecords(updates);
 
       res.json({
         message: 'Master CSV updated successfully',
         updatedCount,
-        totalRequested: updates.length
+        totalRequested,
       });
     } catch (error: any) {
       console.error('Error updating master CSV:', error);
+      if (error.message === 'Master CSV not found') {
+        return res.status(404).json({ error: error.message });
+      }
       res.status(500).json({ error: error.message });
     }
   },

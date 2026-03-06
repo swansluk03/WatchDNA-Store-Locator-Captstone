@@ -24,6 +24,16 @@ from urllib.parse import urlparse
 
 from scraper_utils import log_debug
 
+
+def _get_custom_headers(brand_config: Optional[Dict]) -> Optional[Dict]:
+    """Return per-brand custom HTTP headers from brand_config, or None."""
+    if brand_config:
+        headers = brand_config.get("custom_headers")
+        if headers and isinstance(headers, dict):
+            return headers
+    return None
+
+
 # Request/retry constants
 DEFAULT_REQUEST_TIMEOUT = 120
 DEFAULT_RETRIES = 3
@@ -1323,11 +1333,9 @@ def universal_scrape(
     print("🔍 Analyzing endpoint...")
     log_debug("PHASE 1: Endpoint Analysis", "INFO")
     
-    # Check if custom headers are needed for initial fetch (e.g., Bell & Ross requires Accept: application/json)
-    initial_headers = None
-    if "bellross.com" in url or "stores.bellross.com" in url:
-        initial_headers = {"Accept": "application/json"}
-    
+    # Apply per-brand custom headers for initial fetch (from brand_config)
+    initial_headers = _get_custom_headers(brand_config)
+
     try:
         log_debug("Fetching sample data for detection...", "DEBUG")
         sample_data = fetch_data(url, headers=initial_headers)
@@ -1406,7 +1414,7 @@ def universal_scrape(
             if is_radius_based:
                 # Use radius expansion instead of simple pagination
                 log_debug("Radius-based pagination detected - using multi-point expansion", "INFO")
-                custom_headers = {"Accept": "application/json"} if "bellross.com" in url else None
+                custom_headers = _get_custom_headers(brand_config)
                 stores = scrape_radius_expansion(url, url_params, region, custom_headers=custom_headers)
                 results["expansion_used"] = True
             else:
@@ -1415,12 +1423,7 @@ def universal_scrape(
                 if is_token_based:
                     log_debug("Token-based pagination detected (using pageToken)", "DEBUG")
                 
-                # Check if custom headers are needed (e.g., Accept: application/json for Bell & Ross)
-                custom_headers = None
-                if "bellross.com" in url or "stores.bellross.com" in url:
-                    custom_headers = {"Accept": "application/json"}
-                    log_debug("Adding Accept: application/json header for Bell & Ross API", "DEBUG")
-                
+                custom_headers = _get_custom_headers(brand_config)
                 stores = scrape_paginated(url, url_params, is_token_based=is_token_based, custom_headers=custom_headers)
                 results["expansion_used"] = True
         
@@ -1433,7 +1436,7 @@ def universal_scrape(
         elif detected_type == "radius" or (has_radius and has_center):
             # Radius-based API - use multi-point expansion
             log_debug("Strategy: Radius-based multi-point expansion", "INFO")
-            custom_headers = {"Accept": "application/json"} if "bellross.com" in url or "stores.bellross.com" in url else None
+            custom_headers = _get_custom_headers(brand_config)
             stores = scrape_radius_expansion(url, url_params, region, custom_headers=custom_headers)
             results["expansion_used"] = True
         
@@ -1472,9 +1475,7 @@ def universal_scrape(
         elif not is_region_specific or detected_type == "single_call":
             # Single call
             log_debug("Strategy: Single API call", "INFO")
-            custom_headers = None
-            if "bellross.com" in url or "stores.bellross.com" in url:
-                custom_headers = {"Accept": "application/json"}
+            custom_headers = _get_custom_headers(brand_config)
             stores, tech_metrics = scrape_single_call(url, custom_headers=custom_headers, compare_techniques=compare_techniques)
             results["technique_metrics"] = tech_metrics
             results["expansion_used"] = False
@@ -1482,9 +1483,7 @@ def universal_scrape(
         else:
             # Default to single call
             log_debug("Strategy: Default single call", "INFO")
-            custom_headers = None
-            if "bellross.com" in url or "stores.bellross.com" in url:
-                custom_headers = {"Accept": "application/json"}
+            custom_headers = _get_custom_headers(brand_config)
             stores, tech_metrics = scrape_single_call(url, custom_headers=custom_headers, compare_techniques=compare_techniques)
             results["technique_metrics"] = tech_metrics
             results["expansion_used"] = False
@@ -1518,12 +1517,16 @@ def universal_scrape(
     # Add base URL for resolving partial store URLs (e.g. Bulgari: en-us/storelocator/...)
     parsed = urlparse(url)
     base_url = f"{parsed.scheme}://{parsed.netloc}/" if parsed.scheme and parsed.netloc else None
+    field_mapping = dict(field_mapping)  # Copy so we don't mutate brand config
     if base_url:
-        field_mapping = dict(field_mapping)  # Copy so we don't mutate brand config
         field_mapping["_base_url"] = base_url
+    # Inject brand's url_base for store-detail path reconstruction (e.g. Omega storedetails/<id>)
+    if brand_config and brand_config.get("url_base"):
+        field_mapping["_url_base"] = brand_config["url_base"]
     
-    normalized = batch_normalize(stores, field_mapping)
+    normalized, excluded_stores = batch_normalize(stores, field_mapping)
     results["stores_normalized"] = len(normalized)
+    results["excluded_stores"] = excluded_stores
     norm_time = time.time() - norm_start
     
     # Calculate how many were filtered out
@@ -1546,6 +1549,14 @@ def universal_scrape(
     write_start = time.time()
     write_normalized_csv(normalized, output_file)
     write_time = time.time() - write_start
+
+    # Write dropped records to companion JSON file (for admin UI)
+    dropped_file = output_file.rsplit(".csv", 1)[0] + "_dropped.json"
+    if excluded_stores:
+        with open(dropped_file, "w", encoding="utf-8") as f:
+            json.dump({"excluded_stores": excluded_stores, "count": len(excluded_stores)}, f, indent=2)
+    elif os.path.exists(dropped_file):
+        os.remove(dropped_file)  # Remove stale dropped file from previous run
     
     file_size = os.path.getsize(output_file) / 1024  # KB
     log_debug(f"CSV export complete | Size: {file_size:.1f} KB | Time: {write_time:.2f}s", "SUCCESS")

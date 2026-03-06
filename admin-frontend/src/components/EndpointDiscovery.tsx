@@ -10,6 +10,8 @@ interface DiscoveredEndpoint {
   verified_store_count?: number;
   verified_type?: string;
   verification_error?: string;
+  verification_time?: number;
+  store_count?: number;
   data_path?: string;
   field_mapping?: Record<string, any>;
 }
@@ -65,7 +67,7 @@ const EndpointDiscovery: React.FC<EndpointDiscoveryProps> = ({ onConfigSaved }) 
         // Auto-select the best endpoint (first one, usually highest confidence)
         if (result.endpoints && result.endpoints.length > 0) {
           // Prefer verified endpoints
-          const verifiedEndpoint = result.endpoints.find(ep => ep.verified);
+          const verifiedEndpoint = result.endpoints.find((ep: DiscoveredEndpoint) => ep.verified);
           setSelectedEndpoint(verifiedEndpoint || result.endpoints[0]);
         }
       }
@@ -401,6 +403,15 @@ const EndpointDiscovery: React.FC<EndpointDiscoveryProps> = ({ onConfigSaved }) 
                   </>
                 )}
               </div>
+
+              {!selectedEndpoint.data_path && !discoveryResult?.suggested_config?.data_path && (
+                <div className="warning-box">
+                  <strong>Warning:</strong> No data path was detected. If the API returns stores
+                  nested inside a key (e.g. <code>response.stores</code>), add a{' '}
+                  <code>data_path</code> to the config manually after saving, otherwise the scraper
+                  may not find any records.
+                </div>
+              )}
             </div>
 
             <div className="modal-footer">

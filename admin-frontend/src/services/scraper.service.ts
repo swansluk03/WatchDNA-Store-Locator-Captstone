@@ -141,6 +141,39 @@ export const scraperService = {
     return response.data;
   },
 
+  // Save job records: persist to job CSV, append complete records to master
+  async saveJobRecords(jobId: string, records: Record<string, string>[]): Promise<{
+    savedToJob: number;
+    appendedToMaster: number;
+    skippedIncomplete: number;
+    validationErrors?: number;
+  }> {
+    const response = await api.patch(`/scraper/jobs/${jobId}/records`, { records });
+    return response.data;
+  },
+
+  // Get dropped/excluded records for a completed job
+  async getJobDroppedRecords(jobId: string): Promise<{
+    jobId: string;
+    brandName: string;
+    excludedStores: { name: string; address: string; reason: string }[];
+    count: number;
+  }> {
+    const response = await api.get(`/scraper/jobs/${jobId}/dropped-records`);
+    return response.data;
+  },
+
+  // Get master CSV records (optionally filtered by brand)
+  async getMasterCsvRecords(brandFilter?: string): Promise<{
+    columns: string[];
+    records: Record<string, string>[];
+    totalCount: number;
+  }> {
+    const params = brandFilter ? { brand: brandFilter } : {};
+    const response = await api.get('/scraper/master-csv/records', { params });
+    return response.data;
+  },
+
   // Update rows in master CSV
   async updateMasterCsvRows(rows: Record<string, string>[]): Promise<{
     message: string;
@@ -148,6 +181,12 @@ export const scraperService = {
     totalRequested: number;
   }> {
     const response = await api.patch('/scraper/master-csv', { rows });
+    return response.data;
+  },
+
+  // Remove a store from master CSV by Handle
+  async deleteMasterRecord(handle: string): Promise<{ removed: boolean }> {
+    const response = await api.delete('/scraper/master-csv/records', { data: { handle } });
     return response.data;
   }
 };

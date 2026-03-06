@@ -6,40 +6,7 @@ import time
 from typing import Dict, List, Any, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
-KEY_PATTERNS = {
-    "Name": ["name", "title", "store"],
-    "Address Line 1": ["address", "street", "adr", "line1"],
-    "City": ["city", "locality"],
-    "State/Province/Region": ["state", "region", "province"],
-    "Country": ["country"],
-    "Postal/ZIP Code": ["zip", "postal", "postcode"],
-    "Phone": ["phone", "tel", "mobile"],
-    "Email": ["email", "mail"],
-    "Website": ["website", "url", "permalink"],
-    "Latitude": ["lat", "latitude"],
-    "Longitude": ["lng", "lon", "longitude"],
-    "Handle": ["id", "handle"],
-}
-
-
-def _infer_field_mapping(sample_objects: List[Dict]) -> Dict[str, str]:
-    if not sample_objects:
-        return {}
-    all_keys = set()
-    for obj in sample_objects:
-        _collect_keys(obj, "", all_keys)
-    mapping = {}
-    for canonical, patterns in KEY_PATTERNS.items():
-        best_key = None
-        for key in all_keys:
-            key_lower = key.lower()
-            for p in patterns:
-                if p in key_lower and (not best_key or len(key) < len(best_key)):
-                    best_key = key
-                    break
-        if best_key:
-            mapping[canonical] = best_key
-    return mapping
+from pattern_detector import auto_generate_field_mapping as _infer_field_mapping  # single source of truth
 
 
 def _collect_keys(obj: Any, prefix: str, out: set) -> None:

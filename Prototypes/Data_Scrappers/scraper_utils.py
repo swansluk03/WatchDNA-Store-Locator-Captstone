@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Shared utilities for universal_scraper and viewport_grid."""
+"""Shared utilities for universal_scraper, viewport_grid, and master_csv_manager."""
 
+import re
 from datetime import datetime
+from typing import Optional
 
 
 def log_debug(message: str, level: str = "INFO") -> None:
@@ -14,3 +16,18 @@ def log_debug(message: str, level: str = "INFO") -> None:
         "DEBUG": "🔍"
     }.get(level, "  ")
     print(f"[{timestamp}] {prefix} {message}", flush=True)
+
+
+def resolve_partial_url(url_str: str, url_base: Optional[str]) -> str:
+    """Reconstruct a relative store-detail URL using the brand's url_base.
+
+    If url_str matches the pattern ``store/storedetails/<id>`` and url_base is
+    provided, returns the full URL.  Otherwise returns url_str unchanged.
+    """
+    if not url_base:
+        return url_str
+    match = re.search(r'(?:^|/)store[/\\]storedetails[/\\]([^\s/]+)', url_str, re.IGNORECASE)
+    if match:
+        store_id = match.group(1).rstrip('/')
+        return f"{url_base.rstrip('/')}/store/storedetails/{store_id}"
+    return url_str

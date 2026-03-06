@@ -23,6 +23,8 @@ import re
 from pathlib import Path
 from typing import List, Dict, Tuple, Set, Any, Optional
 from collections import defaultdict
+
+from scraper_utils import resolve_partial_url
 from urllib.parse import urlparse
 
 # Handle Windows console encoding
@@ -212,10 +214,11 @@ class CSVValidator:
                     {"row": row_num, "field": field, "decimals": decimals}
                 ))
 
-    def validate_url(self, value: str, field: str, row_num: int, check_http: bool = False) -> Tuple[bool, Optional[str], Optional[str]]:
+    def validate_url(self, value: str, field: str, row_num: int, check_http: bool = False,
+                     url_base: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Validate a URL value.
-        Converts relative Omega store detail URLs to full URLs.
+        Resolves relative store-detail paths using url_base when provided.
         Optionally checks if URL is accessible via HTTP.
         Returns: (is_valid, normalized_url, error_message)
         """
@@ -223,11 +226,7 @@ class CSVValidator:
             return True, "", None  # Empty URLs are valid (optional field)
         url_str = str(value).strip()
         url_str = url_str.replace('\\/', '/').replace('\\', '/')
-        omega_store_pattern = r'(?:^|/|https?://)(?:store[/\\]storedetails[/\\])(\d+[^/]*)/?$'
-        omega_match = re.search(omega_store_pattern, url_str, re.IGNORECASE)
-        if omega_match:
-            store_id = omega_match.group(1)
-            url_str = f"https://www.omegawatches.com/en-us/store/storedetails/{store_id}"
+        url_str = resolve_partial_url(url_str, url_base)
         if url_str and not urlparse(url_str).scheme:
             url_str = f"https://{url_str}"
         parsed = urlparse(url_str)

@@ -40,6 +40,32 @@ except ImportError as e:
     _verifier_import_error = str(e)
 
 
+# Known viewport API paths to probe on related brand domains.
+# Ordered from most-specific to most-generic so we stop early on a hit.
+_STORE_API_PROBE_PATHS = [
+    '/app/establishments/by_viewport/light',
+    '/app/establishments/by_viewport',
+    '/api/v1/establishments/by_viewport',
+    '/api/stores/by_viewport',
+    '/api/locations/by_viewport',
+    '/api/stores/viewport',
+    '/api/v1/stores',
+    '/api/v2/stores',
+    '/api/stores',
+    '/api/locations',
+    '/api/retailers',
+    '/api/establishments',
+]
+
+# Small European viewport used for probing — cheap, ~100–400 results for most brands.
+_VIEWPORT_PROBE_PARAMS = {
+    'northEastLat': '55.0',
+    'northEastLng': '15.0',
+    'southWestLat': '45.0',
+    'southWestLng': '-5.0',
+}
+
+
 class EndpointDiscoverer:
     def __init__(self, headless: bool = True, timeout: int = 30, verify_endpoints: bool = True):
         self.headless = headless
@@ -758,6 +784,92 @@ class EndpointDiscoverer:
         
         return results
     
+    def _probe_related_api_domains(self, store_locator_url: str) -> List[Dict]:
+        """
+        Find related brand subdomains mentioned in the rendered page and probe them
+        with known store-API path patterns.
+
+        This handles cases like Rolex where the store locator lives on
+        www.rolex.com but the actual API is on retailers.rolex.com.
+        """
+        if not self.driver:
+            return []
+
+        try:
+            source = self.driver.page_source
+        except Exception:
+            return []
+
+        parsed_base = urlparse(store_locator_url)
+        base_parts = parsed_base.netloc.split('.')
+        if len(base_parts) < 2:
+            return []
+        brand_tld = '.'.join(base_parts[-2:])   # e.g. "rolex.com"
+
+        # Extract all quoted https URLs from the rendered source
+        raw_urls = re.findall(r'"(https?://[a-zA-Z0-9.-]+)"', source)
+        related_domains: set = set()
+        for raw in raw_urls:
+            p = urlparse(raw)
+            if (p.netloc
+                    and p.netloc != parsed_base.netloc
+                    and brand_tld in p.netloc):
+                related_domains.add(f"{p.scheme}://{p.netloc}")
+
+        # Skip domains that are clearly CDN/media/tracking, not API servers
+        _NON_API_SUBDOMAIN_PREFIXES = {
+            'static', 'media', 'assets', 'asset', 'cdn', 'img', 'images',
+            'fonts', 'content', 'files', 'metrics', 'analytics', 'tracking',
+            'mail', 'email', 'smtp',
+        }
+        related_domains = {
+            d for d in related_domains
+            if urlparse(d).hostname.split('.')[0].lower() not in _NON_API_SUBDOMAIN_PREFIXES
+        }
+
+        if not related_domains:
+            return []
+
+        print(f"  🔎 Probing {len(related_domains)} related brand domain(s): {', '.join(related_domains)}")
+
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        results: List[Dict] = []
+
+        for domain in related_domains:
+            for path in _STORE_API_PROBE_PATHS:
+                probe_url = f"{domain}{path}"
+                try:
+                    resp = requests.get(
+                        probe_url,
+                        params=_VIEWPORT_PROBE_PARAMS,
+                        headers=headers,
+                        timeout=8,
+                    )
+                    if resp.status_code != 200:
+                        continue
+                    ct = resp.headers.get('content-type', '').lower()
+                    if 'json' not in ct:
+                        continue
+                    data = resp.json()
+                    # Accept a non-empty list or a dict that contains store data
+                    is_store_list = isinstance(data, list) and len(data) > 0
+                    is_store_dict = isinstance(data, dict) and self._has_store_data(data)
+                    if is_store_list or is_store_dict:
+                        actual_url = resp.url   # includes the params as sent
+                        results.append({
+                            'url': actual_url,
+                            'method': 'GET',
+                            'status': 200,
+                            'mimeType': ct,
+                            'headers': {},
+                        })
+                        print(f"  ✓ Found store API on related domain: {actual_url[:80]}")
+                        break   # one hit per domain is enough
+                except Exception:
+                    continue
+
+        return results
+
     def _has_store_data(self, data: Any, depth: int = 0) -> bool:
         """
         Check if data structure contains store location data
@@ -848,7 +960,15 @@ class EndpointDiscoverer:
             for req in proactive_requests:
                 if not any(r.get('url') == req['url'] for r in network_requests):
                     network_requests.append(req)
-            
+
+            # Probe related brand subdomains found in the rendered page source.
+            # Handles cases like Rolex (www.rolex.com page, retailers.rolex.com API).
+            print("\n🔎 Probing related brand domains from page config...")
+            related_domain_requests = self._probe_related_api_domains(store_locator_url)
+            for req in related_domain_requests:
+                if not any(r.get('url') == req['url'] for r in network_requests):
+                    network_requests.append(req)
+
             if len(network_requests) == 0:
                 print(f"  ⚠️  No network requests captured - trying alternative method...")
                 # Try capturing from page source or checking if data is embedded

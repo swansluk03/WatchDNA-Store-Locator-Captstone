@@ -3,7 +3,10 @@
     "description": "Brand configurations for store locator scraping",
     "usage": "Select a brand, modify the URL if needed, and start scraping",
     "add_new_brand": "Copy a similar 'type' configuration and update the URL and field mappings",
-    "country_configuration": {
+    "optional_keys": {
+      "display_name": "Canonical human-readable brand name for the master CSV Brands column (e.g. 'BAUME & MERCIER'). If omitted, a normalized version of the config key is used.",
+      "custom_headers": "Dict of HTTP headers injected on every request for this brand (e.g. {\"Accept\": \"application/json\"}).",
+      "url_base": "Base URL used to reconstruct relative store-detail URLs (e.g. 'https://www.omegawatches.com/en-us').",
       "use_watch_store_countries": "Set to true to use comprehensive 88-country list from watch_store_countries.json",
       "countries": "Provide custom countries object if you want to override the comprehensive list",
       "see": "COUNTRY_CONFIG_GUIDE.md for details on country configuration"
@@ -14,6 +17,7 @@
     "url": "https://retailers.rolex.com/app/establishments/by_viewport/light?brand=RLX&northEastLat=50.0&northEastLng=10.0&southWestLat=40.0&southWestLng=-10.0&langCode=en-us&establishmentType=STORE",
     "description": "Rolex Official Retailers API - Verified Working ✅",
     "method": "GET",
+    "display_name": "ROLEX",
     "data_path": "",
     "field_mapping": {
       "Name": [
@@ -49,7 +53,7 @@
         "phone1",
         "phone"
       ],
-      "Email": "email",
+      "Email": ["email"],
       "Website": [
         "urlRolexV7",
         "website"
@@ -69,6 +73,8 @@
     "url": "https://www.omegawatches.com/en-us/store-locator",
     "method": "GET",
     "description": "HTML page with store data",
+    "display_name": "OMEGA",
+    "url_base": "https://www.omegawatches.com/en-us",
     "enabled": true
   },
   "alange_soehne_stores": {
@@ -76,6 +82,7 @@
     "url": "https://www.alange-soehne.com/us-en/api/search/store/locator?boutiqueOnly=false",
     "description": "A. Lange & Söhne Store Locator - Single call API returns all stores ✅",
     "method": "GET",
+    "display_name": "A. LANGE & SÖHNE",
     "data_path": "data",
     "field_mapping": {
       "Handle": "id",
@@ -96,6 +103,7 @@
     "url": "https://us.alpinawatches.com/on/demandware.store/Sites-alpina_us-Site/en_US/Stores-FindStores?showMap=true&radius=25000&lat=0&long=0",
     "description": "Alpina Watches Store Locator (U.S.) - Radius-based API",
     "method": "GET",
+    "display_name": "ALPINA",
     "data_path": "stores",
     "field_mapping": {
       "Handle": "ID",
@@ -202,7 +210,7 @@
         "postal_code"
       ],
       "Phone": "phone",
-      "Email": "email",
+      "Email": ["email"],
       "Latitude": [
         "lat",
         "latitude"
@@ -298,13 +306,15 @@
     "type": "html",
     "url": "https://www.blancpain.com/en-us/service/points-sale",
     "description": "Blancpain Store Locator - HTML page with structured store information ✅",
-    "method": "GET"
+    "method": "GET",
+    "display_name": "BLANCPAIN"
   },
   "breitling_stores": {
     "type": "json",
     "url": "https://store.breitling.com/en?country=US&qp=United+States&r=1000&l=en&per=50&offset=0",
     "description": "Breitling Store Locator - JSON API with country-based search and offset pagination. URL returns JSON directly. Use country parameter to get stores for different countries. Large radius (1000) gets all stores per country. Scraper handles offset pagination automatically ✅",
     "method": "GET",
+    "display_name": "BREITLING",
     "data_path": "response.entities",
     "field_mapping": {
       "Handle": "profile.meta.id",
@@ -329,6 +339,8 @@
     "url": "https://stores.bellross.com/search?r=500&lat=0&long=0&per=50&offset=0",
     "method": "GET",
     "description": "Radius-based search API with offset pagination, returns 50 stores per page. Uses radius=2000km from Paris center point. Scraper follows all pages (offset 0, 50, 100…) and uses multiple center points worldwide to get all stores ✅",
+    "display_name": "BELL & ROSS",
+    "custom_headers": { "Accept": "application/json" },
     "enabled": true,
     "data_path": "response.entities",
     "field_mapping": {
@@ -351,6 +363,7 @@
     "url": "https://www.audemarspiguet.com/com/en/stores.yextentities.json?languages=en&limit=50",
     "method": "GET",
     "description": "Paginated API - Returns stores in pages. Universal scraper will follow pagination. - Universal scraper handles pagination automatically",
+    "display_name": "AUDEMARS PIGUET",
     "enabled": true,
     "data_path": "entities",
     "field_mapping": {
@@ -373,6 +386,7 @@
     "url": "https://www.bulgari.com/en-us/storelocator?country-region=US&l=en_US&per=50&offset=0",
     "method": "GET",
     "description": "Country-filter API - Change country param (e.g. country-region=US to IT, FR) for worldwide stores. Universal scraper iterates through all countries automatically.",
+    "display_name": "BULGARI",
     "enabled": true,
     "data_path": "response.entities",
     "field_mapping": {
@@ -396,6 +410,7 @@
     "url": "https://benrus.com/en-us/retailers",
     "method": "GET",
     "description": "Pure HTML - no API. Retailer locations rendered in page. Scraper extracts from retailer card DOM.",
+    "display_name": "BENRUS",
     "enabled": true,
     "_note": "No network API - stores extracted from server-rendered HTML (retailer cards with h3, address, Google Maps link)."
   },
@@ -404,6 +419,7 @@
     "url": "https://www.ballwatch.com/index.php?route=tool%2Fstore_locator&ajax=1&is_locate_me=1&country_id=223",
     "method": "GET",
     "description": "OpenCart store locator - country_id filters by country. 223=US. Returns JSON with stores array.",
+    "display_name": "BALL WATCH",
     "enabled": true,
     "data_path": "stores",
     "field_mapping": {
@@ -440,6 +456,7 @@
     "url": "https://storemapper-herokuapp-com.global.ssl.fastly.net/api/users/36220-oTIkXUu6J1dXYjyu/stores.js?callback=SMcallback2",
     "method": "GET",
     "description": "JSON API - Single call returns all stores",
+    "display_name": "BOMBERG",
     "enabled": true,
     "data_path": "stores",
     "field_mapping": {
@@ -459,6 +476,7 @@
     "url": "https://stockist.co/api/v1/u3131/locations/all",
     "method": "GET",
     "description": "JSON API - Single call returns all stores",
+    "display_name": "BREMONT",
     "enabled": true,
     "field_mapping": {
       "Latitude": "latitude",
@@ -483,6 +501,7 @@
     "url": "https://www.baume-et-mercier.com/us/en/stores.stores-with-hours.retailer-other.json",
     "method": "GET",
     "description": "JSON API - Single call returns all stores",
+    "display_name": "BAUME & MERCIER",
     "enabled": true,
     "field_mapping": {
       "Latitude": "location.latitude",
@@ -499,5 +518,13 @@
       "Website": "website",
       "Handle": "id"
     }
+  },
+  "rolex_stores": {
+    "type": "html",
+    "url": "https://www.rolex.com/en-us/store-locator/",
+    "method": "GET",
+    "description": "HTML page with store data",
+    "display_name": "ROLEX",
+    "enabled": true
   }
 }

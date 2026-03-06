@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import validationService from './validation.service';
 
 const prisma = new PrismaClient();
 
@@ -46,8 +47,13 @@ class ScraperService {
         fs.mkdirSync(masterCsvDir, { recursive: true });
       }
 
+      // Use venv Python if available (has phonenumbers etc.), else fall back to system python3
+      const projectRoot = path.join(__dirname, '..', '..', '..');
+      const venvPython = path.join(projectRoot, 'venv', 'bin', 'python3');
+      const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3';
+
       // Run the Python scraper (outputs to individual CSV)
-      const pythonProcess = spawn('python3', [
+      const pythonProcess = spawn(pythonCmd, [
         '-u', // Unbuffered output - ensures real-time logging
         path.join(scraperPath, 'universal_scraper.py'),
         '--url', url,
@@ -166,7 +172,7 @@ class ScraperService {
             let mergeStderr = '';
             
             try {
-              const mergeProcess = spawn('python3', [
+              const mergeProcess = spawn(pythonCmd, [
                 masterCsvManagerPath,
                 individualCsvFile,
                 masterCsvFile,
@@ -255,6 +261,28 @@ class ScraperService {
                 rowsProcessed: recordsScraped !== null ? recordsScraped : 0,
               }
             });
+
+            // Run validation on scraped CSV so View Run shows errors, warnings, and logs
+            try {
+              const validationResult = await validationService.validateCSV(individualCsvFile, {
+                autoFix: false,
+                checkUrls: false
+              });
+              const updateData = validationService.formatForDatabase(validationResult);
+              await prisma.upload.update({
+                where: { id: individualUpload.id },
+                data: {
+                  validationErrors: updateData.validationErrors,
+                  validationWarnings: updateData.validationWarnings,
+                }
+              });
+              const logs = validationService.createValidationLogs(individualUpload.id, validationResult);
+              if (logs.length > 0) {
+                await prisma.validationLog.createMany({ data: logs });
+              }
+            } catch (validationErr: any) {
+              console.warn(`[Job ${jobId}] Validation failed (upload still created):`, validationErr?.message);
+            }
 
             // Create or update Upload record for master CSV
             // Check if master CSV upload already exists
@@ -500,6 +528,120 @@ class ScraperService {
       console.error(`Error cancelling job ${jobId}:`, error);
       return { success: false, message: `Error cancelling job: ${error.message}` };
     }
+  }
+
+  /**
+   * Save job records: persist to job CSV, then append complete records to master.
+   * Incomplete records (missing phone or address) stay in job CSV only.
+   */
+  async saveJobRecords(
+    jobId: string,
+    records: Record<string, string>[]
+  ): Promise<{
+    savedToJob: number;
+    appendedToMaster: number;
+    skippedIncomplete: number;
+    validationErrors?: number;
+  }> {
+    const job = await prisma.scraperJob.findUnique({
+      where: { id: jobId },
+      include: { upload: true }
+    });
+    if (!job || job.status !== 'completed' || !job.uploadId || !job.upload) {
+      throw new Error('Job not found or has no upload');
+    }
+
+    const uploadService = (await import('./upload.service')).default;
+    const filePath = await uploadService.getFilePath(job.upload.filename);
+    if (!filePath || !fs.existsSync(filePath)) {
+      throw new Error('Job CSV file not found');
+    }
+
+    const masterCsvPath = await uploadService.getMasterCSVPath();
+    if (!masterCsvPath || !fs.existsSync(masterCsvPath)) {
+      throw new Error('Master CSV not found');
+    }
+
+    const isComplete = (r: Record<string, string>) => {
+      const phone = (r['Phone'] ?? '').trim();
+      const addr1 = (r['Address Line 1'] ?? '').trim();
+      const addr2 = (r['Address Line 2'] ?? '').trim();
+      return phone.length > 0 && (addr1.length > 0 || addr2.length > 0);
+    };
+
+    const completeRecords = records.filter(isComplete);
+    const skippedIncomplete = records.length - completeRecords.length;
+
+    const Papa = (await import('papaparse')).default;
+    const csvContent = Papa.unparse(records);
+    fs.writeFileSync(filePath, csvContent, 'utf-8');
+
+    let appendedToMaster = 0;
+    if (completeRecords.length > 0) {
+      const validationService = (await import('./validation.service')).default;
+      const tmpDir = path.join(__dirname, '..', '..', 'tmp');
+      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+      const tmpCsv = path.join(tmpDir, `job_${jobId}_complete_${Date.now()}.csv`);
+      const tmpCsvContent = Papa.unparse(completeRecords);
+      fs.writeFileSync(tmpCsv, tmpCsvContent, 'utf-8');
+
+      try {
+        const validationResult = await validationService.validateCSV(tmpCsv, {
+          autoFix: true,
+          checkUrls: false
+        });
+        if (!validationResult.valid && validationResult.errors.length > 0) {
+          fs.unlinkSync(tmpCsv);
+          return {
+            savedToJob: records.length,
+            appendedToMaster: 0,
+            skippedIncomplete,
+            validationErrors: validationResult.errors.length
+          };
+        }
+      } catch {
+        // If validation fails to run, still try to append (e.g. validator script missing)
+      }
+
+      const projectRoot = path.join(__dirname, '..', '..', '..');
+      const venvPython = path.join(projectRoot, 'venv', 'bin', 'python3');
+      const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3';
+      const scraperPath = path.join(projectRoot, 'Prototypes', 'Data_Scrappers');
+      const masterCsvManagerPath = path.join(scraperPath, 'master_csv_manager.py');
+
+      const result = await new Promise<{ stores_added: number; stores_merged: number }>((resolve, reject) => {
+        const proc = spawn(pythonCmd, [
+          masterCsvManagerPath,
+          tmpCsv,
+          masterCsvPath,
+          job.brandName
+        ], { cwd: scraperPath, env: { ...process.env } });
+        let stdout = '';
+        let stderr = '';
+        proc.stdout.on('data', (d) => { stdout += d.toString(); });
+        proc.stderr.on('data', (d) => { stderr += d.toString(); });
+        proc.on('close', (code) => {
+          if (fs.existsSync(tmpCsv)) fs.unlinkSync(tmpCsv);
+          if (code !== 0) {
+            reject(new Error(`Master merge failed: ${stderr || stdout}`));
+            return;
+          }
+          const match = stdout.match(/New unique stores added:\s*(\d+)/);
+          const mergedMatch = stdout.match(/Matched existing stores:\s*(\d+)/);
+          resolve({
+            stores_added: match ? parseInt(match[1]) : completeRecords.length,
+            stores_merged: mergedMatch ? parseInt(mergedMatch[1]) : 0
+          });
+        });
+      });
+      appendedToMaster = result.stores_added + result.stores_merged;
+    }
+
+    return {
+      savedToJob: records.length,
+      appendedToMaster,
+      skippedIncomplete
+    };
   }
 
   /**
