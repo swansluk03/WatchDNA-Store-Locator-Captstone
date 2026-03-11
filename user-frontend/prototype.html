@@ -305,28 +305,38 @@
     })();
 
     // --- Clustering & filtering state ---
-    const clusterGroup = L.markerClusterGroup();
+    const clusterGroup = L.markerClusterGroup({
+      spiderfyOnMaxZoom: false,
+      zoomToBoundsOnClick: true,
+      showCoverageOnHover: false
+    });
     const bounds = L.latLngBounds();
     let allRows = [];
     let allMarkers = [];
     // Keep track of stores the user has explicitly checked (lowercased names)
     let userCheckedStores = new Set();
 
-    // Temporary Icons for regular and premium vendors
-    const regularIcon = L.icon({
-      iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-      iconSize: [25, 41],
-      iconAnchor: [12, 41],
-      popupAnchor: [1, -34]
-    });
+    function createStoreIcon(iconUrl) {
+      return L.icon({
+        iconUrl,
+        iconSize: [34, 48],
+        iconAnchor: [17, 48],
+        popupAnchor: [0, -42]
+      });
+    }
 
-    const premiumIcon = L.icon({
-      iconUrl: '/assets/markers/watchdna_clear_pin.png',
-      iconSize: [64, 64],
-      iconAnchor: [32, 64],
-      popupAnchor: [0, -56]
-    });
+    const markerIcons = {
+      retailer: {
+        nonPremium: createStoreIcon('./imgs/pins_np2.png'),
+        premiumBrandOnly: createStoreIcon('./imgs/pins_pb.png'),
+        premium: createStoreIcon('./imgs/pins_ap.png')
+      },
+      serviceCenter: {
+        nonPremium: createStoreIcon('./imgs/pins_sc_np.png'),
+        premiumBrandOnly: createStoreIcon('./imgs/pins_sc_pb.png'),
+        premium: createStoreIcon('./imgs/pins_sc_ap.png')
+      }
+    };
 
     function buildPopup(row) {
       const addr = [row['Address Line 1'], row['City'], row['State/Province/Region'], row['Country']]
@@ -426,6 +436,41 @@
 
     function normalizeKey(val) {
       return String(val || "").trim().toLowerCase();
+    }
+
+    function isServiceCenterRow(row) {
+      const text = [
+        row['Name'] || '',
+        row['Page Description'] || '',
+        row['Page Title'] || '',
+        row['Meta Description'] || '',
+        row['Custom Brands'] || '',
+        row[' Tags'] || ''
+      ].join(' ').toLowerCase();
+
+      return /service center|customer service|watch service|watch repair|repair specialists|repair|service\b/.test(text);
+    }
+
+    function isPremiumBrandOnlyRow(row) {
+      return !row._isPremium && getVisibleBrandsList(row).length > 0;
+    }
+
+    function getMarkerCategory(row) {
+      const storeKind = isServiceCenterRow(row) ? 'serviceCenter' : 'retailer';
+
+      let tier = 'nonPremium';
+      if (row._isPremium) {
+        tier = 'premium';
+      } else if (isPremiumBrandOnlyRow(row)) {
+        tier = 'premiumBrandOnly';
+      }
+
+      return { storeKind, tier };
+    }
+
+    function getMarkerIconForRow(row) {
+      const { storeKind, tier } = getMarkerCategory(row);
+      return markerIcons[storeKind][tier];
     }
 
     function isLocationApprovedForBrand(row, brandName) {
@@ -1130,8 +1175,10 @@
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
           row._isPremium = isValidEmail(row['Email']);
+          row._isServiceCenter = isServiceCenterRow(row);
+          row._isPremiumBrandOnly = isPremiumBrandOnlyRow(row);
 
-          const iconToUse = row._isPremium ? premiumIcon : regularIcon;
+          const iconToUse = getMarkerIconForRow(row);
 
           const marker = L.marker([lat, lon], { icon: iconToUse })
             .bindPopup(buildPopup(row));
