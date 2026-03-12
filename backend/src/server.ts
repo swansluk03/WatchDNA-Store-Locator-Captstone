@@ -89,19 +89,15 @@ app.use('/api/uploads', uploadRoutes);
 app.use('/api/scraper', scraperRoutes);
 app.use('/api/locations', locationRoutes);
 
-// Serve only the user-facing frontend and expose CSV separately
-const staticDir = path.join(__dirname, '..', '..', 'user-frontend');
-app.use(express.static(staticDir));
+// Serve the repo root so prototype.html and locations.csv are accessible
+// __dirname = backend/dist at runtime, so ../../ is the repo root
+const repoRoot = path.join(__dirname, '..', '..');
+app.use(express.static(repoRoot));
 
-// make the CSV available at a known path (not part of the frontend bundle)
-app.get('/locations.csv', (req: Request, res: Response) => {
-  res.sendFile(path.join(__dirname, '..', '..', 'locations.csv'));
-});
-
-// expose backend/uploads via a matching URL so prototype.html can fetch it
+// expose backend/uploads so prototype.html can fetch store data
 app.use('/backend/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
-// Redirect root to prototype.html (now inside user-frontend)
+// Redirect root to prototype.html
 app.get('/', (req: Request, res: Response) => {
   res.redirect('/prototype.html');
 });
