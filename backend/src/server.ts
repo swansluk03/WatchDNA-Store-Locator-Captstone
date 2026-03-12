@@ -9,6 +9,7 @@ dotenv.config();
 
 // Import configuration
 import { config, validateConfig } from './config';
+import { logger } from './utils/logger';
 
 // Validate configuration on startup
 validateConfig();
@@ -78,11 +79,9 @@ app.get('/health', (req: Request, res: Response) => {
 
 // Apply rate limiters to specific routes
 // Note: More specific routes must come BEFORE general routes
-app.use('/api/auth/login', authLimiter);          // Strict: 5 attempts per 15 min
-app.use('/api/uploads', uploadLimiter);           // 10 uploads per hour
-app.use('/api/scraper/jobs', scraperLimiter);     // 20 job creations per hour (POST only)
-app.use('/api/scraper/discover', scraperLimiter); // Same limit for endpoint discovery
-app.use('/api/locations', publicLimiter);         // Lenient: 300 requests per 15 min
+app.use('/api/auth/login', authLimiter); // Strict: 5 attempts per 15 min
+app.use('/api/uploads', uploadLimiter); // 10 uploads per hour
+app.use('/api/locations', publicLimiter); // Lenient: 300 requests per 15 min
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -118,7 +117,7 @@ app.use('/api/*', (req: Request, res: Response) => {
 
 // Error handler
 app.use((err: any, req: Request, res: Response, next: any) => {
-  console.error('Error:', err);
+  logger.error('Error:', err);
   res.status(err.status || 500).json({
     error: err.message || 'Internal server error',
     ...(config.isDevelopment && { stack: err.stack })
@@ -127,13 +126,7 @@ app.use((err: any, req: Request, res: Response, next: any) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📊 Environment: ${config.nodeEnv}`);
-  console.log(`📁 Upload directory: ${uploadDir}`);
-  console.log(`🔐 JWT expires in: ${config.auth.jwtExpiresIn}`);
-  console.log(`🌍 CORS allowed origins: ${config.cors.allowedOrigins.join(', ')}`);
-  console.log(`⚡ Rate limiting: ${config.isDevelopment ? 'DISABLED (dev mode)' : 'ENABLED'}`);
-  console.log(`🛡️  Security headers: ${config.isProduction ? 'FULL' : 'BASIC'}`);
+  logger.warn(`🚀 Server running on port ${PORT} | env=${config.nodeEnv} | origins=${config.cors.allowedOrigins.join(', ')}`);
 });
 
 export default app;

@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 import Papa from 'papaparse';
+import { logger } from '../utils/logger';
 
 const prisma = new PrismaClient();
 
@@ -57,7 +58,7 @@ class LocationService {
 
       const rows = parseResult.data as any[];
 
-      console.log(`[LocationService] Importing ${rows.length} rows from CSV...`);
+      logger.warn(`[LocationService] Importing ${rows.length} rows from CSV...`);
 
       for (const row of rows) {
         try {
@@ -177,17 +178,17 @@ class LocationService {
         } catch (error: any) {
           result.errorCount++;
           result.errors.push(`Error importing ${row.Name || 'unknown'}: ${error.message}`);
-          console.error(`[LocationService] Error importing row:`, error);
+          logger.error(`[LocationService] Error importing row:`, error);
         }
       }
 
       result.success = true;
-      console.log(`[LocationService] Import complete: ${result.newCount} new, ${result.updatedCount} updated, ${result.skippedCount} skipped, ${result.errorCount} errors`);
+      logger.warn(`[LocationService] Import complete: ${result.newCount} new, ${result.updatedCount} updated, ${result.skippedCount} skipped, ${result.errorCount} errors`);
 
     } catch (error: any) {
       result.success = false;
       result.errors.push(`Failed to read/parse CSV: ${error.message}`);
-      console.error('[LocationService] Import failed:', error);
+      logger.error('[LocationService] Import failed:', error);
     }
 
     return result;

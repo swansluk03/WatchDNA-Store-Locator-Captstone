@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import validationService from './validation.service';
 import { SCRAPER_PATH, PYTHON_CMD } from '../utils/paths';
+import { logger } from '../utils/logger';
 
 const prisma = new PrismaClient();
 
@@ -93,7 +94,7 @@ class ScraperService {
       pythonProcess.stdout.on('data', async (data) => {
         const output = data.toString();
         stdout += output;
-        console.log(`[Scraper ${jobId}] ${output.trim()}`);
+        logger.info(`[Scraper ${jobId}] ${output.trim()}`);
         
         // Check for important log markers that should trigger immediate update
         const importantMarkers = [
@@ -117,7 +118,7 @@ class ScraperService {
               }
             });
           } catch (err) {
-            console.error(`Failed to update live logs for ${jobId}:`, err);
+            logger.warn(`Failed to update live logs for ${jobId}:`, err);
           }
         }
       });
@@ -125,7 +126,7 @@ class ScraperService {
       pythonProcess.stderr.on('data', async (data) => {
         const output = data.toString();
         stderr += output;
-        console.error(`[Scraper ${jobId}] ERROR: ${output.trim()}`);
+        logger.error(`[Scraper ${jobId}] ERROR: ${output.trim()}`);
         
         // Update errors immediately (don't wait for interval)
         try {
@@ -137,7 +138,7 @@ class ScraperService {
           });
           lastLogUpdate = Date.now();
         } catch (err) {
-          console.error(`Failed to update live error logs for ${jobId}:`, err);
+            logger.warn(`Failed to update live error logs for ${jobId}:`, err);
         }
       });
 
@@ -182,17 +183,17 @@ class ScraperService {
 
               mergeProcess.stdout.on('data', (data) => {
                 mergeStdout += data.toString();
-                console.log(`[Master CSV Merge ${jobId}] ${data.toString().trim()}`);
+                logger.info(`[Master CSV Merge ${jobId}] ${data.toString().trim()}`);
               });
               mergeProcess.stderr.on('data', (data) => {
                 mergeStderr += data.toString();
-                console.error(`[Master CSV Merge ${jobId}] ERROR: ${data.toString().trim()}`);
+                logger.error(`[Master CSV Merge ${jobId}] ERROR: ${data.toString().trim()}`);
               });
 
               // Add timeout (5 minutes for merge operation)
               let mergeTimeout: NodeJS.Timeout | null = setTimeout(() => {
                 if (!mergeProcess.killed) {
-                  console.error(`⚠️ Master CSV merge timed out after 5 minutes for job ${jobId}`);
+                  logger.warn(`⚠️ Master CSV merge timed out after 5 minutes for job ${jobId}`);
                   mergeProcess.kill();
                 }
                 mergeTimeout = null; // Clear reference after timeout fires
@@ -210,17 +211,16 @@ class ScraperService {
                 mergeProcess.on('close', (code) => {
                   clearMergeTimeout(); // Always clear timeout when process closes
                   if (code === 0) {
-                    console.log(`✅ Master CSV merge completed successfully for job ${jobId}`);
-                    resolve();
+                    logger.warn(`✅ Master CSV merge completed for job ${jobId}`);                    resolve();
                   } else {
-                    console.error(`⚠️ Master CSV merge failed with code ${code} for job ${jobId}: ${mergeStderr}`);
+                    logger.error(`⚠️ Master CSV merge failed (code ${code}) for job ${jobId}: ${mergeStderr}`);
                     // Don't fail the job if merge fails, just log it
                     resolve();
                   }
                 });
                 mergeProcess.on('error', (error) => {
                   clearMergeTimeout(); // Always clear timeout on error
-                  console.error(`⚠️ Master CSV merge error for job ${jobId}: ${error.message}`);
+                  logger.error(`⚠️ Master CSV merge error for job ${jobId}: ${error.message}`);
                   // Don't fail the job if merge fails
                   resolve();
                 });
@@ -229,7 +229,7 @@ class ScraperService {
               // Ensure timeout is cleared even if promise resolves/rejects unexpectedly
               clearMergeTimeout();
             } catch (mergeError: any) {
-              console.error(`⚠️ Error starting master CSV merge for job ${jobId}:`, mergeError);
+              logger.error(`⚠️ Error starting master CSV merge for job ${jobId}:`, mergeError);
               // Continue even if merge fails - don't block job completion
             }
 
@@ -279,7 +279,7 @@ class ScraperService {
                 await prisma.validationLog.createMany({ data: logs });
               }
             } catch (validationErr: any) {
-              console.warn(`[Job ${jobId}] Validation failed (upload still created):`, validationErr?.message);
+              logger.warn(`[Job ${jobId}] Validation failed (upload still created):`, validationErr?.message);
             }
 
             // Create or update Upload record for master CSV
@@ -330,7 +330,7 @@ class ScraperService {
             const finalLogs = fullLogs + mergeInfo + mergeErrorInfo;
             
             // CRITICAL: Update job status - this MUST happen even if other operations fail
-            console.log(`[Job ${jobId}] Updating job status to completed...`);
+            logger.info(`[Job ${jobId}] Updating job status to completed...`);
             try {
               await prisma.scraperJob.update({
                 where: { id: jobId },
@@ -343,50 +343,42 @@ class ScraperService {
                 }
               });
 
-              console.log(`✅ Scraping job ${jobId} completed successfully.`);
-              console.log(`   📊 Records scraped: ${recordsScraped !== null ? recordsScraped : 0}`);
+              logger.warn(`✅ Scraping job ${jobId} completed. Records: ${recordsScraped !== null ? recordsScraped : 0}`);
               if (masterFileStats) {
-                console.log(`   📊 Master CSV: ${masterRows} total stores (after deduplication)`);
+                logger.warn(`   Master CSV: ${masterRows} total stores (after deduplication)`);
               }
               if (mergeStdout) {
-                // Extract key stats from merge output if available
                 const mergeLines = mergeStdout.split('\n');
-                const finalSummary = mergeLines.filter(line => 
-                  line.includes('FINAL SUMMARY') || 
+                const finalSummary = mergeLines.filter(line =>
+                  line.includes('FINAL SUMMARY') ||
                   line.includes('Master CSV final:') ||
                   line.includes('Total deduplicated:')
                 );
                 if (finalSummary.length > 0) {
-                  finalSummary.forEach(line => console.log(`   ${line.trim()}`));
+                  logger.warn(finalSummary.map(l => l.trim()).join(' | '));
                 }
               }
             } catch (updateError: any) {
-              // If status update fails, log it but don't throw - job already completed
-              console.error(`⚠️ Failed to update job status for ${jobId}:`, updateError);
-              console.error(`Error details:`, updateError.message, updateError.stack);
-              
-              // Try one more time with minimal data (but include uploadId if available)
+              logger.error(`⚠️ Failed to update job status for ${jobId}:`, updateError);
               try {
-                console.log(`[Job ${jobId}] Retrying status update with minimal data...`);
+                logger.info(`[Job ${jobId}] Retrying status update with minimal data...`);
                 await prisma.scraperJob.update({
                   where: { id: jobId },
                   data: {
                     status: 'completed',
                     completedAt: new Date(),
                     recordsScraped: recordsScraped !== null ? recordsScraped : 0,
-                    uploadId: individualUpload?.id || null,  // Include uploadId in retry
+                    uploadId: individualUpload?.id || null,
                     logs: `Status update error occurred, but job completed successfully.\n\n${finalLogs}\n\nUpdate Error: ${updateError.message}`
                   }
                 });
-                console.log(`✅ Retry status update succeeded for job ${jobId}`);
+                logger.warn(`✅ Retry status update succeeded for job ${jobId}`);
               } catch (retryError: any) {
-                console.error(`❌ Critical: Could not update job ${jobId} status even after retry:`, retryError);
-                console.error(`Retry error details:`, retryError.message, retryError.stack);
+                logger.error(`❌ Critical: Could not update job ${jobId} status even after retry:`, retryError);
               }
             }
           } catch (error: any) {
-            console.error(`Error processing scraper results for job ${jobId}:`, error);
-            console.error(`Error stack:`, error.stack);
+            logger.error(`Error processing scraper results for job ${jobId}:`, error);
             
             // Ensure we always update status, even on error
             // Only use fallback if recordsScraped was never set (null)
@@ -408,11 +400,10 @@ class ScraperService {
                 }
               });
             } catch (updateError: any) {
-              console.error(`❌ Critical: Could not update failed job status for ${jobId}:`, updateError);
+              logger.error(`❌ Critical: Could not update failed job status for ${jobId}:`, updateError);
             }
           }
         } else {
-          // Failure
           await prisma.scraperJob.update({
             where: { id: jobId },
             data: {
@@ -423,15 +414,13 @@ class ScraperService {
             }
           });
 
-          console.error(`❌ Scraping job ${jobId} failed with code ${code}`);
+          logger.error(`❌ Scraping job ${jobId} failed with code ${code}`);
         }
       });
 
       pythonProcess.on('error', async (error) => {
-        // Clean up the process from tracking map
         this.runningProcesses.delete(jobId);
-        
-        console.error(`Error spawning Python process for job ${jobId}:`, error);
+        logger.error(`Error spawning Python process for job ${jobId}:`, error);
         await prisma.scraperJob.update({
           where: { id: jobId },
           data: {
@@ -444,7 +433,7 @@ class ScraperService {
       });
 
     } catch (error: any) {
-      console.error(`Error starting scraping job ${jobId}:`, error);
+      logger.error(`Error starting scraping job ${jobId}:`, error);
       await prisma.scraperJob.update({
         where: { id: jobId },
         data: {
@@ -494,13 +483,12 @@ class ScraperService {
       }
 
       // Kill the process
-      console.log(`🛑 Cancelling scraping job ${jobId}...`);
+      logger.warn(`🛑 Cancelling scraping job ${jobId}...`);
       process.kill('SIGTERM');
-      
-      // If process doesn't terminate in 5 seconds, force kill
+
       setTimeout(() => {
         if (this.runningProcesses.has(jobId)) {
-          console.log(`🛑 Force killing job ${jobId}...`);
+          logger.warn(`🛑 Force killing job ${jobId}...`);
           process.kill('SIGKILL');
         }
       }, 5000);
@@ -519,11 +507,11 @@ class ScraperService {
       // Remove from tracking map
       this.runningProcesses.delete(jobId);
 
-      console.log(`✅ Scraping job ${jobId} cancelled successfully`);
+      logger.warn(`✅ Scraping job ${jobId} cancelled`);
       return { success: true, message: 'Job cancelled successfully' };
 
     } catch (error: any) {
-      console.error(`Error cancelling job ${jobId}:`, error);
+      logger.error(`Error cancelling job ${jobId}:`, error);
       return { success: false, message: `Error cancelling job: ${error.message}` };
     }
   }
