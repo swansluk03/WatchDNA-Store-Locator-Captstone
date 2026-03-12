@@ -4,20 +4,15 @@ import fs from 'fs';
 /**
  * Resolves the absolute path to the scraper/tools directories.
  *
- * In development (ts-node): __dirname is backend/src/utils, so the repo root
- * is three levels up (../../..).
+ * Dev (ts-node):    __dirname = backend/src/utils  → backendRoot = backend/
+ * Prod (Dockerfile): __dirname = /app/backend/dist/utils → backendRoot = /app/backend
  *
- * In production (Railway, root dir = backend/): __dirname is /app/dist/utils.
- * Railway only deploys the backend/ subtree, so Prototypes/ is NOT present.
- * Set SCRAPER_PATH env var on Railway to an absolute path if you mount the
- * scrapers via a volume or shared layer.
- *
- * Key files that must exist alongside the backend in production:
- *   - brand_configs.json  → copied to backend/brand_configs.json
- *   - tools/validate_csv.py → copied to backend/tools/validate_csv.py
+ * The Dockerfile copies the entire repo to /app, so Prototypes/ and tools/ are
+ * available at /app/Prototypes and /app/tools respectively.
+ * The Python venv is created at /app/venv by the Dockerfile.
  */
 
-// Repo root in dev; /app in production (backend/ deployed as root)
+// backend/ in dev; /app/backend in production
 const backendRoot = path.join(__dirname, '..', '..');
 
 // Scraper directory: honour SCRAPER_PATH env var first, then dev default
