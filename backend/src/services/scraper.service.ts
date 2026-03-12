@@ -3,6 +3,7 @@ import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import validationService from './validation.service';
+import { SCRAPER_PATH, PYTHON_CMD } from '../utils/paths';
 
 const prisma = new PrismaClient();
 
@@ -29,7 +30,7 @@ class ScraperService {
         }
       });
 
-      const scraperPath = path.join(__dirname, '..', '..', '..', 'Prototypes', 'Data_Scrappers');
+      const scraperPath = SCRAPER_PATH;
       const outputDir = path.join(__dirname, '..', '..', 'uploads', 'scraped');
       const masterCsvDir = path.join(__dirname, '..', '..', 'uploads');
       
@@ -47,10 +48,7 @@ class ScraperService {
         fs.mkdirSync(masterCsvDir, { recursive: true });
       }
 
-      // Use venv Python if available (has phonenumbers etc.), else fall back to system python3
-      const projectRoot = path.join(__dirname, '..', '..', '..');
-      const venvPython = path.join(projectRoot, 'venv', 'bin', 'python3');
-      const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3';
+      const pythonCmd = PYTHON_CMD;
 
       // Run the Python scraper (outputs to individual CSV)
       const pythonProcess = spawn(pythonCmd, [
@@ -603,10 +601,8 @@ class ScraperService {
         // If validation fails to run, still try to append (e.g. validator script missing)
       }
 
-      const projectRoot = path.join(__dirname, '..', '..', '..');
-      const venvPython = path.join(projectRoot, 'venv', 'bin', 'python3');
-      const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3';
-      const scraperPath = path.join(projectRoot, 'Prototypes', 'Data_Scrappers');
+      const pythonCmd = PYTHON_CMD;
+      const scraperPath = SCRAPER_PATH;
       const masterCsvManagerPath = path.join(scraperPath, 'master_csv_manager.py');
 
       const result = await new Promise<{ stores_added: number; stores_merged: number }>((resolve, reject) => {

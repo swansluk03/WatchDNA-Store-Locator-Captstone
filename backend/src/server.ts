@@ -89,17 +89,25 @@ app.use('/api/uploads', uploadRoutes);
 app.use('/api/scraper', scraperRoutes);
 app.use('/api/locations', locationRoutes);
 
-// Serve the repo root so prototype.html and locations.csv are accessible
-// __dirname = backend/dist at runtime, so ../../ is the repo root
-const repoRoot = path.join(__dirname, '..', '..');
-app.use(express.static(repoRoot));
+// Serve prototype.html if it exists (dev: at repo root, prod: not deployed — safe to skip)
+const uploadsDir = path.join(__dirname, '..', 'uploads');
+const prototypeFile = path.join(__dirname, '..', '..', 'prototype.html');
+
+if (fs.existsSync(prototypeFile)) {
+  const repoRoot = path.join(__dirname, '..', '..');
+  app.use(express.static(repoRoot));
+}
 
 // expose backend/uploads so prototype.html can fetch store data
-app.use('/backend/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+app.use('/backend/uploads', express.static(uploadsDir));
 
-// Redirect root to prototype.html
+// Redirect root to prototype.html if it exists, otherwise serve API info
 app.get('/', (req: Request, res: Response) => {
-  res.redirect('/prototype.html');
+  if (fs.existsSync(prototypeFile)) {
+    res.redirect('/prototype.html');
+  } else {
+    res.json({ service: 'WatchDNA Admin Backend', status: 'ok', docs: '/health' });
+  }
 });
 
 // 404 handler for API routes only

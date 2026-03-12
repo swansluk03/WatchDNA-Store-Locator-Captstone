@@ -6,6 +6,7 @@ import { storeService } from '../services/store.service';
 import fs from 'fs';
 import path from 'path';
 import Papa from 'papaparse';
+import { BRAND_CONFIGS_PATH, ENDPOINT_DISCOVERER_PATH, PYTHON_CMD } from '../utils/paths';
 
 const prisma = new PrismaClient();
 
@@ -120,8 +121,7 @@ export const scraperController = {
   // GET /api/scraper/brands - List available brand configs
   async getBrands(req: Request, res: Response) {
     try {
-      const configPath = path.join(__dirname, '..', '..', '..', 'Prototypes', 'Data_Scrappers', 'brand_configs.json');
-      const configData = fs.readFileSync(configPath, 'utf-8');
+      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
       const configs = JSON.parse(configData);
 
       // Filter out _README and disabled brands
@@ -199,8 +199,7 @@ export const scraperController = {
       }
 
       // Load brand config
-      const configPath = path.join(__dirname, '..', '..', '..', 'Prototypes', 'Data_Scrappers', 'brand_configs.json');
-      const configData = fs.readFileSync(configPath, 'utf-8');
+      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
       const configs = JSON.parse(configData);
       const brandConfig = configs[brandName];
 
@@ -639,15 +638,7 @@ export const scraperController = {
 
       // Call the endpoint discoverer Python script
       const { spawn } = require('child_process');
-      const discovererPath = path.join(
-        __dirname,
-        '..',
-        '..',
-        '..',
-        'Prototypes',
-        'endpoint_discoverer',
-        'endpoint_discoverer.py'
-      );
+      const discovererPath = path.join(ENDPOINT_DISCOVERER_PATH, 'endpoint_discoverer.py');
 
       return new Promise((resolve, reject) => {
         let responseSent = false;
@@ -665,7 +656,7 @@ export const scraperController = {
           }
         };
 
-        const pythonProcess = spawn('python3', [
+        const pythonProcess = spawn(PYTHON_CMD, [
           discovererPath,
           '--url',
           url,
@@ -797,16 +788,7 @@ export const scraperController = {
     try {
       const { id } = req.params;
 
-      const configPath = path.join(
-        __dirname,
-        '..',
-        '..',
-        '..',
-        'Prototypes',
-        'Data_Scrappers',
-        'brand_configs.json'
-      );
-      const configData = fs.readFileSync(configPath, 'utf-8');
+      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
       const configs = JSON.parse(configData);
 
       if (!configs[id]) {
@@ -830,16 +812,7 @@ export const scraperController = {
       }
 
       // Load existing brand configs
-      const configPath = path.join(
-        __dirname,
-        '..',
-        '..',
-        '..',
-        'Prototypes',
-        'Data_Scrappers',
-        'brand_configs.json'
-      );
-      const configData = fs.readFileSync(configPath, 'utf-8');
+      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
       const configs = JSON.parse(configData);
 
       // Check for exact match first
@@ -925,7 +898,7 @@ export const scraperController = {
 
       // Save to brand_configs.json
       configs[brandId] = brandConfig;
-      fs.writeFileSync(configPath, JSON.stringify(configs, null, 2), 'utf-8');
+      fs.writeFileSync(BRAND_CONFIGS_PATH, JSON.stringify(configs, null, 2), 'utf-8');
 
       res.json({
         message: 'Brand configuration saved successfully',

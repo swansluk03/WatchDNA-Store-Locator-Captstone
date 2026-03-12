@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["nodejs_20", "python312", "python312Packages.pip"]
+
+[phases.install]
+cmds = [
+  "npm ci",
+  "pip install requests phonenumbers playwright geopy"
+]
+
+[start]
+cmd = "npm start"

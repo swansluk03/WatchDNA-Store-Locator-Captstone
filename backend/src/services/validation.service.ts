@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import path from 'path';
+import { VALIDATE_CSV_PATH, PYTHON_CMD } from '../utils/paths';
 
 export interface ValidationError {
   row: number;
@@ -29,16 +30,8 @@ export class ValidationService {
   private validatorScriptPath: string;
 
   constructor() {
-    this.pythonPath = process.env.PYTHON_PATH || 'python3';
-    // Path to validate_csv.py in tools folder
-    this.validatorScriptPath = path.join(
-      __dirname,
-      '..',
-      '..',
-      '..',
-      'tools',
-      'validate_csv.py'
-    );
+    this.pythonPath = PYTHON_CMD;
+    this.validatorScriptPath = VALIDATE_CSV_PATH;
   }
 
   async validateCSV(
