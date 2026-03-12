@@ -1,11 +1,15 @@
 [phases.setup]
-nixPkgs = ["nodejs_20", "python312", "python312Packages.pip"]
+nixPkgs = ["nodejs_20", "python312"]
 
 [phases.install]
 cmds = [
   "npm ci",
-  "pip install requests phonenumbers playwright geopy"
+  "python3 -m venv /opt/pyenv",
+  "/opt/pyenv/bin/pip install requests phonenumbers playwright geopy"
 ]
+
+[variables]
+PYTHON_PATH = "/opt/pyenv/bin/python3"
 
 [start]
 cmd = "npm start"
