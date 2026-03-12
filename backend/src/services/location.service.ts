@@ -112,47 +112,49 @@ class LocationService {
 
             // Other
             priority: row.Priority ? parseInt(row.Priority) : null,
-            tags: row.Tags || null,
+            tags: row[' Tags'] || row.Tags || null,
+            brands: row.Brands || null,
             customBrands: row['Custom Brands'] || null,
+            isPremium: false,
 
             // Localization (French)
-            nameFr: row['Name (French)'] || null,
-            pageTitleFr: row['Page Title (French)'] || null,
-            pageDescriptionFr: row['Page Description (French)'] || null,
-            customBrandsFr: row['Custom Brands (French)'] || null,
+            nameFr: row['Name - FR'] || null,
+            pageTitleFr: row['Page Title - FR'] || null,
+            pageDescriptionFr: row['Page Description - FR'] || null,
+            customBrandsFr: row['Custom Brands - FR'] || null,
 
             // Localization (Chinese)
-            nameZhCn: row['Name (Chinese Simplified)'] || null,
-            pageTitleZhCn: row['Page Title (Chinese Simplified)'] || null,
-            pageDescriptionZhCn: row['Page Description (Chinese Simplified)'] || null,
-            customBrandsZhCn: row['Custom Brands (Chinese Simplified)'] || null,
+            nameZhCn: row['Name - ZH-CN'] || null,
+            pageTitleZhCn: row['Page Title - ZH-CN'] || null,
+            pageDescriptionZhCn: row['Page Description - ZH-CN'] || null,
+            customBrandsZhCn: row['Custom Brands - ZH-CN'] || null,
 
             // Localization (Spanish)
-            nameEs: row['Name (Spanish)'] || null,
-            pageTitleEs: row['Page Title (Spanish)'] || null,
-            pageDescriptionEs: row['Page Description (Spanish)'] || null,
-            customBrandsEs: row['Custom Brands (Spanish)'] || null,
+            nameEs: row['Name - ES'] || null,
+            pageTitleEs: row['Page Title - ES'] || null,
+            pageDescriptionEs: row['Page Description - ES'] || null,
+            customBrandsEs: row['Custom Brands - ES'] || null,
 
             // Custom Buttons
-            customButton1Title: row['Custom Button 1 Title'] || null,
-            customButton1Url: row['Custom Button 1 URL'] || null,
-            customButton2Title: row['Custom Button 2 Title'] || null,
-            customButton2Url: row['Custom Button 2 URL'] || null,
+            customButton1Title: row['Custom Button title 1'] || null,
+            customButton1Url: row['Custom Button URL 1'] || null,
+            customButton2Title: row['Custom Button title 2'] || null,
+            customButton2Url: row['Custom Button URL 2'] || null,
 
             // Custom Buttons - Localized
-            customButton1TitleFr: row['Custom Button 1 Title (French)'] || null,
-            customButton1UrlFr: row['Custom Button 1 URL (French)'] || null,
-            customButton1TitleZhCn: row['Custom Button 1 Title (Chinese Simplified)'] || null,
-            customButton1UrlZhCn: row['Custom Button 1 URL (Chinese Simplified)'] || null,
-            customButton1TitleEs: row['Custom Button 1 Title (Spanish)'] || null,
-            customButton1UrlEs: row['Custom Button 1 URL (Spanish)'] || null,
+            customButton1TitleFr: row['Custom Button title 1 - FR'] || null,
+            customButton1UrlFr: row['Custom Button URL 1 - FR'] || null,
+            customButton1TitleZhCn: row['Custom Button title 1 - ZH-CN'] || null,
+            customButton1UrlZhCn: row['Custom Button URL 1 - ZH-CN'] || null,
+            customButton1TitleEs: row['Custom Button title 1 - ES'] || null,
+            customButton1UrlEs: row['Custom Button URL 1 - ES'] || null,
 
-            customButton2TitleFr: row['Custom Button 2 Title (French)'] || null,
-            customButton2UrlFr: row['Custom Button 2 URL (French)'] || null,
-            customButton2TitleZhCn: row['Custom Button 2 Title (Chinese Simplified)'] || null,
-            customButton2UrlZhCn: row['Custom Button 2 URL (Chinese Simplified)'] || null,
-            customButton2TitleEs: row['Custom Button 2 Title (Spanish)'] || null,
-            customButton2UrlEs: row['Custom Button 2 URL (Spanish)'] || null,
+            customButton2TitleFr: row['Custom Button title 2 - FR'] || null,
+            customButton2UrlFr: row['Custom Button URL 2 - FR'] || null,
+            customButton2TitleZhCn: row['Custom Button title 2 - ZH-CN'] || null,
+            customButton2UrlZhCn: row['Custom Button URL 2 - ZH-CN'] || null,
+            customButton2TitleEs: row['Custom Button title 2 - ES'] || null,
+            customButton2UrlEs: row['Custom Button URL 2 - ES'] || null,
           };
 
           // Upsert location (update if exists, create if new)
@@ -208,10 +210,11 @@ class LocationService {
 
     const where: any = {};
 
-    // Filter by brand (partial match in customBrands)
+    // Filter by brand (partial match in plain-text brands column)
     if (brand) {
-      where.customBrands = {
-        contains: brand
+      where.brands = {
+        contains: brand,
+        mode: 'insensitive'
       };
     }
 

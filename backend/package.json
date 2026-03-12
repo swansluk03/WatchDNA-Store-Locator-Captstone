@@ -5,11 +5,12 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start": "node dist/server.js",
     "create-admin": "ts-node src/scripts/create-admin.ts",
     "seed-admin": "ts-node src/scripts/seed-admin.ts",
     "import-data": "ts-node src/scripts/import-initial-data.ts",
+    "import-master": "ts-node src/scripts/import-master-csv.ts",
     "export-data": "ts-node src/scripts/export-sqlite-data.ts",
     "import-postgres": "ts-node src/scripts/import-to-postgres.ts",
     "reset-db": "ts-node src/scripts/reset-database.ts",
