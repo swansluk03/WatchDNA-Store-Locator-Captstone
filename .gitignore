@@ -3,6 +3,10 @@ venv
 __pycache__/
 *.pyc
 *.env
+.env
+backend/.env
+.envrc
+.envrc.local
 Prototypes/Data_Scrappers/output/
 output/
 .claude/
