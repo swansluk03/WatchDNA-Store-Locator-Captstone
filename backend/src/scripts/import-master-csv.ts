@@ -1,101 +1,29 @@
 /**
- * Import master_stores.csv into PostgreSQL.
+ * ONE-TIME MIGRATION / DISASTER RECOVERY TOOL
  *
- * Strategy: TRUNCATE Location, batch insert all rows, then re-apply premium flags.
- * This supports full scraper re-runs — stale rows are never left behind.
+ * This script is NOT part of the normal scraper pipeline. Under normal operation
+ * the DB is kept in sync automatically:
+ *   - Each completed scrape job upserts its records directly into the Location table.
+ *   - Admin edits and saveJobRecords also write directly to the DB.
+ *
+ * Run this script ONLY when you need to:
+ *   a) Bootstrap a fresh database from an existing master_stores.csv backup.
+ *   b) Recover from a catastrophic DB loss using a known-good CSV export.
+ *
+ * WARNING: This performs a full TRUNCATE of the Location table before inserting.
+ * All rows currently in the DB will be permanently deleted.
  *
  * Usage: npm run import-master
  */
 
-import { PrismaClient } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 import Papa from 'papaparse';
-
-const prisma = new PrismaClient();
+import prisma from '../lib/prisma';
+import { parseRowToLocationData } from '../utils/csv-to-location';
 
 const BATCH_SIZE = 500;
 const CSV_PATH = path.join(__dirname, '..', '..', 'uploads', 'master_stores.csv');
-
-function parseRow(row: any) {
-  const latitude = parseFloat(row.Latitude);
-  const longitude = parseFloat(row.Longitude);
-
-  if (!row.Handle || !row.Name || isNaN(latitude) || isNaN(longitude)) {
-    return null;
-  }
-
-  return {
-    handle: String(row.Handle).trim(),
-    name: row.Name.trim(),
-    status: row.Status?.toLowerCase() === 'active' || row.Status?.toLowerCase() === 'true' || !row.Status,
-    addressLine1: row['Address Line 1'] || '',
-    addressLine2: row['Address Line 2'] || null,
-    postalCode: row['Postal/ZIP Code'] || null,
-    city: row.City || '',
-    stateProvinceRegion: row['State/Province/Region'] || null,
-    country: row.Country || '',
-    phone: row.Phone || null,
-    email: row.Email || null,
-    website: row.Website || null,
-    imageUrl: row['Image URL'] || null,
-
-    monday: row.Monday || null,
-    tuesday: row.Tuesday || null,
-    wednesday: row.Wednesday || null,
-    thursday: row.Thursday || null,
-    friday: row.Friday || null,
-    saturday: row.Saturday || null,
-    sunday: row.Sunday || null,
-
-    latitude,
-    longitude,
-
-    pageTitle: row['Page Title'] || null,
-    pageDescription: row['Page Description'] || null,
-    metaTitle: row['Meta Title'] || null,
-    metaDescription: row['Meta Description'] || null,
-
-    priority: row.Priority ? parseInt(row.Priority) : null,
-    tags: row[' Tags'] || row.Tags || null,
-    brands: row.Brands || null,
-    customBrands: row['Custom Brands'] || null,
-    isPremium: false,
-
-    nameFr: row['Name - FR'] || null,
-    pageTitleFr: row['Page Title - FR'] || null,
-    pageDescriptionFr: row['Page Description - FR'] || null,
-    customBrandsFr: row['Custom Brands - FR'] || null,
-
-    nameZhCn: row['Name - ZH-CN'] || null,
-    pageTitleZhCn: row['Page Title - ZH-CN'] || null,
-    pageDescriptionZhCn: row['Page Description - ZH-CN'] || null,
-    customBrandsZhCn: row['Custom Brands - ZH-CN'] || null,
-
-    nameEs: row['Name - ES'] || null,
-    pageTitleEs: row['Page Title - ES'] || null,
-    pageDescriptionEs: row['Page Description - ES'] || null,
-    customBrandsEs: row['Custom Brands - ES'] || null,
-
-    customButton1Title: row['Custom Button title 1'] || null,
-    customButton1Url: row['Custom Button URL 1'] || null,
-    customButton1TitleFr: row['Custom Button title 1 - FR'] || null,
-    customButton1UrlFr: row['Custom Button URL 1 - FR'] || null,
-    customButton1TitleZhCn: row['Custom Button title 1 - ZH-CN'] || null,
-    customButton1UrlZhCn: row['Custom Button URL 1 - ZH-CN'] || null,
-    customButton1TitleEs: row['Custom Button title 1 - ES'] || null,
-    customButton1UrlEs: row['Custom Button URL 1 - ES'] || null,
-
-    customButton2Title: row['Custom Button title 2'] || null,
-    customButton2Url: row['Custom Button URL 2'] || null,
-    customButton2TitleFr: row['Custom Button title 2 - FR'] || null,
-    customButton2UrlFr: row['Custom Button URL 2 - FR'] || null,
-    customButton2TitleZhCn: row['Custom Button title 2 - ZH-CN'] || null,
-    customButton2UrlZhCn: row['Custom Button URL 2 - ZH-CN'] || null,
-    customButton2TitleEs: row['Custom Button title 2 - ES'] || null,
-    customButton2UrlEs: row['Custom Button URL 2 - ES'] || null,
-  };
-}
 
 async function importMasterCSV() {
   console.log('Starting master CSV import...\n');
@@ -116,11 +44,11 @@ async function importMasterCSV() {
   }
 
   const rows = rawRows as any[];
-  const validRows: any[] = [];
+  const validRows: ReturnType<typeof parseRowToLocationData>[] = [];
   let skipped = 0;
 
   for (const row of rows) {
-    const parsed = parseRow(row);
+    const parsed = parseRowToLocationData(row);
     if (parsed) {
       validRows.push(parsed);
     } else {
@@ -138,7 +66,7 @@ async function importMasterCSV() {
   let inserted = 0;
 
   for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
-    const batch = validRows.slice(i, i + BATCH_SIZE);
+    const batch = validRows.slice(i, i + BATCH_SIZE) as any[];
     const result = await prisma.location.createMany({
       data: batch,
       skipDuplicates: true

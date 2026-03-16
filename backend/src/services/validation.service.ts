@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import { VALIDATE_CSV_PATH, PYTHON_CMD } from '../utils/paths';
+import { logger } from '../utils/logger';
 
 export interface ValidationError {
   row: number;
@@ -35,7 +36,7 @@ export class ValidationService {
   }
 
   async validateCSV(
-    filePath: string, 
+    filePath: string,
     options?: {
       autoFix?: boolean;
       checkUrls?: boolean;
@@ -45,47 +46,34 @@ export class ValidationService {
       const args = [
         this.validatorScriptPath,
         filePath,
-        '--json' // Get JSON output
+        '--json'
       ];
 
-      // Add optional flags
-      if (options?.autoFix) {
-        args.push('--fix');
-      }
-      if (options?.checkUrls) {
-        args.push('--check-urls');
-      }
+      if (options?.autoFix) args.push('--fix');
+      if (options?.checkUrls) args.push('--check-urls');
 
-      console.log(`Running validation: ${this.pythonPath} ${args.join(' ')}`);
+      logger.debug(`[Validation] ${path.basename(filePath)}${options?.autoFix ? ' --fix' : ''}`);
 
       const childProcess = spawn(this.pythonPath, args);
 
       let stdoutData = '';
       let stderrData = '';
 
-      childProcess.stdout.on('data', (data) => {
-        stdoutData += data.toString();
-      });
-
-      childProcess.stderr.on('data', (data) => {
-        stderrData += data.toString();
-      });
+      childProcess.stdout.on('data', (data) => { stdoutData += data.toString(); });
+      childProcess.stderr.on('data', (data) => { stderrData += data.toString(); });
 
       childProcess.on('close', (code) => {
-        console.log(`Validation process exited with code ${code}`);
+        logger.debug(`[Validation] exit=${code} file=${path.basename(filePath)}`);
 
-        if (stderrData && process.env.NODE_ENV === 'development') {
-          console.log('Validation stderr:', stderrData);
+        if (stderrData) {
+          logger.debug(`[Validation] stderr: ${stderrData.trim()}`);
         }
 
         try {
-          // Try to find JSON in the output
           const jsonMatch = stdoutData.match(/\{[\s\S]*\}/);
 
           if (!jsonMatch) {
-            // If no JSON found, check exit code
             if (code === 0) {
-              // Validation passed but no JSON (shouldn't happen with --json flag)
               resolve({
                 valid: true,
                 file: filePath,
@@ -93,16 +81,15 @@ export class ValidationService {
                 errors: [],
                 warnings: [],
                 status: 'passed',
-                exit_code: code || 0
+                exit_code: 0
               });
             } else {
-              reject(new Error(`Validation failed with exit code ${code}. Output: ${stdoutData}`));
+              reject(new Error(`Validation failed (exit ${code}): ${stdoutData.slice(0, 200)}`));
             }
             return;
           }
 
           const result = JSON.parse(jsonMatch[0]);
-
           resolve({
             valid: code === 0,
             file: result.file || filePath,
@@ -114,21 +101,21 @@ export class ValidationService {
           });
 
         } catch (err) {
-          console.error('Failed to parse validation output:', err);
-          console.error('Stdout:', stdoutData);
+          logger.error('[Validation] Failed to parse output:', err);
+          logger.error('[Validation] stdout:', stdoutData.slice(0, 500));
           reject(new Error(`Failed to parse validation output: ${err}`));
         }
       });
 
       childProcess.on('error', (err) => {
-        console.error('Failed to start validation process:', err);
+        logger.error('[Validation] Failed to start process:', err);
         reject(new Error(`Failed to start validation: ${err.message}`));
       });
     });
   }
 
   /**
-   * Convert validation result to database-friendly format
+   * Convert validation result to database-friendly format.
    */
   formatForDatabase(result: ValidationResult) {
     return {
@@ -140,12 +127,11 @@ export class ValidationService {
   }
 
   /**
-   * Convert validation result to validation log entries
+   * Convert validation result to validation log entries.
    */
   createValidationLogs(uploadId: string, result: ValidationResult) {
     const logs: any[] = [];
 
-    // Add errors
     result.errors.forEach(error => {
       logs.push({
         uploadId,
@@ -158,11 +144,10 @@ export class ValidationService {
       });
     });
 
-    // Add warnings
     result.warnings.forEach(warning => {
       logs.push({
         uploadId,
-        rowNumber: null, // Warnings might not have specific row numbers
+        rowNumber: null,
         logType: 'warning',
         fieldName: null,
         issueType: warning.type,
@@ -172,6 +157,27 @@ export class ValidationService {
     });
 
     return logs;
+  }
+
+  /**
+   * Render a compact one-line summary suitable for embedding in a job log section.
+   */
+  formatLogSection(result: ValidationResult): string {
+    const status = result.valid ? 'PASSED' : 'FAILED';
+    const lines = [
+      `Status: ${status}`,
+      `Rows: ${result.rows_checked} | Errors: ${result.errors.length} | Warnings: ${result.warnings.length}`,
+    ];
+    if (result.errors.length > 0) {
+      lines.push('Errors:');
+      result.errors.slice(0, 10).forEach(e =>
+        lines.push(`  Row ${e.row} [${e.field}] ${e.issue}${e.value ? ` — "${e.value}"` : ''}`)
+      );
+      if (result.errors.length > 10) {
+        lines.push(`  ... and ${result.errors.length - 10} more`);
+      }
+    }
+    return lines.join('\n');
   }
 }
 

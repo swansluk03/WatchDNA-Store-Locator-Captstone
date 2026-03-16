@@ -184,34 +184,15 @@ export class UploadController {
 
   async downloadMasterCSV(req: Request, res: Response) {
     try {
-      const filePath = await uploadService.getMasterCSVPath();
-      
-      if (!filePath) {
-        return res.status(404).json({ error: 'Master CSV path could not be resolved' });
-      }
+      const { brand } = req.query;
+      const { storeService } = await import('../services/store.service');
+      const csvContent = await storeService.generateDownloadCSV(brand as string | undefined);
 
-      if (!fs.existsSync(filePath)) {
-        console.error(`Master CSV not found at path: ${filePath}`);
-        return res.status(404).json({ error: 'Master CSV file not found. Run a scraping job first.' });
-      }
-
-      // Get file stats
-      const stats = fs.statSync(filePath);
-      
-      // Set headers for file download
-      res.setHeader('Content-Type', 'text/csv');
+      const contentLength = Buffer.byteLength(csvContent, 'utf-8');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', 'attachment; filename="master_stores.csv"');
-      res.setHeader('Content-Length', stats.size.toString());
-      
-      // Send file with error handling (filePath is already absolute from service)
-      res.sendFile(filePath, (err) => {
-        if (err) {
-          console.error('Error sending master CSV:', err);
-          if (!res.headersSent) {
-            res.status(500).json({ error: 'Failed to send file' });
-          }
-        }
-      });
+      res.setHeader('Content-Length', contentLength.toString());
+      res.send(csvContent);
     } catch (error: any) {
       console.error('Download master CSV error:', error);
       if (!res.headersSent) {

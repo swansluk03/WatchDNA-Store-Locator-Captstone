@@ -1,251 +1,132 @@
-import { PrismaClient } from '@prisma/client';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import validationService from './validation.service';
+import { storeService } from './store.service';
 import { SCRAPER_PATH, PYTHON_CMD } from '../utils/paths';
 import { logger } from '../utils/logger';
-
-const prisma = new PrismaClient();
+import prisma from '../lib/prisma';
 
 class ScraperService {
-  // Track running processes for cancellation
   private runningProcesses: Map<string, ChildProcess> = new Map();
-  /**
-   * Start a scraping job
-   */
+
   async startScraping(
-    jobId: string, 
-    brandName: string, 
-    url: string, 
+    jobId: string,
+    brandName: string,
+    url: string,
     region: string,
     config: any
   ): Promise<void> {
     try {
-      // Update job status to running with initial log
+      const startedAt = new Date().toISOString();
+
       await prisma.scraperJob.update({
         where: { id: jobId },
-        data: { 
+        data: {
           status: 'running',
-          logs: `[${new Date().toISOString()}] Starting scraping job for ${brandName}\n[${new Date().toISOString()}] URL: ${url}\n[${new Date().toISOString()}] Region: ${region}\n`
+          logs: this.buildHeader(brandName, url, region, config.type, startedAt)
         }
       });
 
       const scraperPath = SCRAPER_PATH;
       const outputDir = path.join(__dirname, '..', '..', 'uploads', 'scraped');
-      const masterCsvDir = path.join(__dirname, '..', '..', 'uploads');
-      
-      // Individual CSV file for this brand scrape (for debugging/tracking)
       const individualCsvFile = path.join(outputDir, `${brandName}_${Date.now()}.csv`);
-      
-      // Master CSV file (accumulates all brands)
-      const masterCsvFile = path.join(masterCsvDir, 'master_stores.csv');
 
-      // Ensure output directories exist
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-      }
-      if (!fs.existsSync(masterCsvDir)) {
-        fs.mkdirSync(masterCsvDir, { recursive: true });
-      }
+      if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
       const pythonCmd = PYTHON_CMD;
 
-      // Run the Python scraper (outputs to individual CSV)
       const pythonProcess = spawn(pythonCmd, [
-        '-u', // Unbuffered output - ensures real-time logging
+        '-u',
         path.join(scraperPath, 'universal_scraper.py'),
         '--url', url,
         '--output', individualCsvFile,
         '--region', region,
-        '--brand-config', JSON.stringify(config) // Pass brand config for field mapping
+        '--brand-config', JSON.stringify(config)
       ], {
         cwd: scraperPath,
-        env: { 
-          ...process.env,
-          PYTHONUNBUFFERED: '1' // Also set env var for extra safety
-        }
+        env: { ...process.env, PYTHONUNBUFFERED: '1' }
       });
 
-      // Track this process for cancellation
       this.runningProcesses.set(jobId, pythonProcess);
 
       let stdout = '';
       let stderr = '';
       let lastLogUpdate = Date.now();
-      const LOG_UPDATE_INTERVAL = 500; // Update every 500ms for better real-time viewing
+      const LOG_UPDATE_INTERVAL = 500;
 
-      // Helper function to format logs with timestamps
-      const formatLogs = (stdout: string, stderr: string) => {
-        const timestamp = new Date().toISOString();
-        let formatted = `=== JOB STARTED ===\n`;
-        formatted += `Brand: ${brandName}\n`;
-        formatted += `URL: ${url}\n`;
-        formatted += `Region: ${region}\n`;
-        formatted += `Type: ${config.type || 'auto-detect'}\n`;
-        formatted += `Started: ${timestamp}\n`;
-        formatted += `\n=== LIVE OUTPUT ===\n${stdout}`;
-        if (stderr) {
-          formatted += `\n\n=== ERRORS ===\n${stderr}`;
-        }
-        return formatted;
+      // Build the live-streaming portion of the log (header + output so far)
+      const buildLiveLogs = () => {
+        let log = this.buildHeader(brandName, url, region, config.type, startedAt);
+        log += `\n=== SCRAPER OUTPUT ===\n${stdout}`;
+        if (stderr) log += `\n\n=== ERRORS ===\n${stderr}`;
+        return log;
       };
 
+      const importantMarkers = [
+        '🔍', '✅', '❌', '⚠️', '📡', '🗺️', '🌍',
+        'Analyzing', 'Scraping', 'Normalizing', 'Validating',
+        'Found', 'stores', 'ERROR', 'SUCCESS'
+      ];
+
       pythonProcess.stdout.on('data', async (data) => {
-        const output = data.toString();
-        stdout += output;
-        logger.info(`[Scraper ${jobId}] ${output.trim()}`);
-        
-        // Check for important log markers that should trigger immediate update
-        const importantMarkers = [
-          '🔍', '✅', '❌', '⚠️', '📡', '🗺️', '🌍', 
-          'Analyzing', 'Scraping', 'Normalizing', 'Validating',
-          'Found', 'stores', 'ERROR', 'SUCCESS'
-        ];
-        const isImportant = importantMarkers.some(marker => output.includes(marker));
-        
-        // Update logs immediately for important events, or on interval for others
+        const chunk = data.toString();
+        stdout += chunk;
+        logger.debug(`[Scraper ${jobId}] ${chunk.trim()}`);
+
         const now = Date.now();
-        const shouldUpdate = isImportant || (now - lastLogUpdate > LOG_UPDATE_INTERVAL);
-        
-        if (shouldUpdate) {
+        const isImportant = importantMarkers.some(m => chunk.includes(m));
+        if (isImportant || now - lastLogUpdate > LOG_UPDATE_INTERVAL) {
           lastLogUpdate = now;
           try {
             await prisma.scraperJob.update({
               where: { id: jobId },
-              data: {
-                logs: formatLogs(stdout, stderr)
-              }
+              data: { logs: buildLiveLogs() }
             });
           } catch (err) {
-            logger.warn(`Failed to update live logs for ${jobId}:`, err);
+            logger.warn(`[Job ${jobId}] Live log update failed:`, err);
           }
         }
       });
 
       pythonProcess.stderr.on('data', async (data) => {
-        const output = data.toString();
-        stderr += output;
-        logger.error(`[Scraper ${jobId}] ERROR: ${output.trim()}`);
-        
-        // Update errors immediately (don't wait for interval)
+        const chunk = data.toString();
+        stderr += chunk;
+        logger.debug(`[Scraper ${jobId}] stderr: ${chunk.trim()}`);
         try {
           await prisma.scraperJob.update({
             where: { id: jobId },
-            data: {
-              logs: formatLogs(stdout, stderr)
-            }
+            data: { logs: buildLiveLogs() }
           });
           lastLogUpdate = Date.now();
         } catch (err) {
-            logger.warn(`Failed to update live error logs for ${jobId}:`, err);
+          logger.warn(`[Job ${jobId}] Live error log update failed:`, err);
         }
       });
 
       pythonProcess.on('close', async (code) => {
-        // Clean up the process from tracking map
         this.runningProcesses.delete(jobId);
-        
-        const completionTime = new Date().toISOString();
-        const fullLogs = formatLogs(stdout, stderr) + `\n\n=== JOB COMPLETED ===\nExit Code: ${code}\nCompleted: ${completionTime}`;
-        
+        const completedAt = new Date().toISOString();
+        const baseLogs = buildLiveLogs();
+
         if (code === 0) {
-          // Success - parse results, merge to master CSV, and create uploads
-          let recordsScraped: number | null = null; // Track if recordsScraped was set
+          let recordsScraped: number | null = null;
           let individualUpload: any = null;
-          
+          let postProcessLogs = '';
+
           try {
             const individualFileStats = fs.statSync(individualCsvFile);
-            // Count actual data rows (excluding header)
             const totalRows = await this.countCsvRows(individualCsvFile);
-            
-            // Parse the output to get actual normalized count
-            const normalizedMatch = stdout.match(/(\d+)\s+stores\s+normalized/i) || 
-                                   stdout.match(/✅\s+(\d+)\s+stores/i);
+
+            const normalizedMatch =
+              stdout.match(/(\d+)\s+stores\s+normalized/i) ||
+              stdout.match(/✅\s+(\d+)\s+stores/i);
             recordsScraped = normalizedMatch ? parseInt(normalizedMatch[1]) : totalRows;
 
-            // Merge individual CSV into master CSV with deduplication
-            // Add timeout to prevent hanging
-            const masterCsvManagerPath = path.join(scraperPath, 'master_csv_manager.py');
-            let mergeStdout = '';
-            let mergeStderr = '';
-            
-            try {
-              const mergeProcess = spawn(pythonCmd, [
-                masterCsvManagerPath,
-                individualCsvFile,
-                masterCsvFile,
-                brandName
-              ], {
-                cwd: scraperPath,
-                env: { ...process.env }
-              });
-
-              mergeProcess.stdout.on('data', (data) => {
-                mergeStdout += data.toString();
-                logger.info(`[Master CSV Merge ${jobId}] ${data.toString().trim()}`);
-              });
-              mergeProcess.stderr.on('data', (data) => {
-                mergeStderr += data.toString();
-                logger.error(`[Master CSV Merge ${jobId}] ERROR: ${data.toString().trim()}`);
-              });
-
-              // Add timeout (5 minutes for merge operation)
-              let mergeTimeout: NodeJS.Timeout | null = setTimeout(() => {
-                if (!mergeProcess.killed) {
-                  logger.warn(`⚠️ Master CSV merge timed out after 5 minutes for job ${jobId}`);
-                  mergeProcess.kill();
-                }
-                mergeTimeout = null; // Clear reference after timeout fires
-              }, 300000); // 5 minutes
-
-              // Helper to safely clear timeout
-              const clearMergeTimeout = () => {
-                if (mergeTimeout !== null) {
-                  clearTimeout(mergeTimeout);
-                  mergeTimeout = null;
-                }
-              };
-
-              await new Promise<void>((resolve) => {
-                mergeProcess.on('close', (code) => {
-                  clearMergeTimeout(); // Always clear timeout when process closes
-                  if (code === 0) {
-                    logger.warn(`✅ Master CSV merge completed for job ${jobId}`);                    resolve();
-                  } else {
-                    logger.error(`⚠️ Master CSV merge failed (code ${code}) for job ${jobId}: ${mergeStderr}`);
-                    // Don't fail the job if merge fails, just log it
-                    resolve();
-                  }
-                });
-                mergeProcess.on('error', (error) => {
-                  clearMergeTimeout(); // Always clear timeout on error
-                  logger.error(`⚠️ Master CSV merge error for job ${jobId}: ${error.message}`);
-                  // Don't fail the job if merge fails
-                  resolve();
-                });
-              });
-              
-              // Ensure timeout is cleared even if promise resolves/rejects unexpectedly
-              clearMergeTimeout();
-            } catch (mergeError: any) {
-              logger.error(`⚠️ Error starting master CSV merge for job ${jobId}:`, mergeError);
-              // Continue even if merge fails - don't block job completion
-            }
-
-            // Get master CSV stats if it exists
-            let masterFileStats = null;
-            let masterRows = 0;
-            if (fs.existsSync(masterCsvFile)) {
-              masterFileStats = fs.statSync(masterCsvFile);
-              masterRows = await this.countCsvRows(masterCsvFile);
-            }
-
-            // Create Upload record for individual CSV
-            // Store relative path from uploads directory (e.g., "scraped/brand_timestamp.csv")
+            // ── UPLOAD RECORD ────────────────────────────────────────────────
             const uploadsBaseDir = path.join(__dirname, '..', '..', 'uploads');
             const individualFilename = path.relative(uploadsBaseDir, individualCsvFile);
-            
+
             individualUpload = await prisma.upload.create({
               data: {
                 filename: individualFilename,
@@ -255,17 +136,20 @@ class ScraperService {
                 status: 'completed',
                 brandConfig: brandName,
                 scraperType: config.type || 'json',
-                rowsTotal: recordsScraped !== null ? recordsScraped : 0,
-                rowsProcessed: recordsScraped !== null ? recordsScraped : 0,
+                rowsTotal: recordsScraped ?? 0,
+                rowsProcessed: recordsScraped ?? 0,
               }
             });
 
-            // Run validation on scraped CSV so View Run shows errors, warnings, and logs
+            // ── VALIDATION ───────────────────────────────────────────────────
+            postProcessLogs += '\n\n=== VALIDATION ===\n';
             try {
               const validationResult = await validationService.validateCSV(individualCsvFile, {
                 autoFix: false,
                 checkUrls: false
               });
+              postProcessLogs += validationService.formatLogSection(validationResult);
+
               const updateData = validationService.formatForDatabase(validationResult);
               await prisma.upload.update({
                 where: { id: individualUpload.id },
@@ -274,120 +158,79 @@ class ScraperService {
                   validationWarnings: updateData.validationWarnings,
                 }
               });
-              const logs = validationService.createValidationLogs(individualUpload.id, validationResult);
-              if (logs.length > 0) {
-                await prisma.validationLog.createMany({ data: logs });
+              const valLogs = validationService.createValidationLogs(individualUpload.id, validationResult);
+              if (valLogs.length > 0) {
+                await prisma.validationLog.createMany({ data: valLogs });
               }
-            } catch (validationErr: any) {
-              logger.warn(`[Job ${jobId}] Validation failed (upload still created):`, validationErr?.message);
+            } catch (valErr: any) {
+              postProcessLogs += `Validation unavailable: ${valErr.message}`;
+              logger.warn(`[Job ${jobId}] Validation failed (non-fatal):`, valErr.message);
             }
 
-            // Create or update Upload record for master CSV
-            // Check if master CSV upload already exists
-            const existingMasterUpload = await prisma.upload.findFirst({
-              where: {
-                originalFilename: 'master_stores.csv',
-                uploadedBy: 'scraper'
-              },
-              orderBy: {
-                uploadedAt: 'desc'
-              }
-            });
-
-            let masterUpload;
-            if (existingMasterUpload && masterFileStats) {
-              // Update existing master upload
-              masterUpload = await prisma.upload.update({
-                where: { id: existingMasterUpload.id },
-                data: {
-                  fileSize: masterFileStats.size,
-                  rowsTotal: masterRows,
-                  rowsProcessed: masterRows,
-                  uploadedAt: new Date() // Update timestamp
-                }
+            // ── DB UPSERT ─────────────────────────────────────────────────────
+            postProcessLogs += '\n\n=== DB SYNC ===\n';
+            try {
+              const { default: Papa } = await import('papaparse');
+              const fileContent = fs.readFileSync(individualCsvFile, 'utf-8');
+              const { data: csvRecords } = Papa.parse(fileContent, {
+                header: true,
+                skipEmptyLines: true,
+                transformHeader: (h: string) => h.trim()
               });
-            } else if (masterFileStats) {
-              // Create new master upload record
-              // Store just the filename since it's in the uploads directory
-              masterUpload = await prisma.upload.create({
-                data: {
-                  filename: 'master_stores.csv',
-                  originalFilename: 'master_stores.csv',
-                  fileSize: masterFileStats.size,
-                  uploadedBy: 'scraper',
-                  status: 'completed',
-                  brandConfig: 'all_brands',
-                  scraperType: 'master',
-                  rowsTotal: masterRows,
-                  rowsProcessed: masterRows,
-                }
-              });
+              const upsertResult = await storeService.batchUpsertLocations(
+                csvRecords as Record<string, string>[],
+                individualUpload.id
+              );
+              postProcessLogs += `Upserted: ${upsertResult.upserted} | Skipped: ${upsertResult.skipped}`;
+            } catch (dbErr: any) {
+              postProcessLogs += `DB sync failed: ${dbErr.message}`;
+              logger.error(`[Job ${jobId}] DB upsert failed (non-fatal):`, dbErr.message);
             }
 
-            // Update job with logs - ensure this always happens even if there are errors
-            const mergeInfo = mergeStdout ? `\n\n=== MASTER CSV MERGE ===\n${mergeStdout}` : '';
-            const mergeErrorInfo = mergeStderr ? `\n\n=== MASTER CSV MERGE ERRORS ===\n${mergeStderr}` : '';
-            const finalLogs = fullLogs + mergeInfo + mergeErrorInfo;
-            
-            // CRITICAL: Update job status - this MUST happen even if other operations fail
-            logger.info(`[Job ${jobId}] Updating job status to completed...`);
+            // ── COMPLETION SUMMARY ────────────────────────────────────────────
+            const finalLogs =
+              baseLogs +
+              postProcessLogs +
+              `\n\n=== JOB COMPLETED ===\n` +
+              `Scraped: ${recordsScraped ?? 0} records` +
+              `\nExit: 0 | Completed: ${completedAt}`;
+
             try {
               await prisma.scraperJob.update({
                 where: { id: jobId },
                 data: {
                   status: 'completed',
                   completedAt: new Date(),
-                  recordsScraped: recordsScraped !== null ? recordsScraped : 0,
-                  uploadId: individualUpload?.id || null,
+                  recordsScraped: recordsScraped ?? 0,
+                  uploadId: individualUpload.id,
                   logs: finalLogs
                 }
               });
-
-              logger.warn(`✅ Scraping job ${jobId} completed. Records: ${recordsScraped !== null ? recordsScraped : 0}`);
-              if (masterFileStats) {
-                logger.warn(`   Master CSV: ${masterRows} total stores (after deduplication)`);
-              }
-              if (mergeStdout) {
-                const mergeLines = mergeStdout.split('\n');
-                const finalSummary = mergeLines.filter(line =>
-                  line.includes('FINAL SUMMARY') ||
-                  line.includes('Master CSV final:') ||
-                  line.includes('Total deduplicated:')
-                );
-                if (finalSummary.length > 0) {
-                  logger.warn(finalSummary.map(l => l.trim()).join(' | '));
-                }
-              }
+              logger.info(`[Job ${jobId}] Completed — ${recordsScraped ?? 0} records`);
             } catch (updateError: any) {
-              logger.error(`⚠️ Failed to update job status for ${jobId}:`, updateError);
+              logger.error(`[Job ${jobId}] Status update failed, retrying:`, updateError.message);
               try {
-                logger.info(`[Job ${jobId}] Retrying status update with minimal data...`);
                 await prisma.scraperJob.update({
                   where: { id: jobId },
                   data: {
                     status: 'completed',
                     completedAt: new Date(),
-                    recordsScraped: recordsScraped !== null ? recordsScraped : 0,
+                    recordsScraped: recordsScraped ?? 0,
                     uploadId: individualUpload?.id || null,
-                    logs: `Status update error occurred, but job completed successfully.\n\n${finalLogs}\n\nUpdate Error: ${updateError.message}`
+                    logs: finalLogs + `\n[Status update error: ${updateError.message}]`
                   }
                 });
-                logger.warn(`✅ Retry status update succeeded for job ${jobId}`);
               } catch (retryError: any) {
-                logger.error(`❌ Critical: Could not update job ${jobId} status even after retry:`, retryError);
+                logger.error(`[Job ${jobId}] Critical: could not persist completion status:`, retryError.message);
               }
             }
+
           } catch (error: any) {
-            logger.error(`Error processing scraper results for job ${jobId}:`, error);
-            
-            // Ensure we always update status, even on error
-            // Only use fallback if recordsScraped was never set (null)
-            // If recordsScraped was set (including 0), use that value
-            const finalRecordsScraped = recordsScraped !== null ? recordsScraped : (() => {
-              const match = stdout.match(/(\d+)\s+stores\s+normalized/i);
-              return match ? parseInt(match[1]) : 0;
+            logger.error(`[Job ${jobId}] Post-processing failed:`, error.message);
+            const finalRecordsScraped = recordsScraped ?? (() => {
+              const m = stdout.match(/(\d+)\s+stores\s+normalized/i);
+              return m ? parseInt(m[1]) : 0;
             })();
-            
             try {
               await prisma.scraperJob.update({
                 where: { id: jobId },
@@ -396,137 +239,117 @@ class ScraperService {
                   completedAt: new Date(),
                   errorMessage: `Post-processing error: ${error.message}`,
                   recordsScraped: finalRecordsScraped,
-                  logs: fullLogs + `\n\n=== POST-PROCESSING ERROR ===\n${error.message}\n${error.stack || ''}`
+                  logs: baseLogs + postProcessLogs +
+                    `\n\n=== POST-PROCESSING ERROR ===\n${error.message}\n${error.stack || ''}`
                 }
               });
-            } catch (updateError: any) {
-              logger.error(`❌ Critical: Could not update failed job status for ${jobId}:`, updateError);
+            } catch (updateErr: any) {
+              logger.error(`[Job ${jobId}] Critical: could not persist failure status:`, updateErr.message);
             }
           }
+
         } else {
           await prisma.scraperJob.update({
             where: { id: jobId },
             data: {
               status: 'failed',
               completedAt: new Date(),
-              errorMessage: stderr || `Process exited with code ${code}`,
-              logs: fullLogs
+              errorMessage: stderr.trim() || `Process exited with code ${code}`,
+              logs: baseLogs + `\n\n=== JOB FAILED ===\nExit: ${code} | Completed: ${completedAt}`
             }
           });
-
-          logger.error(`❌ Scraping job ${jobId} failed with code ${code}`);
+          logger.warn(`[Job ${jobId}] Failed — exit code ${code}`);
         }
       });
 
       pythonProcess.on('error', async (error) => {
         this.runningProcesses.delete(jobId);
-        logger.error(`Error spawning Python process for job ${jobId}:`, error);
+        logger.error(`[Job ${jobId}] Process spawn failed:`, error.message);
         await prisma.scraperJob.update({
           where: { id: jobId },
           data: {
             status: 'failed',
             completedAt: new Date(),
             errorMessage: error.message,
-            logs: `=== ERROR ===\n${error.message}\n${error.stack || ''}`
+            logs: `=== SPAWN ERROR ===\n${error.message}\n${error.stack || ''}`
           }
         });
       });
 
     } catch (error: any) {
-      logger.error(`Error starting scraping job ${jobId}:`, error);
+      logger.error(`[Job ${jobId}] Startup failed:`, error.message);
       await prisma.scraperJob.update({
         where: { id: jobId },
         data: {
           status: 'failed',
           completedAt: new Date(),
           errorMessage: error.message,
-          logs: `=== ERROR ===\n${error.message}\n${error.stack || ''}`
+          logs: `=== STARTUP ERROR ===\n${error.message}\n${error.stack || ''}`
         }
       });
     }
   }
 
-  /**
-   * Cancel a running scraping job
-   */
   async cancelJob(jobId: string): Promise<{ success: boolean; message: string }> {
     try {
-      // Check if job exists and is running
-      const job = await prisma.scraperJob.findUnique({
-        where: { id: jobId }
-      });
-
-      if (!job) {
-        return { success: false, message: 'Job not found' };
-      }
-
+      const job = await prisma.scraperJob.findUnique({ where: { id: jobId } });
+      if (!job) return { success: false, message: 'Job not found' };
       if (job.status !== 'running') {
         return { success: false, message: `Job is not running (status: ${job.status})` };
       }
 
-      // Get the process
-      const process = this.runningProcesses.get(jobId);
-      
-      if (!process) {
-        // Process not found in map, but job is marked as running
-        // Update job status to cancelled anyway
+      const proc = this.runningProcesses.get(jobId);
+      if (!proc) {
         await prisma.scraperJob.update({
           where: { id: jobId },
           data: {
             status: 'cancelled',
             completedAt: new Date(),
             errorMessage: 'Job was cancelled (process not found)',
-            logs: (job.logs || '') + `\n\n[${new Date().toISOString()}] Job cancelled by user`
+            logs: (job.logs || '') + `\n\n[${new Date().toISOString()}] Cancelled by user (process not found)`
           }
         });
         return { success: true, message: 'Job marked as cancelled (process not found)' };
       }
 
-      // Kill the process
-      logger.warn(`🛑 Cancelling scraping job ${jobId}...`);
-      process.kill('SIGTERM');
-
+      proc.kill('SIGTERM');
       setTimeout(() => {
-        if (this.runningProcesses.has(jobId)) {
-          logger.warn(`🛑 Force killing job ${jobId}...`);
-          process.kill('SIGKILL');
-        }
+        if (this.runningProcesses.has(jobId)) proc.kill('SIGKILL');
       }, 5000);
 
-      // Update job status
       await prisma.scraperJob.update({
         where: { id: jobId },
         data: {
           status: 'cancelled',
           completedAt: new Date(),
           errorMessage: 'Job was cancelled by user',
-          logs: (job.logs || '') + `\n\n[${new Date().toISOString()}] ⛔ Job cancelled by user`
+          logs: (job.logs || '') + `\n\n[${new Date().toISOString()}] Cancelled by user`
         }
       });
-
-      // Remove from tracking map
       this.runningProcesses.delete(jobId);
 
-      logger.warn(`✅ Scraping job ${jobId} cancelled`);
+      logger.info(`[Job ${jobId}] Cancelled`);
       return { success: true, message: 'Job cancelled successfully' };
 
     } catch (error: any) {
-      logger.error(`Error cancelling job ${jobId}:`, error);
+      logger.error(`[Job ${jobId}] Cancel failed:`, error.message);
       return { success: false, message: `Error cancelling job: ${error.message}` };
     }
   }
 
   /**
-   * Save job records: persist to job CSV, then append complete records to master.
-   * Incomplete records (missing phone or address) stay in job CSV only.
+   * Save job records: write all records back to the job CSV (audit copy), run
+   * validation + normalization (--fix) on the job CSV in-place, then
+   * batch-upsert complete records directly into the Location table.
+   * Appends a summary section to ScraperJob.logs for audit visibility.
    */
   async saveJobRecords(
     jobId: string,
     records: Record<string, string>[]
   ): Promise<{
     savedToJob: number;
-    appendedToMaster: number;
     skippedIncomplete: number;
+    dbUpserted: number;
     validationErrors?: number;
   }> {
     const job = await prisma.scraperJob.findUnique({
@@ -543,11 +366,6 @@ class ScraperService {
       throw new Error('Job CSV file not found');
     }
 
-    const masterCsvPath = await uploadService.getMasterCSVPath();
-    if (!masterCsvPath || !fs.existsSync(masterCsvPath)) {
-      throw new Error('Master CSV not found');
-    }
-
     const isComplete = (r: Record<string, string>) => {
       const phone = (r['Phone'] ?? '').trim();
       const addr1 = (r['Address Line 1'] ?? '').trim();
@@ -555,107 +373,150 @@ class ScraperService {
       return phone.length > 0 && (addr1.length > 0 || addr2.length > 0);
     };
 
-    const completeRecords = records.filter(isComplete);
-    const skippedIncomplete = records.length - completeRecords.length;
-
     const Papa = (await import('papaparse')).default;
-    const csvContent = Papa.unparse(records);
-    fs.writeFileSync(filePath, csvContent, 'utf-8');
 
-    let appendedToMaster = 0;
-    if (completeRecords.length > 0) {
-      const validationService = (await import('./validation.service')).default;
-      const tmpDir = path.join(__dirname, '..', '..', 'tmp');
-      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-      const tmpCsv = path.join(tmpDir, `job_${jobId}_complete_${Date.now()}.csv`);
-      const tmpCsvContent = Papa.unparse(completeRecords);
-      fs.writeFileSync(tmpCsv, tmpCsvContent, 'utf-8');
+    // Write all records back to the job CSV — serves as the per-job audit copy
+    fs.writeFileSync(filePath, Papa.unparse(records), 'utf-8');
+
+    const completeCount = records.filter(isComplete).length;
+    const skippedIncomplete = records.length - completeCount;
+    let dbUpserted = 0;
+    let validationErrors: number | undefined;
+    const editTimestamp = new Date().toISOString();
+    let editLogSection = `\n\n=== RECORDS UPDATED [${editTimestamp}] ===\n`;
+    editLogSection += `Saved to job CSV: ${records.length} | Complete: ${completeCount} | Skipped incomplete: ${skippedIncomplete}`;
+
+    if (completeCount > 0) {
+      // Run validate_csv.py --fix directly on the job CSV in-place (no tmp files)
+      let fixedRecords: Record<string, string>[] = records.filter(isComplete);
+      let validationResult: import('./validation.service').ValidationResult | null = null;
 
       try {
-        const validationResult = await validationService.validateCSV(tmpCsv, {
+        validationResult = await validationService.validateCSV(filePath, {
           autoFix: true,
           checkUrls: false
         });
+        editLogSection += `\n\n=== VALIDATION ===\n${validationService.formatLogSection(validationResult)}`;
+
+        // Re-read the job CSV — the validator may have fixed values in-place
+        if (fs.existsSync(filePath)) {
+          const fixedContent = fs.readFileSync(filePath, 'utf-8');
+          const parsed = Papa.parse(fixedContent, {
+            header: true,
+            skipEmptyLines: true,
+            transformHeader: (h: string) => h.trim()
+          });
+          const allFixed = parsed.data as Record<string, string>[];
+          fixedRecords = allFixed.filter(isComplete);
+        }
+
+        editLogSection += `\n\n=== NORMALIZATION ===\nAuto-fix applied — ${fixedRecords.length} complete records normalized`;
+
         if (!validationResult.valid && validationResult.errors.length > 0) {
-          fs.unlinkSync(tmpCsv);
+          validationErrors = validationResult.errors.length;
+          await this.appendJobLog(jobId, job.logs, editLogSection);
           return {
             savedToJob: records.length,
-            appendedToMaster: 0,
             skippedIncomplete,
-            validationErrors: validationResult.errors.length
+            dbUpserted: 0,
+            validationErrors
           };
         }
       } catch {
-        // If validation fails to run, still try to append (e.g. validator script missing)
+        editLogSection += '\n\n=== VALIDATION ===\nValidator unavailable — proceeding with original records';
       }
 
-      const pythonCmd = PYTHON_CMD;
-      const scraperPath = SCRAPER_PATH;
-      const masterCsvManagerPath = path.join(scraperPath, 'master_csv_manager.py');
+      // ── DB UPSERT ─────────────────────────────────────────────────────────
+      try {
+        const upsertResult = await storeService.batchUpsertLocations(fixedRecords, job.uploadId);
+        dbUpserted = upsertResult.upserted;
+        editLogSection += `\n\n=== DB SYNC ===\nUpserted: ${upsertResult.upserted} | Skipped: ${upsertResult.skipped}`;
+      } catch (dbErr: any) {
+        editLogSection += `\n\n=== DB SYNC ===\nFailed: ${dbErr.message}`;
+        logger.error(`[Job ${jobId}] DB upsert failed:`, dbErr.message);
+      }
 
-      const result = await new Promise<{ stores_added: number; stores_merged: number }>((resolve, reject) => {
-        const proc = spawn(pythonCmd, [
-          masterCsvManagerPath,
-          tmpCsv,
-          masterCsvPath,
-          job.brandName
-        ], { cwd: scraperPath, env: { ...process.env } });
-        let stdout = '';
-        let stderr = '';
-        proc.stdout.on('data', (d) => { stdout += d.toString(); });
-        proc.stderr.on('data', (d) => { stderr += d.toString(); });
-        proc.on('close', (code) => {
-          if (fs.existsSync(tmpCsv)) fs.unlinkSync(tmpCsv);
-          if (code !== 0) {
-            reject(new Error(`Master merge failed: ${stderr || stdout}`));
-            return;
-          }
-          const match = stdout.match(/New unique stores added:\s*(\d+)/);
-          const mergedMatch = stdout.match(/Matched existing stores:\s*(\d+)/);
-          resolve({
-            stores_added: match ? parseInt(match[1]) : completeRecords.length,
-            stores_merged: mergedMatch ? parseInt(mergedMatch[1]) : 0
+      // ── UPDATE UPLOAD RECORD ──────────────────────────────────────────────
+      if (validationResult) {
+        try {
+          const dbFormat = validationService.formatForDatabase(validationResult);
+          await prisma.upload.update({
+            where: { id: job.uploadId },
+            data: {
+              validationErrors: dbFormat.validationErrors,
+              validationWarnings: dbFormat.validationWarnings,
+              rowsTotal: fixedRecords.length,
+              rowsProcessed: fixedRecords.length,
+            }
           });
-        });
-      });
-      appendedToMaster = result.stores_added + result.stores_merged;
+          await prisma.validationLog.deleteMany({ where: { uploadId: job.uploadId } });
+          const valLogs = validationService.createValidationLogs(job.uploadId, validationResult);
+          if (valLogs.length > 0) {
+            await prisma.validationLog.createMany({ data: valLogs });
+          }
+        } catch (uploadErr: any) {
+          logger.warn(`[Job ${jobId}] Upload record update failed:`, uploadErr.message);
+        }
+      }
     }
 
-    return {
-      savedToJob: records.length,
-      appendedToMaster,
-      skippedIncomplete
-    };
+    await this.appendJobLog(jobId, job.logs, editLogSection);
+    return { savedToJob: records.length, skippedIncomplete, dbUpserted, validationErrors };
+  }
+
+  /**
+   * Append a section to an existing job's stored log without rewriting it from scratch.
+   */
+  private async appendJobLog(jobId: string, existingLogs: string | null, section: string): Promise<void> {
+    try {
+      await prisma.scraperJob.update({
+        where: { id: jobId },
+        data: { logs: (existingLogs || '') + section }
+      });
+    } catch (err: any) {
+      logger.warn(`[Job ${jobId}] Log append failed:`, err.message);
+    }
+  }
+
+  /**
+   * Build the fixed job header (captured once at job start, never mutated).
+   */
+  private buildHeader(
+    brandName: string,
+    url: string,
+    region: string,
+    type: string | undefined,
+    startedAt: string
+  ): string {
+    return (
+      `=== JOB STARTED ===\n` +
+      `Brand: ${brandName} | Region: ${region} | Type: ${type || 'auto-detect'}\n` +
+      `URL: ${url}\n` +
+      `Started: ${startedAt}`
+    );
   }
 
   /**
    * Count rows in a CSV file (excluding header).
-   * Counts newlines so chunk boundaries don't overcount (streaming split('\n') would inflate the count).
    */
   async countCsvRows(filePath: string): Promise<number> {
     return new Promise((resolve, reject) => {
       let newlineCount = 0;
       let lastChunkEndsWithNewline = false;
       const stream = fs.createReadStream(filePath);
-
       stream.on('data', (chunk) => {
         const s = chunk.toString();
         const matches = s.match(/\n/g);
         newlineCount += matches ? matches.length : 0;
         lastChunkEndsWithNewline = s.length > 0 && s[s.length - 1] === '\n';
       });
-
       stream.on('end', () => {
-        // Lines = newlines + 1 when file doesn't end with \n, else lines = newlines (last line empty).
-        // Data rows = lines - 1 (header). So: if trailing \n then newlineCount - 1, else newlineCount.
         const dataRows = lastChunkEndsWithNewline ? Math.max(0, newlineCount - 1) : newlineCount;
         resolve(dataRows);
       });
-
       stream.on('error', reject);
     });
   }
 }
 
 export const scraperService = new ScraperService();
-

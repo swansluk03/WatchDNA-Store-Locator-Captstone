@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared coordinate validation for data_normalizer, master_csv_manager, pattern_detector."""
+"""Shared coordinate validation for data_normalizer and pattern_detector."""
 
 import math
 from typing import Any, Optional

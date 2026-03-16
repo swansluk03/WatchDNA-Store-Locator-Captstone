@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared utilities for universal_scraper, viewport_grid, and master_csv_manager."""
+"""Shared utilities for universal_scraper and viewport_grid."""
 
 import re
 from datetime import datetime

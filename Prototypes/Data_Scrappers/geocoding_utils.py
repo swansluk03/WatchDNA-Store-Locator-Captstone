@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Geocoding via Nominatim (OpenStreetMap). Used by data_normalizer and master_csv_manager."""
+"""Geocoding via Nominatim (OpenStreetMap). Used by data_normalizer."""
 
 import time
 from typing import Optional, Tuple

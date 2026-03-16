@@ -1,5 +1,4 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { scraperService } from '../services/scraper.service';
 import uploadService from '../services/upload.service';
 import { storeService } from '../services/store.service';
@@ -7,8 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import Papa from 'papaparse';
 import { BRAND_CONFIGS_PATH, ENDPOINT_DISCOVERER_PATH, PYTHON_CMD } from '../utils/paths';
-
-const prisma = new PrismaClient();
+import prisma from '../lib/prisma';
 
 // Helper functions for brand config similarity detection
 function calculateSimilarity(str1: string, str2: string): number {
@@ -379,20 +377,12 @@ export const scraperController = {
         prisma.scraperJob.count({ where: { status: 'failed' } })
       ]);
       
-      // Count unique records from master CSV (already deduplicated)
+      // Count unique store records directly from the Location table
       let totalRecords = 0;
       try {
-        const masterCsvPath = await uploadService.getMasterCSVPath();
-        if (masterCsvPath && fs.existsSync(masterCsvPath)) {
-          totalRecords = await scraperService.countCsvRows(masterCsvPath);
-        }
+        totalRecords = await prisma.location.count();
       } catch (error: any) {
-        console.error('Error counting master CSV rows:', error);
-        // Fallback to sum of individual job records if master CSV can't be read
-        const totalRecordsResult = await prisma.scraperJob.aggregate({
-          _sum: { recordsScraped: true }
-        });
-        totalRecords = totalRecordsResult._sum.recordsScraped || 0;
+        console.error('Error counting location records:', error);
       }
 
       // Get recent jobs
@@ -488,7 +478,8 @@ export const scraperController = {
     }
   },
 
-  // GET /api/scraper/jobs/:id/records - Get CSV records for a completed job
+  // GET /api/scraper/jobs/:id/records - Get records for a completed job.
+  // Prefers a batch DB query (Location WHERE uploadId) over reading the CSV file.
   async getJobRecords(req: Request, res: Response) {
     try {
       const { id } = req.params;
@@ -510,6 +501,19 @@ export const scraperController = {
         return res.status(404).json({ error: 'No upload linked to this job' });
       }
 
+      // Try DB first — fast indexed lookup by uploadId
+      const dbRows = await storeService.getLocationsByUploadId(job.uploadId);
+      if (dbRows.length > 0) {
+        return res.json({
+          jobId: job.id,
+          brandName: job.brandName,
+          source: 'db',
+          columns: Object.keys(dbRows[0]),
+          records: dbRows
+        });
+      }
+
+      // Fallback: read from job CSV (older jobs or pre-sync state)
       const filePath = await uploadService.getFilePath(job.upload.filename);
       if (!filePath || !fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Job CSV file not found' });
@@ -527,6 +531,7 @@ export const scraperController = {
       res.json({
         jobId: job.id,
         brandName: job.brandName,
+        source: 'csv',
         columns: rows.length > 0 ? Object.keys(rows[0]) : [],
         records: rows
       });
@@ -551,8 +556,8 @@ export const scraperController = {
       res.json({
         message: 'Job records saved',
         savedToJob: result.savedToJob,
-        appendedToMaster: result.appendedToMaster,
         skippedIncomplete: result.skippedIncomplete,
+        dbUpserted: result.dbUpserted,
         validationErrors: result.validationErrors,
       });
     } catch (error: any) {
@@ -588,14 +593,11 @@ export const scraperController = {
       res.json({ removed });
     } catch (error: any) {
       console.error('Error deleting master record:', error);
-      if (error.message === 'Master CSV not found') {
-        return res.status(404).json({ error: error.message });
-      }
       res.status(500).json({ error: error.message });
     }
   },
 
-  // PATCH /api/scraper/master-csv - Update rows in master CSV (uses store service for DB-ready abstraction)
+  // PATCH /api/scraper/master-csv - Update Location rows in the DB directly.
   async updateMasterCsvRows(req: Request, res: Response) {
     try {
       const { rows: updates } = req.body as { rows: Record<string, string>[] };
@@ -604,18 +606,18 @@ export const scraperController = {
         return res.status(400).json({ error: 'rows array with at least one record is required' });
       }
 
-      const { updatedCount, totalRequested } = await storeService.updateMasterRecords(updates);
+      const { updatedCount, totalRequested, dbUpserted, dbSkipped } =
+        await storeService.updateMasterRecords(updates);
 
       res.json({
-        message: 'Master CSV updated successfully',
+        message: 'Master records updated successfully',
         updatedCount,
         totalRequested,
+        dbUpserted,
+        dbSkipped,
       });
     } catch (error: any) {
-      console.error('Error updating master CSV:', error);
-      if (error.message === 'Master CSV not found') {
-        return res.status(404).json({ error: error.message });
-      }
+      console.error('Error updating master records:', error);
       res.status(500).json({ error: error.message });
     }
   },

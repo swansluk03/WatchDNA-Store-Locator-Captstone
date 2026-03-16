@@ -227,7 +227,6 @@ WatchDNA-Store-Locator-Captstone/
 │   └── Data_Scrappers/               # Web scraping tools
 │       ├── universal_scraper.py      # Generic scraper
 │       ├── data_normalizer.py        # Data normalization
-│       ├── master_csv_manager.py     # CSV management
 │       ├── pattern_detector.py       # Pattern detection
 │       ├── locator_type_detector.py  # Locator type identification
 │       ├── analyze_endpoint.py       # API endpoint analyzer
