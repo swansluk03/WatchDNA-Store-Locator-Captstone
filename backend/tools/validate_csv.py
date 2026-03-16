@@ -9,10 +9,16 @@ import sys
 import os
 import importlib.util
 
-# Load canonical validator from Data_Scrappers
+# Load canonical validator from Data_Scrappers (Prototypes is at repo root, not inside backend)
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(script_dir)
-validator_path = os.path.join(project_root, "Prototypes", "Data_Scrappers", "validate_csv.py")
+project_root = os.path.dirname(os.path.dirname(script_dir))  # backend/tools -> backend -> repo root
+data_scrappers_dir = os.path.join(project_root, "Prototypes", "Data_Scrappers")
+validator_path = os.path.join(data_scrappers_dir, "validate_csv.py")
+
+# Ensure Data_Scrappers is on path so validate_csv can import scraper_utils, etc.
+if data_scrappers_dir not in sys.path:
+    sys.path.insert(0, data_scrappers_dir)
+
 spec = importlib.util.spec_from_file_location("_validate_csv_canonical", validator_path)
 validator_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validator_module)
