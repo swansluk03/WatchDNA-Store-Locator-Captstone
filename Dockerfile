@@ -1,11 +1,13 @@
 FROM node:20-slim
 
-# Install Python 3 and dependencies for scrapers
+# Install Python 3, Chromium (for endpoint discoverer), and system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
     curl \
+    chromium \
+    chromium-driver \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -13,13 +15,9 @@ WORKDIR /app
 # Copy entire repo so Prototypes/ and tools/ are available in the container
 COPY . .
 
-# Install Python scraper dependencies in a venv at /app/venv
+# Install all Python dependencies from requirements.txt
 RUN python3 -m venv /app/venv && \
-    /app/venv/bin/pip install --no-cache-dir \
-        requests \
-        phonenumbers \
-        geopy \
-        playwright
+    /app/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
 # Install Node dependencies, generate Prisma client, and build TypeScript
 WORKDIR /app/backend
