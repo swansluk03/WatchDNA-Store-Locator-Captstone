@@ -9,6 +9,7 @@ dotenv.config();
 
 // Import configuration
 import { config, validateConfig } from './config';
+import { logger } from './utils/logger';
 
 // Validate configuration on startup
 validateConfig();
@@ -80,7 +81,6 @@ app.get('/health', (req: Request, res: Response) => {
 // Note: More specific routes must come BEFORE general routes
 app.use('/api/auth/login', authLimiter); // Strict: 5 attempts per 15 min
 app.use('/api/uploads', uploadLimiter); // 10 uploads per hour
-app.use('/api/scraper', scraperLimiter); // 20 jobs per hour
 app.use('/api/locations', publicLimiter); // Lenient: 300 requests per 15 min
 
 // API Routes
@@ -89,21 +89,25 @@ app.use('/api/uploads', uploadRoutes);
 app.use('/api/scraper', scraperRoutes);
 app.use('/api/locations', locationRoutes);
 
-// Serve only the user-facing frontend and expose CSV separately
-const staticDir = path.join(__dirname, '..', '..', 'user-frontend');
-app.use(express.static(staticDir));
+// Serve prototype.html if it exists (dev: at repo root, prod: not deployed — safe to skip)
+const uploadsDir = path.join(__dirname, '..', 'uploads');
+const prototypeFile = path.join(__dirname, '..', '..', 'prototype.html');
 
-// make the CSV available at a known path (not part of the frontend bundle)
-app.get('/locations.csv', (req: Request, res: Response) => {
-  res.sendFile(path.join(__dirname, '..', '..', 'locations.csv'));
-});
+if (fs.existsSync(prototypeFile)) {
+  const repoRoot = path.join(__dirname, '..', '..');
+  app.use(express.static(repoRoot));
+}
 
-// expose backend/uploads via a matching URL so prototype.html can fetch it
-app.use('/backend/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+// expose backend/uploads so prototype.html can fetch store data
+app.use('/backend/uploads', express.static(uploadsDir));
 
-// Redirect root to prototype.html (now inside user-frontend)
+// Redirect root to prototype.html if it exists, otherwise serve API info
 app.get('/', (req: Request, res: Response) => {
-  res.redirect('/prototype.html');
+  if (fs.existsSync(prototypeFile)) {
+    res.redirect('/prototype.html');
+  } else {
+    res.json({ service: 'WatchDNA Admin Backend', status: 'ok', docs: '/health' });
+  }
 });
 
 // 404 handler for API routes only
@@ -113,7 +117,7 @@ app.use('/api/*', (req: Request, res: Response) => {
 
 // Error handler
 app.use((err: any, req: Request, res: Response, next: any) => {
-  console.error('Error:', err);
+  logger.error('Error:', err);
   res.status(err.status || 500).json({
     error: err.message || 'Internal server error',
     ...(config.isDevelopment && { stack: err.stack })
@@ -122,13 +126,7 @@ app.use((err: any, req: Request, res: Response, next: any) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📊 Environment: ${config.nodeEnv}`);
-  console.log(`📁 Upload directory: ${uploadDir}`);
-  console.log(`🔐 JWT expires in: ${config.auth.jwtExpiresIn}`);
-  console.log(`🌍 CORS allowed origins: ${config.cors.allowedOrigins.join(', ')}`);
-  console.log(`⚡ Rate limiting: ${config.isDevelopment ? 'DISABLED (dev mode)' : 'ENABLED'}`);
-  console.log(`🛡️  Security headers: ${config.isProduction ? 'FULL' : 'BASIC'}`);
+  logger.warn(`🚀 Server running on port ${PORT} | env=${config.nodeEnv} | origins=${config.cors.allowedOrigins.join(', ')}`);
 });
 
 export default app;

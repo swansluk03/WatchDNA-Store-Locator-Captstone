@@ -40,7 +40,7 @@ const Layout: React.FC = () => {
       </main>
 
       <footer className="footer">
-        <p>&copy; 2025 WatchDNA Store Locator. All rights reserved.</p>
+        <p>&copy; 2026 WatchDNA Store Locator. All rights reserved.</p>
       </footer>
     </div>
   );

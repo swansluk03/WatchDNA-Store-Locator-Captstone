@@ -6,10 +6,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
-  // directUrl is only needed for PostgreSQL connection pooling
-  // directUrl = env("DIRECT_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Upload {
@@ -92,7 +91,9 @@ model Location {
   // Other
   priority                Int?
   tags                    String?
+  brands                  String?
   customBrands            String?
+  isPremium               Boolean  @default(false)
 
   // Localization (French)
   nameFr                  String?
@@ -141,6 +142,9 @@ model Location {
   @@index([uploadId])
   @@index([city])
   @@index([country])
+  @@index([isPremium])
+  @@index([latitude, longitude])
+  @@index([brands])
 }
 
 model ScraperJob {
@@ -172,4 +176,10 @@ model User {
 
   @@index([username])
   @@index([email])
+}
+
+model PremiumStore {
+  handle    String   @id
+  addedAt   DateTime @default(now())
+  notes     String?
 }

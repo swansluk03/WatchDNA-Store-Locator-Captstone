@@ -1,29 +1,21 @@
 #!/usr/bin/env python3
-"""
-Test Script for Endpoint Discoverer
-====================================
-
-Quick test script to verify the endpoint discoverer is working.
-"""
+"""Quick test for endpoint discoverer."""
 
 import sys
 import os
 import json
 
-# Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from endpoint_discoverer import EndpointDiscoverer
 
 
 def test_simple_discovery():
-    """Test with a simple store locator"""
     print("=" * 80)
     print("TEST 1: Simple Store Locator Discovery")
     print("=" * 80)
     print()
     
-    # Test with a known working store locator
     test_url = "https://www.alange-soehne.com/us-en/store-locator"
     
     print(f"Testing URL: {test_url}")

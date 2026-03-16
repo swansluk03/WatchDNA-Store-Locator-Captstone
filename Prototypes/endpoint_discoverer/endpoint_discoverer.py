@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
-"""
-Store Locator Endpoint Discoverer
-==================================
-
-Automatically discovers API endpoints from store locator pages by monitoring
-network requests using Selenium. Detects different endpoint types and extracts
-configuration information.
-
-Usage:
-    python endpoint_discoverer.py --url "https://www.omegawatches.com/en-us/store-locator"
-"""
+"""Discovers API endpoints from store locator pages via Selenium network monitoring."""
 
 import argparse
 import json
 import re
 import time
-from typing import Dict, List, Optional, Any, Set
-from urllib.parse import urlparse, parse_qs, urljoin
+from typing import Dict, List, Optional, Any
+from urllib.parse import urlparse, parse_qs, urljoin, urlencode
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 import requests
@@ -30,21 +19,18 @@ import requests
 import sys
 import os
 
-# Add current directory to path FIRST (so local modules are found before parent)
 _current_file_dir = os.path.dirname(os.path.abspath(__file__))
 if _current_file_dir not in sys.path:
     sys.path.insert(0, _current_file_dir)
 
-# Add parent directory to path for importing scraping methods (needed by endpoint_verifier)
-# Insert AFTER current dir so local modules take precedence
 _parent_dir = os.path.dirname(_current_file_dir)
-if _parent_dir not in sys.path:
-    sys.path.insert(1, _parent_dir)  # Insert at position 1, not 0
+_data_scrappers_dir = os.path.join(_parent_dir, 'Data_Scrappers')
+if _data_scrappers_dir not in sys.path:
+    sys.path.insert(1, _data_scrappers_dir)
 
 from network_analyzer import NetworkAnalyzer
-from pattern_detector import PatternDetector  # This should import from local directory
+from pattern_detector import PatternDetector
 
-# Try to import endpoint verifier (optional - uses existing scraping methods)
 try:
     from endpoint_verifier import EndpointVerifier
     VERIFIER_AVAILABLE = True
@@ -54,18 +40,34 @@ except ImportError as e:
     _verifier_import_error = str(e)
 
 
+# Known viewport API paths to probe on related brand domains.
+# Ordered from most-specific to most-generic so we stop early on a hit.
+_STORE_API_PROBE_PATHS = [
+    '/app/establishments/by_viewport/light',
+    '/app/establishments/by_viewport',
+    '/api/v1/establishments/by_viewport',
+    '/api/stores/by_viewport',
+    '/api/locations/by_viewport',
+    '/api/stores/viewport',
+    '/api/v1/stores',
+    '/api/v2/stores',
+    '/api/stores',
+    '/api/locations',
+    '/api/retailers',
+    '/api/establishments',
+]
+
+# Small European viewport used for probing — cheap, ~100–400 results for most brands.
+_VIEWPORT_PROBE_PARAMS = {
+    'northEastLat': '55.0',
+    'northEastLng': '15.0',
+    'southWestLat': '45.0',
+    'southWestLng': '-5.0',
+}
+
+
 class EndpointDiscoverer:
-    """Discover API endpoints from store locator pages"""
-    
     def __init__(self, headless: bool = True, timeout: int = 30, verify_endpoints: bool = True):
-        """
-        Initialize the endpoint discoverer
-        
-        Args:
-            headless: Run browser in headless mode
-            timeout: Timeout for page loads and interactions
-            verify_endpoints: Use existing scraping methods to verify endpoints (recommended)
-        """
         self.headless = headless
         self.timeout = timeout
         self.driver = None
@@ -183,13 +185,32 @@ class EndpointDiscoverer:
             else:
                 raise Exception(f"Failed to setup Chrome driver: {e}")
         
-    def _interact_with_page(self, url: str):
+    def _interact_with_page(self, url: str) -> List[str]:
         """
-        Interact with the store locator page to trigger API calls
+        Interact with the store locator page to trigger API calls.
+        Returns list of URLs seen (including current URL after each interaction).
         
         Args:
             url: Store locator page URL
+            
+        Returns:
+            List of URLs captured from page navigation (e.g. after filter selection)
         """
+        seen_urls: List[str] = []
+        
+        def _capture_current_url():
+            """Capture current URL if it has query params and differs from original"""
+            try:
+                current = self.driver.current_url
+                if current and current not in seen_urls:
+                    parsed = urlparse(current)
+                    if parsed.query and self._is_relevant_request(current, 'text/html'):
+                        seen_urls.append(current)
+                        return current
+            except Exception:
+                pass
+            return None
+        
         print(f"  🌐 Loading page: {url}")
         try:
             self.driver.set_page_load_timeout(self.timeout)
@@ -234,6 +255,10 @@ class EndpointDiscoverer:
                 if interaction():
                     successful_interactions += 1
                     print(f"  ✓ {name} triggered")
+                    time.sleep(2)
+                    captured = _capture_current_url()
+                    if captured:
+                        print(f"  ✓ Captured URL after {name}: {captured[:80]}...")
                 else:
                     print(f"  ⊘ {name} not available")
                 time.sleep(3)  # Increased wait time for requests to complete
@@ -244,9 +269,14 @@ class EndpointDiscoverer:
         if successful_interactions == 0:
             print(f"  ⚠️  No interactions triggered - page may load data automatically")
         
+        # Final capture of current URL
+        _capture_current_url()
+        
         # Final wait to capture any delayed requests
         print(f"  ⏳ Final wait for delayed requests...")
         time.sleep(3)
+        
+        return seen_urls
     
     def _try_search(self):
         """Try to trigger a search"""
@@ -359,9 +389,9 @@ class EndpointDiscoverer:
         return False
     
     def _try_filter_dropdown(self):
-        """Try to change filters/dropdowns"""
+        """Try to change filters/dropdowns (native select and custom UI)"""
         try:
-            # Look for country/region dropdowns
+            # 1. Native HTML select elements
             dropdown_selectors = [
                 "select[name*='country' i]",
                 "select[name*='region' i]",
@@ -381,22 +411,45 @@ class EndpointDiscoverer:
                                 from selenium.webdriver.support.ui import Select
                                 select = Select(dropdown)
                                 if len(select.options) > 1:
-                                    # Try selecting a different option
                                     current_index = 0
                                     for i, option in enumerate(select.options):
                                         if option.is_selected():
                                             current_index = i
                                             break
-                                    
-                                    # Select next option
                                     next_index = (current_index + 1) % len(select.options)
                                     select.select_by_index(next_index)
                                     return True
-                        except:
+                        except Exception:
                             continue
-                except:
+                except Exception:
                     continue
-        except Exception as e:
+            
+            # 2. Custom UI: clickable elements with country/region text
+            country_phrases = [
+                'united states', 'usa', 'us ', ' u.s.', 'united kingdom', 'uk ',
+                'select country', 'choose country', 'all countries'
+            ]
+            clickable_selectors = [
+                "button", "a", "[role='option']", "[role='menuitem']",
+                "[data-value]", "[data-country]", "li", ".dropdown-item",
+                ".country-option", "[class*='country']", "[class*='region']"
+            ]
+            for selector in clickable_selectors:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for el in elements:
+                        try:
+                            if not el.is_displayed() or not el.is_enabled():
+                                continue
+                            text = (el.text or el.get_attribute('aria-label') or '').lower()
+                            if any(phrase in text for phrase in country_phrases):
+                                el.click()
+                                return True
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+        except Exception:
             pass
         
         return False
@@ -662,6 +715,161 @@ class EndpointDiscoverer:
         
         return None
     
+    def _try_proactive_url_variations(self, store_locator_url: str) -> List[Dict]:
+        """
+        Try common query param combinations on store locator URL.
+        Catches cases like Bulgari where data requires ?country-region=US&per=50&offset=0.
+        
+        Returns:
+            List of request dicts for URLs that return store data
+        """
+        from urllib.parse import urlparse, urlunparse
+        
+        results = []
+        parsed = urlparse(store_locator_url)
+        base_path = parsed.path.rstrip('/') or '/'
+        base_scheme = parsed.scheme or 'https'
+        base_netloc = parsed.netloc
+        
+        # Common param combinations for store locators
+        param_sets = [
+            {'country-region': 'US', 'l': 'en_US', 'per': '50', 'offset': '0'},
+            {'country-region': 'US', 'per': '50', 'offset': '0'},
+            {'country': 'US', 'per': '50', 'offset': '0'},
+            {'country': 'US', 'per_page': '50', 'offset': '0'},
+            {'region': 'US', 'per': '50', 'offset': '0'},
+            {'per': '50', 'offset': '0'},
+        ]
+        
+        for params in param_sets:
+            query = urlencode(params)
+            url = f"{base_scheme}://{base_netloc}{base_path}?{query}"
+            try:
+                response = requests.get(url, timeout=10, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'text/html, application/json, */*'
+                })
+                if response.status_code != 200:
+                    continue
+                content_type = response.headers.get('content-type', '').lower()
+                html = response.text if 'html' in content_type else ''
+                try:
+                    data = response.json() if 'json' in content_type else None
+                except Exception:
+                    data = None
+                
+                # Check for store data in HTML or JSON
+                has_store_data = False
+                if html:
+                    store_patterns = [
+                        r'"stores?"\s*:\s*\[', r'"locations?"\s*:\s*\[',
+                        r'data-lat.*data-lng', r'latitude.*longitude',
+                    ]
+                    has_store_data = any(re.search(p, html, re.IGNORECASE) for p in store_patterns)
+                if data and not has_store_data:
+                    has_store_data = self._has_store_data(data)
+                
+                if has_store_data:
+                    results.append({
+                        'url': url,
+                        'method': 'GET',
+                        'status': 200,
+                        'mimeType': content_type or 'text/html',
+                        'headers': {}
+                    })
+                    print(f"  ✓ Proactive variation has store data: {url[:80]}...")
+                    break  # One working variant is enough
+            except Exception:
+                continue
+        
+        return results
+    
+    def _probe_related_api_domains(self, store_locator_url: str) -> List[Dict]:
+        """
+        Find related brand subdomains mentioned in the rendered page and probe them
+        with known store-API path patterns.
+
+        This handles cases like Rolex where the store locator lives on
+        www.rolex.com but the actual API is on retailers.rolex.com.
+        """
+        if not self.driver:
+            return []
+
+        try:
+            source = self.driver.page_source
+        except Exception:
+            return []
+
+        parsed_base = urlparse(store_locator_url)
+        base_parts = parsed_base.netloc.split('.')
+        if len(base_parts) < 2:
+            return []
+        brand_tld = '.'.join(base_parts[-2:])   # e.g. "rolex.com"
+
+        # Extract all quoted https URLs from the rendered source
+        raw_urls = re.findall(r'"(https?://[a-zA-Z0-9.-]+)"', source)
+        related_domains: set = set()
+        for raw in raw_urls:
+            p = urlparse(raw)
+            if (p.netloc
+                    and p.netloc != parsed_base.netloc
+                    and brand_tld in p.netloc):
+                related_domains.add(f"{p.scheme}://{p.netloc}")
+
+        # Skip domains that are clearly CDN/media/tracking, not API servers
+        _NON_API_SUBDOMAIN_PREFIXES = {
+            'static', 'media', 'assets', 'asset', 'cdn', 'img', 'images',
+            'fonts', 'content', 'files', 'metrics', 'analytics', 'tracking',
+            'mail', 'email', 'smtp',
+        }
+        related_domains = {
+            d for d in related_domains
+            if urlparse(d).hostname.split('.')[0].lower() not in _NON_API_SUBDOMAIN_PREFIXES
+        }
+
+        if not related_domains:
+            return []
+
+        print(f"  🔎 Probing {len(related_domains)} related brand domain(s): {', '.join(related_domains)}")
+
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        results: List[Dict] = []
+
+        for domain in related_domains:
+            for path in _STORE_API_PROBE_PATHS:
+                probe_url = f"{domain}{path}"
+                try:
+                    resp = requests.get(
+                        probe_url,
+                        params=_VIEWPORT_PROBE_PARAMS,
+                        headers=headers,
+                        timeout=8,
+                    )
+                    if resp.status_code != 200:
+                        continue
+                    ct = resp.headers.get('content-type', '').lower()
+                    if 'json' not in ct:
+                        continue
+                    data = resp.json()
+                    # Accept a non-empty list or a dict that contains store data
+                    is_store_list = isinstance(data, list) and len(data) > 0
+                    is_store_dict = isinstance(data, dict) and self._has_store_data(data)
+                    if is_store_list or is_store_dict:
+                        actual_url = resp.url   # includes the params as sent
+                        results.append({
+                            'url': actual_url,
+                            'method': 'GET',
+                            'status': 200,
+                            'mimeType': ct,
+                            'headers': {},
+                        })
+                        print(f"  ✓ Found store API on related domain: {actual_url[:80]}")
+                        break   # one hit per domain is enough
+                except Exception:
+                    continue
+
+        return results
+
     def _has_store_data(self, data: Any, depth: int = 0) -> bool:
         """
         Check if data structure contains store location data
@@ -728,12 +936,39 @@ class EndpointDiscoverer:
             print(f"{'='*80}\n")
             
             # Interact with page to trigger API calls
-            self._interact_with_page(store_locator_url)
+            navigation_urls = self._interact_with_page(store_locator_url)
             
             # Capture network requests
             print("\n📡 Capturing network requests...")
             network_requests = self._capture_network_requests()
             
+            # Add URLs captured from page navigation (e.g. after filter selection)
+            for nav_url in navigation_urls:
+                if not any(r.get('url') == nav_url for r in network_requests):
+                    network_requests.append({
+                        'url': nav_url,
+                        'method': 'GET',
+                        'status': 200,
+                        'mimeType': 'text/html',
+                        'headers': {}
+                    })
+                    print(f"  ✓ Added URL from page navigation: {nav_url[:80]}...")
+            
+            # Proactive URL variation testing (e.g. Bulgari: ?country-region=US&per=50&offset=0)
+            print("\n🔬 Trying proactive URL variations...")
+            proactive_requests = self._try_proactive_url_variations(store_locator_url)
+            for req in proactive_requests:
+                if not any(r.get('url') == req['url'] for r in network_requests):
+                    network_requests.append(req)
+
+            # Probe related brand subdomains found in the rendered page source.
+            # Handles cases like Rolex (www.rolex.com page, retailers.rolex.com API).
+            print("\n🔎 Probing related brand domains from page config...")
+            related_domain_requests = self._probe_related_api_domains(store_locator_url)
+            for req in related_domain_requests:
+                if not any(r.get('url') == req['url'] for r in network_requests):
+                    network_requests.append(req)
+
             if len(network_requests) == 0:
                 print(f"  ⚠️  No network requests captured - trying alternative method...")
                 # Try capturing from page source or checking if data is embedded

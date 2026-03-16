@@ -1,11 +1,12 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { scraperService } from '../services/scraper.service';
 import uploadService from '../services/upload.service';
+import { storeService } from '../services/store.service';
 import fs from 'fs';
 import path from 'path';
-
-const prisma = new PrismaClient();
+import Papa from 'papaparse';
+import { BRAND_CONFIGS_PATH, ENDPOINT_DISCOVERER_PATH, PYTHON_CMD } from '../utils/paths';
+import prisma from '../lib/prisma';
 
 // Helper functions for brand config similarity detection
 function calculateSimilarity(str1: string, str2: string): number {
@@ -118,8 +119,7 @@ export const scraperController = {
   // GET /api/scraper/brands - List available brand configs
   async getBrands(req: Request, res: Response) {
     try {
-      const configPath = path.join(__dirname, '..', '..', '..', 'Prototypes', 'Data_Scrappers', 'brand_configs.json');
-      const configData = fs.readFileSync(configPath, 'utf-8');
+      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
       const configs = JSON.parse(configData);
 
       // Filter out _README and disabled brands
@@ -197,8 +197,7 @@ export const scraperController = {
       }
 
       // Load brand config
-      const configPath = path.join(__dirname, '..', '..', '..', 'Prototypes', 'Data_Scrappers', 'brand_configs.json');
-      const configData = fs.readFileSync(configPath, 'utf-8');
+      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
       const configs = JSON.parse(configData);
       const brandConfig = configs[brandName];
 
@@ -378,20 +377,12 @@ export const scraperController = {
         prisma.scraperJob.count({ where: { status: 'failed' } })
       ]);
       
-      // Count unique records from master CSV (already deduplicated)
+      // Count unique store records directly from the Location table
       let totalRecords = 0;
       try {
-        const masterCsvPath = await uploadService.getMasterCSVPath();
-        if (masterCsvPath && fs.existsSync(masterCsvPath)) {
-          totalRecords = await scraperService.countCsvRows(masterCsvPath);
-        }
+        totalRecords = await prisma.location.count();
       } catch (error: any) {
-        console.error('Error counting master CSV rows:', error);
-        // Fallback to sum of individual job records if master CSV can't be read
-        const totalRecordsResult = await prisma.scraperJob.aggregate({
-          _sum: { recordsScraped: true }
-        });
-        totalRecords = totalRecordsResult._sum.recordsScraped || 0;
+        console.error('Error counting location records:', error);
       }
 
       // Get recent jobs
@@ -442,6 +433,195 @@ export const scraperController = {
     }
   },
 
+  // GET /api/scraper/jobs/:id/dropped-records - Get dropped/excluded records for a completed job
+  async getJobDroppedRecords(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+
+      const job = await prisma.scraperJob.findUnique({
+        where: { id },
+        include: { upload: true }
+      });
+
+      if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+
+      if (job.status !== 'completed') {
+        return res.status(400).json({ error: 'Only completed jobs have dropped records' });
+      }
+
+      if (!job.uploadId || !job.upload) {
+        return res.status(404).json({ error: 'No upload linked to this job' });
+      }
+
+      // Dropped file is alongside the CSV: scraped/brand_timestamp.csv -> scraped/brand_timestamp_dropped.json
+      const droppedFilename = job.upload.filename.replace(/\.csv$/i, '_dropped.json');
+      const droppedPath = await uploadService.getFilePath(droppedFilename);
+
+      if (!droppedPath || !fs.existsSync(droppedPath)) {
+        return res.json({ jobId: job.id, excludedStores: [], count: 0 });
+      }
+
+      const fileContent = fs.readFileSync(droppedPath, 'utf-8');
+      const data = JSON.parse(fileContent);
+
+      res.json({
+        jobId: job.id,
+        brandName: job.brandName,
+        excludedStores: data.excluded_stores || [],
+        count: data.count ?? (data.excluded_stores?.length ?? 0)
+      });
+    } catch (error: any) {
+      console.error('Error fetching dropped records:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // GET /api/scraper/jobs/:id/records - Get records for a completed job.
+  // Prefers a batch DB query (Location WHERE uploadId) over reading the CSV file.
+  async getJobRecords(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+
+      const job = await prisma.scraperJob.findUnique({
+        where: { id },
+        include: { upload: true }
+      });
+
+      if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+
+      if (job.status !== 'completed') {
+        return res.status(400).json({ error: 'Only completed jobs have viewable records' });
+      }
+
+      if (!job.uploadId || !job.upload) {
+        return res.status(404).json({ error: 'No upload linked to this job' });
+      }
+
+      // Try DB first — fast indexed lookup by uploadId
+      const dbRows = await storeService.getLocationsByUploadId(job.uploadId);
+      if (dbRows.length > 0) {
+        return res.json({
+          jobId: job.id,
+          brandName: job.brandName,
+          source: 'db',
+          columns: Object.keys(dbRows[0]),
+          records: dbRows
+        });
+      }
+
+      // Fallback: read from job CSV (older jobs or pre-sync state)
+      const filePath = await uploadService.getFilePath(job.upload.filename);
+      if (!filePath || !fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'Job CSV file not found' });
+      }
+
+      const fileContent = fs.readFileSync(filePath, 'utf-8');
+      const parseResult = Papa.parse(fileContent, {
+        header: true,
+        skipEmptyLines: true,
+        transformHeader: (h: string) => h.trim()
+      });
+
+      const rows = parseResult.data as Record<string, string>[];
+
+      res.json({
+        jobId: job.id,
+        brandName: job.brandName,
+        source: 'csv',
+        columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+        records: rows
+      });
+    } catch (error: any) {
+      console.error('Error fetching job records:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // PATCH /api/scraper/jobs/:id/records - Save job records (to job CSV) and append complete records to master
+  async saveJobRecords(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { records } = req.body as { records: Record<string, string>[] };
+
+      if (!Array.isArray(records) || records.length === 0) {
+        return res.status(400).json({ error: 'records array with at least one record is required' });
+      }
+
+      const result = await scraperService.saveJobRecords(id, records);
+
+      res.json({
+        message: 'Job records saved',
+        savedToJob: result.savedToJob,
+        skippedIncomplete: result.skippedIncomplete,
+        dbUpserted: result.dbUpserted,
+        validationErrors: result.validationErrors,
+      });
+    } catch (error: any) {
+      console.error('Error saving job records:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // GET /api/scraper/master-csv/records - Get master store records (optionally filtered by brand)
+  async getMasterCsvRecords(req: Request, res: Response) {
+    try {
+      const brand = (req.query.brand as string) || undefined;
+      const result = await storeService.getMasterRecords(brand);
+      res.json({
+        columns: result.columns,
+        records: result.records,
+        totalCount: result.totalCount,
+      });
+    } catch (error: any) {
+      console.error('Error fetching master CSV records:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // DELETE /api/scraper/master-csv/records - Remove a single store from master by Handle
+  async deleteMasterRecord(req: Request, res: Response) {
+    try {
+      const { handle } = req.body as { handle?: string };
+      if (!handle || typeof handle !== 'string') {
+        return res.status(400).json({ error: 'handle is required' });
+      }
+      const { removed } = await storeService.deleteMasterRecord(handle);
+      res.json({ removed });
+    } catch (error: any) {
+      console.error('Error deleting master record:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // PATCH /api/scraper/master-csv - Update Location rows in the DB directly.
+  async updateMasterCsvRows(req: Request, res: Response) {
+    try {
+      const { rows: updates } = req.body as { rows: Record<string, string>[] };
+
+      if (!Array.isArray(updates) || updates.length === 0) {
+        return res.status(400).json({ error: 'rows array with at least one record is required' });
+      }
+
+      const { updatedCount, totalRequested, dbUpserted, dbSkipped } =
+        await storeService.updateMasterRecords(updates);
+
+      res.json({
+        message: 'Master records updated successfully',
+        updatedCount,
+        totalRequested,
+        dbUpserted,
+        dbSkipped,
+      });
+    } catch (error: any) {
+      console.error('Error updating master records:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
   // POST /api/scraper/discover - Discover endpoints from store locator page
   async discoverEndpoints(req: Request, res: Response) {
     try {
@@ -460,16 +640,7 @@ export const scraperController = {
 
       // Call the endpoint discoverer Python script
       const { spawn } = require('child_process');
-      const discovererPath = path.join(
-        __dirname,
-        '..',
-        '..',
-        '..',
-        'Prototypes',
-        'Data_Scrappers',
-        'endpoint_discoverer',
-        'endpoint_discoverer.py'
-      );
+      const discovererPath = path.join(ENDPOINT_DISCOVERER_PATH, 'endpoint_discoverer.py');
 
       return new Promise((resolve, reject) => {
         let responseSent = false;
@@ -487,7 +658,7 @@ export const scraperController = {
           }
         };
 
-        const pythonProcess = spawn('python3', [
+        const pythonProcess = spawn(PYTHON_CMD, [
           discovererPath,
           '--url',
           url,
@@ -583,15 +754,16 @@ export const scraperController = {
           }
         });
 
-        // Set timeout (2 minutes for discovery)
+        // Set timeout (5 minutes for discovery - some store locators load slowly)
+        const DISCOVERY_TIMEOUT_MS = 5 * 60 * 1000;
         const timeoutId = setTimeout(() => {
           if (!pythonProcess.killed && !responseSent) {
             pythonProcess.kill();
             sendResponse(500, {
-              error: 'Endpoint discovery timed out after 2 minutes'
+              error: 'Endpoint discovery timed out after 5 minutes'
             });
           }
-        }, 120000);
+        }, DISCOVERY_TIMEOUT_MS);
 
         pythonProcess.on('error', (error: Error) => {
           // Clear timeout when process fails to start
@@ -618,16 +790,7 @@ export const scraperController = {
     try {
       const { id } = req.params;
 
-      const configPath = path.join(
-        __dirname,
-        '..',
-        '..',
-        '..',
-        'Prototypes',
-        'Data_Scrappers',
-        'brand_configs.json'
-      );
-      const configData = fs.readFileSync(configPath, 'utf-8');
+      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
       const configs = JSON.parse(configData);
 
       if (!configs[id]) {
@@ -651,16 +814,7 @@ export const scraperController = {
       }
 
       // Load existing brand configs
-      const configPath = path.join(
-        __dirname,
-        '..',
-        '..',
-        '..',
-        'Prototypes',
-        'Data_Scrappers',
-        'brand_configs.json'
-      );
-      const configData = fs.readFileSync(configPath, 'utf-8');
+      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
       const configs = JSON.parse(configData);
 
       // Check for exact match first
@@ -746,7 +900,7 @@ export const scraperController = {
 
       // Save to brand_configs.json
       configs[brandId] = brandConfig;
-      fs.writeFileSync(configPath, JSON.stringify(configs, null, 2), 'utf-8');
+      fs.writeFileSync(BRAND_CONFIGS_PATH, JSON.stringify(configs, null, 2), 'utf-8');
 
       res.json({
         message: 'Brand configuration saved successfully',

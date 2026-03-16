@@ -1,9 +1,10 @@
-import { PrismaClient } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 import Papa from 'papaparse';
-
-const prisma = new PrismaClient();
+import { Prisma } from '@prisma/client';
+import prisma from '../lib/prisma';
+import { logger } from '../utils/logger';
+import { parseRowToLocationData } from '../utils/csv-to-location';
 
 export interface LocationFilters {
   brand?: string;
@@ -34,7 +35,8 @@ export interface ImportResult {
 
 class LocationService {
   /**
-   * Import locations from CSV file to database
+   * Import locations from CSV file to database.
+   * Uses batch upsert and re-applies premium flags after import.
    */
   async importFromCSV(csvFilePath: string): Promise<ImportResult> {
     const result: ImportResult = {
@@ -47,7 +49,6 @@ class LocationService {
     };
 
     try {
-      // Read and parse CSV file
       const fileContent = fs.readFileSync(csvFilePath, 'utf-8');
       const parseResult = Papa.parse(fileContent, {
         header: true,
@@ -56,108 +57,25 @@ class LocationService {
       });
 
       const rows = parseResult.data as any[];
+      logger.warn(`[LocationService] Importing ${rows.length} rows from CSV...`);
 
-      console.log(`[LocationService] Importing ${rows.length} rows from CSV...`);
+      const BATCH_SIZE = 500;
+      const upsertedHandles: string[] = [];
 
       for (const row of rows) {
+        const locationData = parseRowToLocationData(row);
+        if (!locationData) {
+          result.skippedCount++;
+          if (row.Name || row.Handle) {
+            result.errors.push(`Invalid or missing required fields for: ${row.Name || row.Handle}`);
+          }
+          continue;
+        }
+
         try {
-          // Validate required fields
-          if (!row.Handle || !row.Name) {
-            result.skippedCount++;
-            continue;
-          }
-
-          // Parse latitude and longitude
-          const latitude = parseFloat(row.Latitude);
-          const longitude = parseFloat(row.Longitude);
-
-          if (isNaN(latitude) || isNaN(longitude)) {
-            result.skippedCount++;
-            result.errors.push(`Invalid coordinates for ${row.Name}: lat=${row.Latitude}, lng=${row.Longitude}`);
-            continue;
-          }
-
-          // Prepare location data
-          const locationData = {
-            handle: row.Handle.trim(),
-            name: row.Name.trim(),
-            status: row.Status?.toLowerCase() === 'active' || row.Status?.toLowerCase() === 'true' || !row.Status,
-            addressLine1: row['Address Line 1'] || '',
-            addressLine2: row['Address Line 2'] || null,
-            postalCode: row['Postal/ZIP Code'] || null,
-            city: row.City || '',
-            stateProvinceRegion: row['State/Province/Region'] || null,
-            country: row.Country || '',
-            phone: row.Phone || null,
-            email: row.Email || null,
-            website: row.Website || null,
-            imageUrl: row['Image URL'] || null,
-            latitude,
-            longitude,
-
-            // Hours
-            monday: row.Monday || null,
-            tuesday: row.Tuesday || null,
-            wednesday: row.Wednesday || null,
-            thursday: row.Thursday || null,
-            friday: row.Friday || null,
-            saturday: row.Saturday || null,
-            sunday: row.Sunday || null,
-
-            // SEO
-            pageTitle: row['Page Title'] || null,
-            pageDescription: row['Page Description'] || null,
-            metaTitle: row['Meta Title'] || null,
-            metaDescription: row['Meta Description'] || null,
-
-            // Other
-            priority: row.Priority ? parseInt(row.Priority) : null,
-            tags: row.Tags || null,
-            customBrands: row['Custom Brands'] || null,
-
-            // Localization (French)
-            nameFr: row['Name (French)'] || null,
-            pageTitleFr: row['Page Title (French)'] || null,
-            pageDescriptionFr: row['Page Description (French)'] || null,
-            customBrandsFr: row['Custom Brands (French)'] || null,
-
-            // Localization (Chinese)
-            nameZhCn: row['Name (Chinese Simplified)'] || null,
-            pageTitleZhCn: row['Page Title (Chinese Simplified)'] || null,
-            pageDescriptionZhCn: row['Page Description (Chinese Simplified)'] || null,
-            customBrandsZhCn: row['Custom Brands (Chinese Simplified)'] || null,
-
-            // Localization (Spanish)
-            nameEs: row['Name (Spanish)'] || null,
-            pageTitleEs: row['Page Title (Spanish)'] || null,
-            pageDescriptionEs: row['Page Description (Spanish)'] || null,
-            customBrandsEs: row['Custom Brands (Spanish)'] || null,
-
-            // Custom Buttons
-            customButton1Title: row['Custom Button 1 Title'] || null,
-            customButton1Url: row['Custom Button 1 URL'] || null,
-            customButton2Title: row['Custom Button 2 Title'] || null,
-            customButton2Url: row['Custom Button 2 URL'] || null,
-
-            // Custom Buttons - Localized
-            customButton1TitleFr: row['Custom Button 1 Title (French)'] || null,
-            customButton1UrlFr: row['Custom Button 1 URL (French)'] || null,
-            customButton1TitleZhCn: row['Custom Button 1 Title (Chinese Simplified)'] || null,
-            customButton1UrlZhCn: row['Custom Button 1 URL (Chinese Simplified)'] || null,
-            customButton1TitleEs: row['Custom Button 1 Title (Spanish)'] || null,
-            customButton1UrlEs: row['Custom Button 1 URL (Spanish)'] || null,
-
-            customButton2TitleFr: row['Custom Button 2 Title (French)'] || null,
-            customButton2UrlFr: row['Custom Button 2 URL (French)'] || null,
-            customButton2TitleZhCn: row['Custom Button 2 Title (Chinese Simplified)'] || null,
-            customButton2UrlZhCn: row['Custom Button 2 URL (Chinese Simplified)'] || null,
-            customButton2TitleEs: row['Custom Button 2 Title (Spanish)'] || null,
-            customButton2UrlEs: row['Custom Button 2 URL (Spanish)'] || null,
-          };
-
-          // Upsert location (update if exists, create if new)
-          const existingLocation = await prisma.location.findUnique({
-            where: { handle: locationData.handle }
+          const existing = await prisma.location.findUnique({
+            where: { handle: locationData.handle },
+            select: { id: true }
           });
 
           await prisma.location.upsert({
@@ -166,33 +84,48 @@ class LocationService {
             create: locationData
           });
 
-          if (existingLocation) {
+          upsertedHandles.push(locationData.handle);
+
+          if (existing) {
             result.updatedCount++;
           } else {
             result.newCount++;
           }
-
         } catch (error: any) {
           result.errorCount++;
           result.errors.push(`Error importing ${row.Name || 'unknown'}: ${error.message}`);
-          console.error(`[LocationService] Error importing row:`, error);
+          logger.error(`[LocationService] Error importing row:`, error);
         }
       }
 
+      // Re-apply premium flags for all upserted handles in one query
+      if (upsertedHandles.length > 0) {
+        await prisma.$executeRaw`
+          UPDATE "Location" l
+          SET "isPremium" = true
+          FROM "PremiumStore" ps
+          WHERE l.handle = ps.handle
+            AND l.handle = ANY(${upsertedHandles}::text[])
+        `;
+      }
+
       result.success = true;
-      console.log(`[LocationService] Import complete: ${result.newCount} new, ${result.updatedCount} updated, ${result.skippedCount} skipped, ${result.errorCount} errors`);
+      logger.warn(
+        `[LocationService] Import complete: ${result.newCount} new, ${result.updatedCount} updated, ` +
+        `${result.skippedCount} skipped, ${result.errorCount} errors`
+      );
 
     } catch (error: any) {
       result.success = false;
       result.errors.push(`Failed to read/parse CSV: ${error.message}`);
-      console.error('[LocationService] Import failed:', error);
+      logger.error('[LocationService] Import failed:', error);
     }
 
     return result;
   }
 
   /**
-   * Get all locations with optional filtering and pagination
+   * Get all locations with optional filtering and pagination.
    */
   async findAll(filters: LocationFilters = {}) {
     const {
@@ -206,35 +139,26 @@ class LocationService {
       offset = 0
     } = filters;
 
-    const where: any = {};
+    const where: Prisma.LocationWhereInput = {};
 
-    // Filter by brand (partial match in customBrands)
     if (brand) {
-      where.customBrands = {
-        contains: brand
-      };
+      where.brands = { contains: brand, mode: 'insensitive' };
     }
 
-    // Filter by country
     if (country) {
       where.country = country;
     }
 
-    // Filter by city
     if (city) {
       where.city = city;
     }
 
-    // Filter by status
     if (status !== undefined) {
       where.status = status;
     }
 
-    // Search by name
     if (search) {
-      where.name = {
-        contains: search
-      };
+      where.name = { contains: search, mode: 'insensitive' };
     }
 
     const [locations, total] = await Promise.all([
@@ -257,33 +181,21 @@ class LocationService {
   }
 
   /**
-   * Find locations near a specific coordinate within a radius
+   * Find locations near a specific coordinate within a radius.
    */
   async findNearby(params: NearbyParams) {
     const { latitude, longitude, radius, filters = {} } = params;
 
-    // Get all locations with filters applied
     const { data: allLocations } = await this.findAll({
       ...filters,
-      limit: 10000 // Get all for distance calculation
+      limit: 10000
     });
 
-    // Calculate distance for each location
-    const locationsWithDistance = allLocations.map(location => {
-      const distance = this.calculateDistance(
-        latitude,
-        longitude,
-        location.latitude,
-        location.longitude
-      );
+    const locationsWithDistance = allLocations.map(location => ({
+      ...location,
+      distance: this.calculateDistance(latitude, longitude, location.latitude, location.longitude)
+    }));
 
-      return {
-        ...location,
-        distance
-      };
-    });
-
-    // Filter by radius and sort by distance
     const nearbyLocations = locationsWithDistance
       .filter(loc => loc.distance <= radius)
       .sort((a, b) => a.distance - b.distance);
@@ -298,74 +210,85 @@ class LocationService {
   }
 
   /**
-   * Find a single location by ID
+   * Find a single location by ID.
    */
   async findById(id: string) {
-    return await prisma.location.findUnique({
-      where: { id }
-    });
+    return prisma.location.findUnique({ where: { id } });
   }
 
   /**
-   * Search locations by name or address
+   * Search locations by name or address (case-insensitive on PostgreSQL).
    */
   async search(query: string, limit: number = 50) {
     const locations = await prisma.location.findMany({
       where: {
         OR: [
-          { name: { contains: query } },
-          { addressLine1: { contains: query } },
-          { city: { contains: query } }
+          { name: { contains: query, mode: 'insensitive' } },
+          { addressLine1: { contains: query, mode: 'insensitive' } },
+          { city: { contains: query, mode: 'insensitive' } }
         ]
       },
       take: limit,
       orderBy: { name: 'asc' }
     });
 
-    return {
-      data: locations,
-      total: locations.length,
-      query
-    };
+    return { data: locations, total: locations.length, query };
   }
 
   /**
-   * Get unique list of brands from all locations
+   * Get unique list of brands from all locations (both brands and customBrands columns).
    */
   async getBrands() {
     const locations = await prisma.location.findMany({
-      select: { customBrands: true },
+      select: { brands: true, customBrands: true },
       where: {
-        customBrands: { not: null }
+        OR: [
+          { brands: { not: null } },
+          { customBrands: { not: null } }
+        ]
       }
     });
 
     const brandsSet = new Set<string>();
-    locations.forEach(loc => {
-      if (loc.customBrands) {
-        const brands = loc.customBrands.split(',').map(b => b.trim());
-        brands.forEach(brand => brandsSet.add(brand));
+
+    for (const loc of locations) {
+      // Plain-text comma-separated brands column
+      if (loc.brands) {
+        for (const b of loc.brands.split(',')) {
+          const trimmed = b.trim();
+          if (trimmed) brandsSet.add(trimmed);
+        }
       }
-    });
+      // HTML anchor-formatted customBrands column
+      if (loc.customBrands) {
+        const matches = loc.customBrands.match(/>([^<]+)<\/A>/gi);
+        if (matches) {
+          for (const m of matches) {
+            const brand = m.replace(/^>|<\/A>$/gi, '').trim();
+            if (brand) brandsSet.add(brand);
+          }
+        } else {
+          // Fallback: plain comma-separated
+          for (const b of loc.customBrands.split(',')) {
+            const trimmed = b.trim();
+            if (trimmed) brandsSet.add(trimmed);
+          }
+        }
+      }
+    }
 
     return Array.from(brandsSet).sort();
   }
 
   /**
-   * Get statistics about locations
+   * Get statistics about locations.
    */
   async getStats() {
     const [total, activeCount, countries, cities, brands] = await Promise.all([
       prisma.location.count(),
       prisma.location.count({ where: { status: true } }),
-      prisma.location.groupBy({
-        by: ['country'],
-        _count: true
-      }),
-      prisma.location.groupBy({
-        by: ['city'],
-        _count: true
-      }),
+      prisma.location.groupBy({ by: ['country'], _count: true }),
+      prisma.location.groupBy({ by: ['city'], _count: true }),
       this.getBrands()
     ]);
 
@@ -387,26 +310,16 @@ class LocationService {
     };
   }
 
-  /**
-   * Calculate distance between two coordinates using Haversine formula
-   * Returns distance in miles
-   */
   private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 3959; // Earth's radius in miles
+    const R = 3959; // miles
     const dLat = this.deg2rad(lat2 - lat1);
     const dLon = this.deg2rad(lon2 - lon1);
-
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(this.deg2rad(lat1)) *
-      Math.cos(this.deg2rad(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-
+      Math.cos(this.deg2rad(lat1)) * Math.cos(this.deg2rad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distance = R * c;
-
-    return Math.round(distance * 10) / 10; // Round to 1 decimal place
+    return Math.round(R * c * 10) / 10;
   }
 
   private deg2rad(deg: number): number {
