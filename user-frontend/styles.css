@@ -13,9 +13,9 @@
       color: black;
     }
     
-    #footer a {
+    /* #footer a {
       color: black;
-    }
+    } */
     
     body {
       font-family: "Cormorant", serif;
@@ -244,18 +244,20 @@
       display: none !important;
     }
 
-    #footer {
+    /* Ignore the messy comments. Only commented out, not deleted as the Store Directory page on WatchDNA may be updated or removed. */
+    /* Until we know for sure what the plan is, the code will not be deleted. */
+    /*#footer {*/
       /* This fixes the footer div to the bottom of the sidebar */
-      flex: none;
+      /* flex: none;
       margin-top: auto;
-      margin-left: -10px;
+      margin-left: -10px; */
       /* padding: top right bottom left */
-      padding: 10px 10px 5px 10px;
+      /* padding: 10px 10px 5px 10px;
       border-top: 1px solid var(--border);
       box-sizing: border-box;
       width: calc(100% + 36px);
-      background: var(--card);
-    }
+      background: var(--card); */
+    /*}*/
 
     #storeCheckboxes input[type="checkbox"] {
       accent-color: var(--accent);
