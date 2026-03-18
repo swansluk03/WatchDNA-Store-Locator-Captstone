@@ -52,30 +52,29 @@
       ☰ Filter
     </button>
     <div id="filtersPanel" class="filters-panel" hidden>
+      <label for="storeFilter"><strong>Filter by store:</strong></label>
+      <input id="storeFilter" type="search" placeholder="Search By Store Name" />
+      <div id="storeCheckboxes">
+        <!-- Store name checkboxes (hidden until user searches) -->
+      </div>
       <label for="brandCheckboxes"><strong>Filter by brand:</strong></label>
-      <div id="brandCheckboxes" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px;">
+      <div id="brandCheckboxes">
         <!-- Brand checkboxes inserted here -->
       </div>
-      <label for="typeCheckboxes" style="margin-left:12px"><strong>Type:</strong></label>
-      <div id="typeCheckboxes" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px;">
-        <label style="display:inline-flex; align-items:center; gap:6px; margin-right:6px;">
+      <label for="typeCheckboxes"><strong>Filter By Type:</strong></label>
+      <div id="typeCheckboxes">
+        <label>
           <input type="checkbox" value="watch-brands" />
-          <span style="user-select:none;">Watch Brands</span>
+          <span>Watch Brands</span>
         </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; margin-right:6px;">
+        <label>
           <input type="checkbox" value="services-center" />
-          <span style="user-select:none;">Services Center</span>
+          <span>Services Center</span>
         </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; margin-right:6px;">
+        <label>
           <input type="checkbox" value="accessory-brands" />
-          <span style="user-select:none;">Accessory brands</span>
+          <span>Accessory brands</span>
         </label>
-      </div>
-      <label for="storeFilter" style="margin-left:12px"><strong>Filter by store:</strong></label>
-      <input id="storeFilter" type="search" placeholder="Search By Store Name" style="padding:8px; min-width:260px;" />
-      <div id="storeCheckboxes"
-        style="display:none; margin-top:10px; max-height:200px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px;">
-        <!-- Store name checkboxes (hidden until user searches) -->
       </div>
     </div>
 
@@ -818,7 +817,7 @@
       try {
         const storeCheckboxesDiv = document.getElementById('storeCheckboxes');
         if (storeCheckboxesDiv) {
-          storeCheckboxesDiv.style.display = storeInput && storeInput.trim() ? '' : 'none';
+          storeCheckboxesDiv.style.display = storeInput && storeInput.trim() ? 'block' : 'none';
         }
       } catch (e) {
         console.warn('Could not toggle storeCheckboxes visibility', e);
@@ -1087,13 +1086,21 @@
     let debounce;
     storeInput.addEventListener('input', () => {
       clearTimeout(debounce);
+
+      const query = (storeInput.value || '').trim();
+      const storeCheckboxesDiv = document.getElementById('storeCheckboxes');
+      if (storeCheckboxesDiv) {
+        storeCheckboxesDiv.style.display = query ? 'block' : 'none';
+      }
+
       // When searchbar is empty, clear all store checkbox selections
-      if (!storeInput.value || storeInput.value.trim() === '') {
+      if (!query) {
         userCheckedStores.clear();
         document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => {
           cb.checked = false;
         });
       }
+
       debounce = setTimeout(() => applyFilter(), 250);
     });
 

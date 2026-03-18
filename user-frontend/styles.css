@@ -113,6 +113,48 @@
       width: 100%;
     }
 
+    /* Inline styling migrated from prototype.html */
+    #brandCheckboxes,
+    #typeCheckboxes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    #filtersPanel label[for="typeCheckboxes"],
+    #filtersPanel label[for="storeFilter"] {
+      margin-left: 12px;
+    }
+
+    #typeCheckboxes label,
+    #brandCheckboxes label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-right: 6px;
+    }
+
+    #typeCheckboxes span,
+    #brandCheckboxes span {
+      user-select: none;
+    }
+
+    #storeFilter {
+      padding: 8px;
+      min-width: 260px;
+    }
+
+    #storeCheckboxes {
+      display: none;
+      margin-top: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      padding: 8px;
+      border-radius: 6px;
+    }
+
     /* On small screens keep the original top-header behavior: make the header a normal top bar */
     @media(max-width:899px) {
       body {
