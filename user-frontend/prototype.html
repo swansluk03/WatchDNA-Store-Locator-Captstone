@@ -57,7 +57,7 @@
       <div id="storeCheckboxes">
         <!-- Store name checkboxes (hidden until user searches) -->
       </div>
-      <label for="brandCheckboxes"><strong>Filter by brand:</strong></label>
+      <label for="brandCheckboxes"><strong>Filter by Brand:</strong></label>
       <div id="brandCheckboxes">
         <!-- Brand checkboxes inserted here -->
       </div>
@@ -1211,7 +1211,28 @@
             L.DomEvent.disableClickPropagation(container);
 
             container.addEventListener('click', () => {
-              locateAndJumpToNearest();
+              if (!navigator.geolocation) { setNearMeStatus('Geolocation not supported.'); return; }
+              setNearMeStatus('Locating…');
+              getUserLatLng(
+                (ll) => {
+                  showUserMarker(ll);
+
+                  // Find nearest among visible markers
+                  const visible = getVisibleMarkers();
+                  if (!visible.length) { setNearMeStatus('No locations match current filters.'); return; }
+
+                  const best = findNearestAmong(ll, visible);
+                  emphasizeNearest(ll, { ...best, row: getRowForMarker(best.marker) });
+
+                  // Apply a default 10-mile radius filter
+                  const radiusMeters = meters(10);
+                  applyRadiusToCurrent(ll, radiusMeters);
+                },
+                (err) => {
+                  const m = {1: 'Permission Denied.', 2: 'Position Unavailable.', 3: 'Request Timed Out.'};
+                  setNearMeStatus(m[err.code] || 'Unable to get location.');
+                }
+              );
             });
 
             return container;
