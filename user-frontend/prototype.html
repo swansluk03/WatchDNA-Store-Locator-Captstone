@@ -56,42 +56,26 @@
       <div id="brandCheckboxes" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px;">
         <!-- Brand checkboxes inserted here -->
       </div>
-      <label for="typeFilter" style="margin-left:12px"><strong>Type:</strong></label>
-      <select id="typeFilter" style="padding:8px;">
-        <option value="all">All</option>
-        <option value="retailer">Retailers</option>
-        <option value="boutique">Boutiques</option>
-        <option value="mall location">Mall Locations</option>
-        <option value="other">Other</option>
-      </select>
+      <label for="typeCheckboxes" style="margin-left:12px"><strong>Type:</strong></label>
+      <div id="typeCheckboxes" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px;">
+        <label style="display:inline-flex; align-items:center; gap:6px; margin-right:6px;">
+          <input type="checkbox" value="watch-brands" />
+          <span style="user-select:none;">Watch Brands</span>
+        </label>
+        <label style="display:inline-flex; align-items:center; gap:6px; margin-right:6px;">
+          <input type="checkbox" value="services-center" />
+          <span style="user-select:none;">Services Center</span>
+        </label>
+        <label style="display:inline-flex; align-items:center; gap:6px; margin-right:6px;">
+          <input type="checkbox" value="accessory-brands" />
+          <span style="user-select:none;">Accessory brands</span>
+        </label>
+      </div>
       <label for="storeFilter" style="margin-left:12px"><strong>Filter by store:</strong></label>
       <input id="storeFilter" type="search" placeholder="Search By Store Name" style="padding:8px; min-width:260px;" />
       <div id="storeCheckboxes"
         style="display:none; margin-top:10px; max-height:200px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px;">
         <!-- Store name checkboxes (hidden until user searches) -->
-      </div>
-        <input type="checkbox" id="premiumOnlyToggle" style="cursor:pointer; transform: scale(1.2);" />
-        <label for="premiumOnlyToggle" style="cursor:pointer;"><strong>Show Premium Only</strong></label>
-      </div>
-      <div style="margin-top:10px; display:flex; align-items:center; gap:8px;"></div>
-      <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
-        <button id="nearMeBtn" title="Share your location to find the closest store"
-          style="padding:8px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer;">
-          📍 Near me
-        </button>
-        <span id="nearMeStatus" style="font-size:.9rem; opacity:.8;"></span>
-      </div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <select id="nearMeRadius" style="padding:6px; border:1px solid var(--border); border-radius:6px;">
-          <option value="5">5 mi</option>
-          <option value="10" selected>10 mi</option>
-          <option value="25">25 mi</option>
-          <option value="50">50 mi</option>
-        </select>
-        <button id="nearMeWithinBtn" title="Show stores within radius"
-          style="padding:8px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer;">
-          Within radius
-        </button>
       </div>
     </div>
 
@@ -221,7 +205,7 @@
     const params = new URLSearchParams(window.location.search);
     const INITIAL = {
       brand: params.get('brand') || '',
-      type: params.get('type') || 'all',
+      type: params.get('type') || '',
       store: params.get('store') || ''
     };
     console.log('[proto] initial filters:', INITIAL);
@@ -279,12 +263,7 @@
           panel.setAttribute('hidden', '');
           btn.setAttribute('aria-expanded', 'false');
           setStoreListHidden(false); //show the store list
-          // Clear the store search when closing the panel
-          const storeInput = document.getElementById('storeFilter');
-            if (storeInput) {
-            storeInput.value = '';
-            applyFilter();
-          }
+          // Do not clear the store search here; preserve user input when they close the panel.
         }
         e.stopPropagation();
       });
@@ -295,10 +274,7 @@
           setStoreListHidden(false);
           // Clear the store search when closing the panel by clicking outside
           const storeInput = document.getElementById('storeFilter');
-          if (storeInput) {
-            storeInput.value = '';
-            applyFilter();
-          }
+          // Leave the store search value intact when closing the panel by clicking outside.
           console.log('[document] closed filters by click outside');
         }
       });
@@ -709,7 +685,7 @@
 
       const storeNames = [...new Set(rowsForList.map(r => (r['Name'] || '').trim()).filter(Boolean))].sort();
 
-      const premiumOnly = document.getElementById('premiumOnlyToggle')?.checked;
+      const premiumOnly = false; // premium-only filter disabled (UI removed)
 
       // Remove any previously-checked stores that are no longer present
       const storeNameSet = new Set(storeNames.map(s => s.toLowerCase()));
@@ -784,10 +760,9 @@
       const selectedBrandEls = document.querySelectorAll('#brandCheckboxes input[type="checkbox"]:checked');
       const brandSet = new Set(Array.from(selectedBrandEls).map(el => (el.value || '').toUpperCase().trim()));
       const brandFilterActive = brandSet.size > 0;
-      const typeValue = (document.getElementById('typeFilter').value || 'all');
       const storeInput = (document.getElementById('storeFilter').value || '').trim().toLowerCase();
-      // Premium-only filter
-      const premiumOnly = document.getElementById('premiumOnlyToggle').checked;
+      // Premium-only filter disabled (UI removed)
+      const premiumOnly = false;
 
       const baseRows = [];
       allMarkers.forEach(({ row }) => {
@@ -823,8 +798,9 @@
         }
 
         // type filter
-        if (passes && typeValue && typeValue !== 'all') {
-          passes = (String(row._type || 'retailer') === typeValue);
+        const selectedTypes = Array.from(document.querySelectorAll('#typeCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value);
+        if (passes && selectedTypes.length > 0) {
+          passes = selectedTypes.includes(row._type);
         }
 
         // Premium-only logic
@@ -1102,19 +1078,24 @@
         label.appendChild(span);
         container.appendChild(label);
       });
-      // wire brand checkbox container: changes trigger applyFilter
-      // (populateBrandSelect will create checkboxes instead of options)
-      // wire type select
-      const typeSel = document.getElementById('typeFilter');
-      typeSel.onchange = () => applyFilter();
-      // wire store filter input (debounced)
-      const storeInput = document.getElementById('storeFilter');
-      let debounce;
-      storeInput.addEventListener('input', () => {
-        clearTimeout(debounce);
-        debounce = setTimeout(() => applyFilter(), 250);
-      });
     }
+
+
+
+    // wire store filter input (debounced)
+    const storeInput = document.getElementById('storeFilter');
+    let debounce;
+    storeInput.addEventListener('input', () => {
+      clearTimeout(debounce);
+      // When searchbar is empty, clear all store checkbox selections
+      if (!storeInput.value || storeInput.value.trim() === '') {
+        userCheckedStores.clear();
+        document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => {
+          cb.checked = false;
+        });
+      }
+      debounce = setTimeout(() => applyFilter(), 250);
+    });
 
     function showBanner(msg) {
       const div = document.createElement('div');
@@ -1153,22 +1134,20 @@
         }
 
         allRows.forEach(row => {
-          // classify row as 'accessory' or 'retailer' using simple heuristics
-          // - if any descriptive field contains the word 'accessor' treat as accessory
-          // - otherwise default to retailer
+          // classify row type using heuristics
           const descFields = [row['Name'], row['Page Description'], row['Page Title'], row['Meta Description'], row['Tags'], row['Custom Brands']]
             .filter(Boolean)
             .join('\n')
             .toLowerCase();
 
-          if (/boutique/.test(descFields)) {
-            row._type = 'boutique';
+          if (isServiceCenterRow(row)) {
+            row._type = 'services-center';
+          } else if (/boutique|authorized dealer|retailer|store/.test(descFields)) {
+            row._type = 'watch-brands';
           } else if (/mall|shopping center|plaza/.test(descFields)) {
-            row._type = 'mall location';
-          } else if (/authorized dealer|retailer|store/.test(descFields)) {
-            row._type = 'retailer';
+            row._type = 'accessory-brands';
           } else {
-            row._type = 'other';
+            row._type = 'accessory-brands';
           }
           const lat = parseFloat(String(row.Latitude).trim());
           const lon = parseFloat(String(row.Longitude).trim());
@@ -1355,25 +1334,14 @@
 
         map.addControl(new RadiusControl());
         populateBrandSelect(brandSet);
+        // Wire type checkboxes to applyFilter
+        document.querySelectorAll('#typeCheckboxes input[type="checkbox"]').forEach(cb => {
+          cb.addEventListener('change', () => applyFilter());
+        });
         rebuildStoreCheckboxes(allRows);
-        // Premium Only Toggle Listener
-        document.getElementById('premiumOnlyToggle')
-          .addEventListener('change', () => {
-            const premiumOnly = document.getElementById('premiumOnlyToggle').checked;
-
-            // Clear all checkboxes when premium-only is enabled
-                if (premiumOnly) {
-                  document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => {
-                    cb.checked = false;
-                  });
-                  userCheckedStores.clear();
-                }
-
-            applyFilter();
-          });
+        // Premium-only filter UI removed; no toggle listener required.
 
         // Preload filters from URL, then apply once
-        document.getElementById('typeFilter').value = INITIAL.type;
         document.getElementById('storeFilter').value = INITIAL.store;
         if (INITIAL.brand) {
           const b = INITIAL.brand.toLowerCase();
@@ -1381,16 +1349,16 @@
             if ((cb.value || '').toLowerCase().includes(b)) cb.checked = true;
           });
         }
+        if (INITIAL.type) {
+          const t = INITIAL.type.toLowerCase();
+          document.querySelectorAll('#typeCheckboxes input[type="checkbox"]').forEach(cb => {
+            if ((cb.value || '').toLowerCase() === t) cb.checked = true;
+          });
+        }
         applyFilter();
 
         // Do not pre-check checkboxes from URL params; users must explicitly
         // select stores using the checkbox controls.
-
-        const nearBtn = document.getElementById('nearMeBtn');
-        if (nearBtn) nearBtn.addEventListener('click', locateAndJumpToNearest);
-
-        const withinBtn = document.getElementById('nearMeWithinBtn');
-        if (withinBtn) withinBtn.addEventListener('click', locateAndFilterWithinRadius);
 
         console.log('Markers added:', allMarkers.length);
         if (allMarkers.length === 0) {
