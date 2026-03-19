@@ -23,6 +23,7 @@ import authRoutes from './routes/auth.routes';
 import uploadRoutes from './routes/upload.routes';
 import scraperRoutes from './routes/scraper.routes';
 import locationRoutes from './routes/location.routes';
+import healthRoutes from './routes/health.routes';
 
 const app: Express = express();
 const PORT = config.port;
@@ -68,14 +69,8 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Health check (no rate limiting)
-app.get('/health', (req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    service: 'WatchDNA Admin Backend'
-  });
-});
+// Health check routes (no rate limiting)
+app.use('/health', healthRoutes);
 
 // Apply rate limiters to specific routes
 // Note: More specific routes must come BEFORE general routes

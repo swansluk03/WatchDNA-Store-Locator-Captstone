@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Uploads from './pages/Uploads';
 import UploadDetail from './pages/UploadDetail';
 import Scraper from './pages/Scraper';
+import HealthStatus from './pages/HealthStatus';
 import './styles/App.css';
 
 function App() {
@@ -28,6 +29,7 @@ function App() {
             <Route path="uploads" element={<Uploads />} />
             <Route path="uploads/:id" element={<UploadDetail />} />
             <Route path="scraper" element={<Scraper />} />
+            <Route path="health" element={<HealthStatus />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
