@@ -24,6 +24,7 @@ import uploadRoutes from './routes/upload.routes';
 import scraperRoutes from './routes/scraper.routes';
 import locationRoutes from './routes/location.routes';
 import healthRoutes from './routes/health.routes';
+import premiumRoutes from './routes/premium.routes';
 
 const app: Express = express();
 const PORT = config.port;
@@ -83,6 +84,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/scraper', scraperRoutes);
 app.use('/api/locations', locationRoutes);
+app.use('/api/premium-stores', premiumRoutes);
 
 // Serve user-frontend static files
 const userFrontendDir = path.join(__dirname, '..', '..', 'user-frontend');
