@@ -354,19 +354,8 @@
       return parts.join('\n');
     }
 
-    // Brand level paid visibility (demo)
-    // A brand can approve up to 'maxApproved' locations to show that brand even if the location isnt verified
-     const BRAND_VISIBILITY_CONFIG = {
-      "OMEGA": {
-        maxApproved: 5,
-        approvedHandles: ["7426", "6416", "3229", "6917170001", "O1825152"]
-      }
-    };
-
-    // Brands that should show a verified indicator (demo list)
-    const VERIFIED_BRANDS = new Set([
-      "OMEGA"
-    ]);
+    // Premium store handles — fetched from backend API on load
+    let PREMIUM_HANDLES = new Set();
 
     function escapeHtml(s) {
       return String(s ?? "")
@@ -377,41 +366,30 @@
       .replace(/'/g, "&#039;");
     }
 
-    // Returns array of visible brand names for a row
+    // Returns all brand names for a row
     function getVisibleBrandsList(row) {
       const fullBrands = extractBrandsText(row);
-      const list = fullBrands
+      return fullBrands
         .split(",")
         .map(s => s.trim())
         .filter(Boolean);
-      
-      if (row._isPremium) return list;
-
-      // Unverified: only show brands that approved this location
-      return list.filter(b => isLocationApprovedForBrand(row, b));
     }
 
-    // Plain string used for filtering + any logic that expects commas
+    // Plain string used for filtering
     function getDisplayBrandsForRow(row) {
       return getVisibleBrandsList(row).join(", ");
     }
 
-    // HTML string used for UI display (adds verified checkmark)
+    // HTML string used for UI display (adds verified checkmark for premium stores)
     function getDisplayBrandsHTMLForRow(row) {
       const list = getVisibleBrandsList(row);
-
       if (!list.length) return "";
 
       return list.map(b => {
         const clean = b.trim();
-        const isVerifiedBrand = VERIFIED_BRANDS.has(clean.toUpperCase());
-        const check = isVerifiedBrand ? ` <span class="verified-check" title="Verified brand">✓</span>` : "";
+        const check = row._isPremium ? ` <span class="verified-check" title="Verified retailer">✓</span>` : "";
         return `<span class="brand-pill">${escapeHtml(clean)}${check}</span>`;
       }).join(" ");
-    }
-
-    function normalizeKey(val) {
-      return String(val || "").trim().toLowerCase();
     }
 
     function isServiceCenterRow(row) {
@@ -427,65 +405,15 @@
       return /service center|customer service|watch service|watch repair|repair specialists|repair|service\b/.test(text);
     }
 
-    function isPremiumBrandOnlyRow(row) {
-      return !row._isPremium && getVisibleBrandsList(row).length > 0;
-    }
-
     function getMarkerCategory(row) {
       const storeKind = isServiceCenterRow(row) ? 'serviceCenter' : 'retailer';
-
-      let tier = 'nonPremium';
-      if (row._isPremium) {
-        tier = 'premium';
-      } else if (isPremiumBrandOnlyRow(row)) {
-        tier = 'premiumBrandOnly';
-      }
-
+      const tier = row._isPremium ? 'premium' : 'nonPremium';
       return { storeKind, tier };
     }
 
     function getMarkerIconForRow(row) {
       const { storeKind, tier } = getMarkerCategory(row);
       return markerIcons[storeKind][tier];
-    }
-
-    function isLocationApprovedForBrand(row, brandName) {
-      const cfg = BRAND_VISIBILITY_CONFIG[String(brandName || "").toUpperCase()];
-      if (!cfg) return false;
-
-      const maxApproved = Number(cfg.maxApproved || 0);
-      const approvedCount =
-        (cfg.approvedHandles?.length || 0) + (cfg.approvedNames?.length || 0);
-      
-      if (maxApproved > 0 && approvedCount > maxApproved) {
-      }
-
-      const handle = normalizeKey(row["Handle"]);
-      const name = normalizeKey(row["Name"]);
-
-      const handleApproved = (cfg.approvedHandles || [])
-        .slice(0, maxApproved || undefined)
-        .some(h => normalizeKey(h) === handle);
-
-      const nameApproved = (cfg.approvedNames || [])
-        .slice(0, maxApproved || undefined)
-        .some(n => normalizeKey(n) === name);
-
-      return handleApproved || nameApproved;
-    }
-
-    function getDisplayBrandsForRow(row) {
-      const fullBrands = extractBrandsText(row);
-      const list = fullBrands
-      .split(",")
-      .map(s => s.trim())
-      .filter(Boolean);
-
-      if (row._isPremium) return list.join(", ");
-
-      // Unverified: only show brands that approved this location
-      const allowed = list.filter(b => isLocationApprovedForBrand(row, b));
-      return allowed.join(", ");
     }
 
     
@@ -1126,8 +1054,17 @@
     return cleaned.includes('@') && cleaned.includes('.');
     }
 
-    // --- Load data & render (with helpful logs) ---
-    loadCSV('/backend/uploads/master_stores.csv')
+    // --- Fetch premium handles from API, then load CSV ---
+    fetch('/api/premium-stores/handles')
+      .then(res => res.ok ? res.json() : { handles: [] })
+      .then(data => {
+        PREMIUM_HANDLES = new Set(data.handles || []);
+        console.log('[proto] Premium handles loaded:', PREMIUM_HANDLES.size);
+      })
+      .catch(err => {
+        console.warn('[proto] Could not fetch premium handles, falling back to empty set:', err);
+      })
+      .then(() => loadCSV('/backend/uploads/master_stores.csv'))
       .then(rows => {
         console.log('CSV rows (raw):', rows.length);
         const brandSet = new Set();
@@ -1161,9 +1098,8 @@
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-          row._isPremium = isValidEmail(row['Email']);
+          row._isPremium = PREMIUM_HANDLES.has((row['Handle'] || '').trim());
           row._isServiceCenter = isServiceCenterRow(row);
-          row._isPremiumBrandOnly = isPremiumBrandOnlyRow(row);
 
           const iconToUse = getMarkerIconForRow(row);
 
