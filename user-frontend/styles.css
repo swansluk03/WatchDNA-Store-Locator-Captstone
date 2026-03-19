@@ -60,12 +60,6 @@
       border-radius: 4px;
     }
 
-    #brandFilter {
-      padding: 8px;
-      min-width: 160px;
-      width: 100%;
-    }
-
     /* push the map to the right so it doesn't sit underneath the fixed left bar */
     #map {
       margin-left: 400px;
@@ -78,81 +72,218 @@
       line-height: 1.35;
     }
 
+    /* --- Toolbar: Search + Filter toggle --- */
+    #toolbar {
+      width: 100%;
+    }
+
+    #searchRow {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      width: 100%;
+    }
+
+    #storeFilter {
+      flex: 1;
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: "Cormorant", serif;
+      font-size: 0.95rem;
+      background: var(--card2);
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    #storeFilter:focus {
+      border-color: var(--accent);
+    }
+
+    #storeFilter::placeholder {
+      color: #9e9588;
+    }
+
+    #filterToggle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--card2);
+      font-family: "Cormorant", serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    #filterToggle:hover {
+      background: var(--hover-bg);
+    }
+
+    #filterToggle[aria-expanded="true"] {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    #filterToggle svg {
+      flex-shrink: 0;
+    }
+
+    /* Active filters badge */
+    .active-filters-badge {
+      font-size: 0.8rem;
+      color: var(--accent);
+      font-weight: 600;
+      padding: 4px 0 0;
+      cursor: pointer;
+    }
+
+    .active-filters-badge:hover {
+      text-decoration: underline;
+    }
+
+    /* --- Filter Panel --- */
     #filtersPanel[hidden] {
       display: none !important;
     }
 
-    #hamburger {
-      font-size: 20px;
-      font-family: "Cormorant", serif;
-      background: var(--card2);
-      border: 1px solid var(--border);
-      padding: 6px 10px;
-      border-radius: 6px;
-      cursor: pointer
-    }
-
     #filtersPanel {
       display: flex;
-      gap: 12px;
-      align-items: center;
-    }
-
-    .filters-panel {
-      /* default: make the controls look like a card inside the left bar */
-      position: relative;
-      left: 0;
-      top: 0;
-      background: transparent;
-      border: 0;
-      padding: 0;
-      box-shadow: none;
-      display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 0;
       width: 100%;
     }
 
-    /* Inline styling migrated from prototype.html */
-    #brandCheckboxes,
-    #typeCheckboxes {
+    .filters-panel {
+      width: 100%;
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .filter-section {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .filter-section:last-of-type {
+      border-bottom: none;
+    }
+
+    .filter-section__title {
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #8a7e70;
+      margin-bottom: 8px;
+    }
+
+    .filter-chips {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
-      margin-bottom: 6px;
     }
 
-    #filtersPanel label[for="typeCheckboxes"],
-    #filtersPanel label[for="storeFilter"] {
-      margin-left: 12px;
-    }
-
-    #typeCheckboxes label,
-    #brandCheckboxes label {
+    .filter-chip {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      margin-right: 6px;
-    }
-
-    #typeCheckboxes span,
-    #brandCheckboxes span {
+      gap: 4px;
+      padding: 5px 10px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      font-size: 0.85rem;
+      cursor: pointer;
       user-select: none;
+      transition: all 0.15s;
+      background: transparent;
     }
 
-    #storeFilter {
-      padding: 8px;
-      min-width: 260px;
+    .filter-chip:hover {
+      background: var(--hover-bg);
+    }
+
+    .filter-chip input[type="checkbox"] {
+      display: none;
+    }
+
+    .filter-chip:has(input:checked) {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    /* Filter action buttons */
+    .filter-actions {
+      display: flex;
+      gap: 8px;
+      padding: 12px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .filter-apply-btn {
+      flex: 1;
+      padding: 9px 0;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-family: "Cormorant", serif;
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .filter-apply-btn:hover {
+      background: #553828;
+    }
+
+    .filter-clear-btn {
+      padding: 9px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text);
+      font-family: "Cormorant", serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .filter-clear-btn:hover {
+      background: var(--hover-bg);
     }
 
     #storeCheckboxes {
       display: none;
-      margin-top: 10px;
-      max-height: 200px;
+      max-height: 160px;
       overflow-y: auto;
-      border: 1px solid var(--border);
-      padding: 8px;
-      border-radius: 6px;
+      padding: 0 14px 10px;
+    }
+
+    #storeCheckboxes label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 0;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+
+    #storeCheckboxes input[type="checkbox"] {
+      accent-color: var(--accent);
+      cursor: pointer;
     }
 
     /* On small screens keep the original top-header behavior: make the header a normal top bar */
@@ -168,22 +299,15 @@
         border-right: none;
         padding: 12px 16px;
         display: flex;
-        flex-direction: row;
-        align-items: center;
+        flex-direction: column;
+        align-items: stretch;
         background: var(--card);
-        color: #fff;
       }
 
       #map {
         margin-left: 0;
         width: 100%;
         height: 640px;
-      }
-
-      .filters-panel {
-        flex-direction: row;
-        align-items: center;
-        gap: 12px;
       }
     }
 
@@ -259,21 +383,7 @@
       background: var(--card); */
     /*}*/
 
-    #storeCheckboxes input[type="checkbox"] {
-      accent-color: var(--accent);
-      cursor: pointer;
-      margin-right: 6px;
-    }
-
-    #storeCheckboxes label {
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      padding: 2px 0;
-    }
-
-    #storeCheckboxes input[type="checkbox"]:checked+label,
-    #storeCheckboxes input[type="checkbox"]:checked {
+    #storeCheckboxes input[type="checkbox"]:checked + span {
       color: var(--accent);
       font-weight: 600;
     }
@@ -382,11 +492,8 @@
 
   /* Makes it so that when viewing a single store, everything else in the sidebar gets hidden */
   #sidebar.store-focused #top,
-  #sidebar.store-focused #hamburger,
+  #sidebar.store-focused #toolbar,
   #sidebar.store-focused #filtersPanel,
-  #sidebar.store-focused #nearMeWithinBtn,
-  #sidebar.store-focused #nearMeRadius,
-  #sidebar.store-focused #nearMeBtn,
   #sidebar.store-focused #storeListContainer,
   #sidebar.store-focused #footer {
     display: none;
@@ -407,4 +514,131 @@
   .verified-check {
     font-weight: 700;
     line-height: 1;
+  }
+
+  /* --- Near Me Control --- */
+  .nearme-control {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    padding: 14px 18px;
+    min-width: 200px;
+    font-family: "Cormorant", serif;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: all 0.3s ease;
+  }
+
+  /* Collapsed: only show the prompt button */
+  .nearme-collapsed .nearme-expanded {
+    display: none;
+  }
+
+  /* Expanded: hide the prompt button */
+  .nearme-control:not(.nearme-collapsed) .nearme-prompt-btn {
+    display: none;
+  }
+
+  .nearme-status {
+    font-size: 0.85rem;
+    color: var(--accent);
+    font-weight: 600;
+    min-height: 1.1em;
+    text-align: center;
+  }
+
+  .nearme-status:empty {
+    display: none;
+  }
+
+  .nearme-expanded {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .nearme-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .nearme-label {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text);
+    min-width: 40px;
+    text-align: right;
+  }
+
+  .nearme-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 5px;
+    border-radius: 4px;
+    background: var(--border);
+    outline: none;
+    cursor: pointer;
+  }
+
+  .nearme-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    cursor: pointer;
+  }
+
+  .nearme-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    cursor: pointer;
+  }
+
+  .nearme-btn {
+    font-family: "Cormorant", serif;
+    font-size: 0.95rem;
+    font-weight: 700;
+    padding: 8px 0;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: background 0.2s;
+  }
+
+  .nearme-btn:hover {
+    background: #553828;
+  }
+
+  .nearme-reset {
+    font-family: "Cormorant", serif;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent);
+    cursor: pointer;
+    text-align: center;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+  }
+
+  .nearme-reset:hover {
+    opacity: 1;
+    text-decoration: underline;
   }

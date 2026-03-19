@@ -48,33 +48,63 @@
       </div>
     </div>
 
-    <button id="hamburger" aria-expanded="false" aria-controls="filtersPanel" title="Show filters">
-      ☰ Filter
-    </button>
+    <!-- Search + Filter toolbar -->
+    <div id="toolbar">
+      <div id="searchRow">
+        <input id="storeFilter" type="search" placeholder="Search stores, cities, countries" autocomplete="off" />
+        <button id="filterToggle" aria-expanded="false" aria-controls="filtersPanel" title="Filters">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+          <span>Filters</span>
+        </button>
+      </div>
+      <div id="activeFiltersBadge" class="active-filters-badge hidden"></div>
+    </div>
+
+    <!-- Filter panel (hidden by default) -->
     <div id="filtersPanel" class="filters-panel" hidden>
-      <label for="storeFilter"><strong>Filter by store:</strong></label>
-      <input id="storeFilter" type="search" placeholder="Search By Store Name" />
+
+      <div class="filter-section">
+        <div class="filter-section__title">Store Type</div>
+        <div id="typeCheckboxes" class="filter-chips">
+          <label class="filter-chip">
+            <input type="checkbox" value="watch-brands" />
+            <span>Watch Brands</span>
+          </label>
+          <label class="filter-chip">
+            <input type="checkbox" value="services-center" />
+            <span>Service Centers</span>
+          </label>
+          <label class="filter-chip">
+            <input type="checkbox" value="accessory-brands" />
+            <span>Accessories</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="filter-section">
+        <div class="filter-section__title">Brand</div>
+        <div id="brandCheckboxes" class="filter-chips">
+          <!-- Brand chips inserted by JS -->
+        </div>
+      </div>
+
+      <div class="filter-section">
+        <div class="filter-section__title">Status</div>
+        <div class="filter-chips">
+          <label class="filter-chip">
+            <input type="checkbox" id="premiumOnlyFilter" />
+            <span>Premium Retailers Only</span>
+          </label>
+        </div>
+      </div>
+
       <div id="storeCheckboxes">
-        <!-- Store name checkboxes (hidden until user searches) -->
+        <!-- Store name checkboxes (shown when search is active) -->
       </div>
-      <label for="brandCheckboxes"><strong>Filter by Brand:</strong></label>
-      <div id="brandCheckboxes">
-        <!-- Brand checkboxes inserted here -->
-      </div>
-      <label for="typeCheckboxes"><strong>Filter By Type:</strong></label>
-      <div id="typeCheckboxes">
-        <label>
-          <input type="checkbox" value="watch-brands" />
-          <span>Watch Brands</span>
-        </label>
-        <label>
-          <input type="checkbox" value="services-center" />
-          <span>Services Center</span>
-        </label>
-        <label>
-          <input type="checkbox" value="accessory-brands" />
-          <span>Accessory brands</span>
-        </label>
+
+      <div class="filter-actions">
+        <button id="applyFiltersBtn" class="filter-apply-btn">Apply Filters</button>
+        <button id="clearFiltersBtn" class="filter-clear-btn">Clear All</button>
       </div>
     </div>
 
@@ -224,9 +254,9 @@
       });
     }
 
-    // --- small hamburger toggle (left) ---
+    // --- Filter panel toggle ---
     (function () {
-      const btn = document.getElementById('hamburger');
+      const btn = document.getElementById('filterToggle');
       const panel = document.getElementById('filtersPanel');
       const storeListContainer = document.getElementById('storeListContainer');
 
@@ -236,17 +266,14 @@
       }
 
       function setStoreListHidden(hidden) {
-        // keep a class for CSS transitions or style hooks
         if (hidden) {
           storeListContainer.classList.add('hidden');
-          //set inline style to be extra sure
           storeListContainer.style.display = 'none';
         }
         else {
           storeListContainer.classList.remove('hidden');
           storeListContainer.style.display = '';
         }
-        console.log('[storeList] set hidden =', hidden, 'classList:', storeListContainer.className);
       }
 
       btn.addEventListener('click', (e) => {
@@ -268,14 +295,10 @@
         e.stopPropagation();
       });
       document.addEventListener('click', (ev) => {
-        if (!panel.hasAttribute('hidden') && !panel.contains(ev.target) && ev.target !== btn) {
+        if (!panel.hasAttribute('hidden') && !panel.contains(ev.target) && !btn.contains(ev.target)) {
           panel.setAttribute('hidden', '');
           btn.setAttribute('aria-expanded', 'false');
           setStoreListHidden(false);
-          // Clear the store search when closing the panel by clicking outside
-          const storeInput = document.getElementById('storeFilter');
-          // Leave the store search value intact when closing the panel by clicking outside.
-          console.log('[document] closed filters by click outside');
         }
       });
     })();
@@ -616,7 +639,8 @@
 
       const storeNames = [...new Set(rowsForList.map(r => (r['Name'] || '').trim()).filter(Boolean))].sort();
 
-      const premiumOnly = false; // premium-only filter disabled (UI removed)
+      const premiumEl = document.getElementById('premiumOnlyFilter');
+      const premiumOnly = premiumEl ? premiumEl.checked : false;
 
       // Remove any previously-checked stores that are no longer present
       const storeNameSet = new Set(storeNames.map(s => s.toLowerCase()));
@@ -692,8 +716,8 @@
       const brandSet = new Set(Array.from(selectedBrandEls).map(el => (el.value || '').toUpperCase().trim()));
       const brandFilterActive = brandSet.size > 0;
       const storeInput = (document.getElementById('storeFilter').value || '').trim().toLowerCase();
-      // Premium-only filter disabled (UI removed)
-      const premiumOnly = false;
+      const premiumEl = document.getElementById('premiumOnlyFilter');
+      const premiumOnly = premiumEl ? premiumEl.checked : false;
 
       const baseRows = [];
       allMarkers.forEach(({ row }) => {
@@ -774,6 +798,29 @@
       renderStoreListingsFromLayers(getVisibleMarkers());
     }
 
+    function updateActiveFiltersBadge() {
+      const badge = document.getElementById('activeFiltersBadge');
+      if (!badge) return;
+
+      const parts = [];
+      const brands = document.querySelectorAll('#brandCheckboxes input:checked');
+      if (brands.length) parts.push(brands.length === 1 ? '1 brand' : brands.length + ' brands');
+
+      const types = document.querySelectorAll('#typeCheckboxes input:checked');
+      if (types.length) parts.push(types.length === 1 ? '1 type' : types.length + ' types');
+
+      const premium = document.getElementById('premiumOnlyFilter');
+      if (premium && premium.checked) parts.push('premium only');
+
+      if (parts.length === 0) {
+        badge.classList.add('hidden');
+        badge.textContent = '';
+      } else {
+        badge.classList.remove('hidden');
+        badge.textContent = 'Filtered by: ' + parts.join(', ') + ' \u2014 Clear';
+      }
+    }
+
     // --- Near Me radius filter ---
 
     let radiusCircle = null;
@@ -782,7 +829,14 @@
 
     function applyRadiusToCurrent(centerLL, radiusMeters) {
       if (radiusCircle) { map.removeLayer(radiusCircle); radiusCircle = null; }
-      radiusCircle = L.circle(centerLL, { radius: radiusMeters, fillOpacity: 0.07 }).addTo(map);
+      radiusCircle = L.circle(centerLL, {
+        radius: radiusMeters,
+        color: '#6e4b3a',
+        weight: 2,
+        fillColor: '#6e4b3a',
+        fillOpacity: 0.06,
+        dashArray: '6,4'
+      }).addTo(map);
 
       // Start from your existing filtered set
       applyFilter();
@@ -807,13 +861,12 @@
       setNearMeStatus('Locating…');
       getUserLatLng(
         (ll) => {
-          // getUserLatLng returns the users coordinates, so we can just immediately use it
           showUserMarker(ll);
-          const mi = parseFloat(document.getElementById('nearMeRadius').value || '10');
-              applyRadiusToCurrent(ll, meters(mi));
+          const slider = document.getElementById('nearMeRadius');
+          const mi = parseFloat(slider ? slider.value : '10');
+          applyRadiusToCurrent(ll, meters(mi));
         },
         (err) => {
-          // Error handling to see what went wrong
           const m = {
             1: 'Permission Denied.',
             2: 'Position Unavailable.',
@@ -991,19 +1044,14 @@
       container.innerHTML = '';
       [...brandSet].sort().forEach(b => {
         const label = document.createElement('label');
-        label.style.display = 'inline-flex';
-        label.style.alignItems = 'center';
-        label.style.gap = '6px';
-        label.style.marginRight = '6px';
+        label.className = 'filter-chip';
 
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.value = b;
-        cb.addEventListener('change', () => applyFilter());
 
         const span = document.createElement('span');
         span.textContent = b;
-        span.style.userSelect = 'none';
 
         label.appendChild(cb);
         label.appendChild(span);
@@ -1133,47 +1181,88 @@
           options: { position: 'bottomright' },
 
           onAdd: function (map) {
-            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
-            container.style.backgroundColor = 'white';
-            container.style.border = '1px solid #ccc';
-            container.style.borderRadius = '6px';
-            container.style.cursor = 'pointer';
-            container.style.boxShadow = '0 2px 6px rgba(0,0,0,0.2)';
-            container.style.padding = '6px 10px';
-            container.style.fontSize = '16px';
-            container.style.display = 'flex';
-            container.style.alignItems = 'center';
-            container.style.justifyContent = 'center';
-            container.title = 'Find stores near me';
-            container.innerHTML = '📍 Near Me';
-
-            // Prevent map from zooming when clicking the control
+            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control nearme-control nearme-collapsed');
             L.DomEvent.disableClickPropagation(container);
+            L.DomEvent.disableScrollPropagation(container);
 
-            container.addEventListener('click', () => {
-              if (!navigator.geolocation) { setNearMeStatus('Geolocation not supported.'); return; }
-              setNearMeStatus('Locating…');
+            // Status text (hidden initially)
+            const status = L.DomUtil.create('div', 'nearme-status', container);
+            status.id = 'nearMeStatus';
+            status.textContent = '';
+
+            // --- Collapsed state: just the prompt button ---
+            const promptBtn = L.DomUtil.create('button', 'nearme-btn nearme-prompt-btn', container);
+            promptBtn.textContent = 'Search Near Me';
+
+            // --- Expanded state: slider + controls (hidden until location granted) ---
+            const expanded = L.DomUtil.create('div', 'nearme-expanded', container);
+
+            // Slider row
+            const sliderRow = L.DomUtil.create('div', 'nearme-slider-row', expanded);
+            const label = L.DomUtil.create('span', 'nearme-label', sliderRow);
+            label.textContent = '10 mi';
+            const slider = L.DomUtil.create('input', 'nearme-slider', sliderRow);
+            slider.type = 'range';
+            slider.id = 'nearMeRadius';
+            slider.min = '5';
+            slider.max = '50';
+            slider.value = '10';
+            slider.step = '1';
+
+            slider.addEventListener('input', () => {
+              label.textContent = slider.value + ' mi';
+              if (radiusCircle && cachedLatLng) {
+                applyRadiusToCurrent(cachedLatLng, meters(parseFloat(slider.value)));
+              }
+            });
+
+            // "Update" button (re-search at current slider value)
+            const updateBtn = L.DomUtil.create('button', 'nearme-btn', expanded);
+            updateBtn.textContent = 'Update Radius';
+            updateBtn.addEventListener('click', () => {
+              if (cachedLatLng) {
+                applyRadiusToCurrent(cachedLatLng, meters(parseFloat(slider.value)));
+              }
+            });
+
+            // Reset link
+            const reset = L.DomUtil.create('button', 'nearme-reset', expanded);
+            reset.textContent = 'Reset';
+            reset.addEventListener('click', () => {
+              if (radiusCircle) { map.removeLayer(radiusCircle); radiusCircle = null; }
+              if (userMarker) { map.removeLayer(userMarker); userMarker = null; }
+              if (nearestLine) { map.removeLayer(nearestLine); nearestLine = null; }
+              slider.value = '10';
+              label.textContent = '10 mi';
+              setNearMeStatus('');
+              applyFilter();
+              map.setView(originalCenter, originalZoom);
+              // Collapse back to prompt button
+              container.classList.add('nearme-collapsed');
+            });
+
+            // --- Location request handler (shared by prompt button) ---
+            function requestLocation() {
+              if (!navigator.geolocation) {
+                setNearMeStatus('Geolocation not supported.');
+                return;
+              }
+              setNearMeStatus('Locating\u2026');
               getUserLatLng(
                 (ll) => {
+                  // Location granted — expand to full UI
+                  container.classList.remove('nearme-collapsed');
                   showUserMarker(ll);
-
-                  // Find nearest among visible markers
-                  const visible = getVisibleMarkers();
-                  if (!visible.length) { setNearMeStatus('No locations match current filters.'); return; }
-
-                  const best = findNearestAmong(ll, visible);
-                  emphasizeNearest(ll, { ...best, row: getRowForMarker(best.marker) });
-
-                  // Apply a default 10-mile radius filter
-                  const radiusMeters = meters(10);
-                  applyRadiusToCurrent(ll, radiusMeters);
+                  applyRadiusToCurrent(ll, meters(parseFloat(slider.value)));
                 },
                 (err) => {
-                  const m = {1: 'Permission Denied.', 2: 'Position Unavailable.', 3: 'Request Timed Out.'};
+                  const m = {1: 'Location permission denied.', 2: 'Position unavailable.', 3: 'Timed out.'};
                   setNearMeStatus(m[err.code] || 'Unable to get location.');
                 }
               );
-            });
+            }
+
+            promptBtn.addEventListener('click', requestLocation);
 
             return container;
           }
@@ -1225,89 +1314,39 @@
           storeList.appendChild(item);
         });
 
-        const RadiusControl = L.Control.extend({
-          options: { position: 'bottomright' },
-
-          onAdd: function (map) {
-            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
-            container.style.backgroundColor = 'white';
-            container.style.border = '1px solid #ccc';
-            container.style.borderRadius = '6px';
-            container.style.boxShadow = '0 2px 6px rgba(0,0,0,0.2)';
-            container.style.padding = '8px';
-            container.style.display = 'flex';
-            container.style.flexDirection = 'column';
-            container.style.gap = '6px';
-            container.style.fontSize = '14px';
-            container.title = 'Show stores within a radius of your location';
-
-            // Prevent clicks from affecting map zoom/pan
-            L.DomEvent.disableClickPropagation(container);
-
-            // Radius dropdown
-            const select = L.DomUtil.create('select', '', container);
-            select.style.padding = '4px';
-            select.style.borderRadius = '4px';
-            select.style.border = '1px solid #ccc';
-            select.style.cursor = 'pointer';
-
-            [5, 10, 25, 50].forEach(mi => {
-              const opt = document.createElement('option');
-              opt.value = mi;
-              opt.textContent = `${mi} mi`;
-              if (mi === 10) opt.selected = true;
-              select.appendChild(opt);
-            });
-
-            // "Within radius" button
-            const button = L.DomUtil.create('button', '', container);
-            button.textContent = 'Within radius';
-            button.style.padding = '6px 8px';
-            button.style.border = '1px solid #ccc';
-            button.style.borderRadius = '4px';
-            button.style.cursor = 'pointer';
-            button.style.background = 'white';
-
-            // Click handler
-            button.addEventListener('click', () => {
-              const mi = parseFloat(select.value || '10');
-              const radiusMeters = mi * 1609.344;
-
-              if (!navigator.geolocation) {
-                setNearMeStatus('Geolocation not supported.');
-                return;
-              }
-
-              setNearMeStatus(`Locating...`);
-              getUserLatLng(
-                (ll) => {
-                  showUserMarker(ll);
-                  applyRadiusToCurrent(ll, radiusMeters);
-                },
-                (err) => {
-                  // Error handling to see what went wrong
-                  const m = {
-                    1: 'Permission Denied.',
-                    2: 'Position Unavailable.',
-                    3: 'Request Timed Out.'
-                  };
-                  setNearMeStatus(m[err.code] || 'Unable to get location.');
-                } 
-              );
-            });
-
-            return container;
-          }
-        });
-
-        map.addControl(new RadiusControl());
+        // (Near Me + Radius controls are now unified in NearMeControl above)
         populateBrandSelect(brandSet);
-        // Wire type checkboxes to applyFilter
-        document.querySelectorAll('#typeCheckboxes input[type="checkbox"]').forEach(cb => {
-          cb.addEventListener('change', () => applyFilter());
-        });
         rebuildStoreCheckboxes(allRows);
-        // Premium-only filter UI removed; no toggle listener required.
+
+        // --- Apply / Clear filter buttons ---
+        document.getElementById('applyFiltersBtn').addEventListener('click', () => {
+          applyFilter();
+          updateActiveFiltersBadge();
+          // Close panel after applying
+          const panel = document.getElementById('filtersPanel');
+          const btn = document.getElementById('filterToggle');
+          const storeList = document.getElementById('storeListContainer');
+          panel.setAttribute('hidden', '');
+          btn.setAttribute('aria-expanded', 'false');
+          storeList.classList.remove('hidden');
+          storeList.style.display = '';
+        });
+
+        document.getElementById('clearFiltersBtn').addEventListener('click', () => {
+          // Uncheck all filter checkboxes
+          document.querySelectorAll('#filtersPanel input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+          userCheckedStores.clear();
+          applyFilter();
+          updateActiveFiltersBadge();
+        });
+
+        // Active filters badge (click to clear)
+        document.getElementById('activeFiltersBadge').addEventListener('click', () => {
+          document.querySelectorAll('#filtersPanel input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+          userCheckedStores.clear();
+          applyFilter();
+          updateActiveFiltersBadge();
+        });
 
         // Preload filters from URL, then apply once
         document.getElementById('storeFilter').value = INITIAL.store;
@@ -1324,9 +1363,7 @@
           });
         }
         applyFilter();
-
-        // Do not pre-check checkboxes from URL params; users must explicitly
-        // select stores using the checkbox controls.
+        updateActiveFiltersBadge();
 
         console.log('Markers added:', allMarkers.length);
         if (allMarkers.length === 0) {
