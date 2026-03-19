@@ -46,21 +46,20 @@ export class UploadService {
         await prisma.validationLog.createMany({ data: logs });
       }
 
-      if (updateData.status === 'valid') {
-        logger.info(`[Upload ${uploadId}] Importing to DB...`);
-        try {
-          const importResult = await locationService.importFromCSV(filePath);
-          logger.info(`[Upload ${uploadId}] Import done — new: ${importResult.newCount}, updated: ${importResult.updatedCount}`);
-          await prisma.upload.update({
-            where: { id: uploadId },
-            data: {
-              status: 'completed',
-              rowsProcessed: importResult.newCount + importResult.updatedCount
-            }
-          });
-        } catch (importError: any) {
-          logger.error(`[Upload ${uploadId}] Import failed:`, importError.message);
-        }
+      // Import valid rows to DB even if some rows have errors
+      logger.info(`[Upload ${uploadId}] Importing to DB...`);
+      try {
+        const importResult = await locationService.importFromCSV(filePath);
+        logger.info(`[Upload ${uploadId}] Import done — new: ${importResult.newCount}, updated: ${importResult.updatedCount}`);
+        await prisma.upload.update({
+          where: { id: uploadId },
+          data: {
+            status: updateData.status === 'valid' ? 'completed' : updateData.status,
+            rowsProcessed: importResult.newCount + importResult.updatedCount
+          }
+        });
+      } catch (importError: any) {
+        logger.error(`[Upload ${uploadId}] Import failed:`, importError.message);
       }
 
       return { success: true, uploadId, validationResult };

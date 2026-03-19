@@ -13,6 +13,17 @@ class PremiumController {
     }
   }
 
+  /** GET /api/premium-stores/names — public, returns names of premium locations for map */
+  async getNames(req: Request, res: Response) {
+    try {
+      const names = await premiumService.getPremiumNames();
+      res.json({ names });
+    } catch (error: any) {
+      console.error('[PremiumController] Error fetching premium names:', error);
+      res.status(500).json({ error: 'Failed to fetch premium names', message: error.message });
+    }
+  }
+
   /** GET /api/premium-stores — admin, returns full premium store list */
   async listAll(req: Request, res: Response) {
     try {

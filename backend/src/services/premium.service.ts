@@ -6,10 +6,19 @@ export const premiumService = {
     return prisma.premiumStore.findMany({ orderBy: { addedAt: 'desc' } });
   },
 
-  /** Get just the handles (for public API) */
+  /** Get just the handles (for admin API) */
   async getHandles(): Promise<string[]> {
     const stores = await prisma.premiumStore.findMany({ select: { handle: true } });
     return stores.map((s) => s.handle);
+  },
+
+  /** Get names of all premium locations (for public/map API) */
+  async getPremiumNames(): Promise<string[]> {
+    const locations = await prisma.location.findMany({
+      where: { isPremium: true },
+      select: { name: true },
+    });
+    return locations.map((l) => l.name).filter(Boolean);
   },
 
   /** Add a store as premium and sync the Location flag */

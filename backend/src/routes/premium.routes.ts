@@ -4,8 +4,9 @@ import { authenticate, requireRole } from '../middleware/auth.middleware';
 
 const router = Router();
 
-// Public — frontend needs this without auth
+// Public — frontend needs these without auth
 router.get('/handles', premiumController.getHandles);
+router.get('/names', premiumController.getNames);
 
 // Admin-only routes
 router.get('/', authenticate, requireRole(['admin']), premiumController.listAll);

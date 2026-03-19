@@ -354,8 +354,11 @@
       return parts.join('\n');
     }
 
-    // Premium store handles — fetched from backend API on load
-    let PREMIUM_HANDLES = new Set();
+    // Backend API base URL — works from any server (Live Server, backend, production)
+    const API_BASE = window.location.port === '3001' ? '' : 'http://localhost:3001';
+
+    // Premium store names — fetched from backend API on load
+    let PREMIUM_NAMES = new Set();
 
     function escapeHtml(s) {
       return String(s ?? "")
@@ -1054,15 +1057,15 @@
     return cleaned.includes('@') && cleaned.includes('.');
     }
 
-    // --- Fetch premium handles from API, then load CSV ---
-    fetch('/api/premium-stores/handles')
-      .then(res => res.ok ? res.json() : { handles: [] })
+    // --- Fetch premium store names from API, then load CSV ---
+    fetch(API_BASE + '/api/premium-stores/names')
+      .then(res => res.ok ? res.json() : { names: [] })
       .then(data => {
-        PREMIUM_HANDLES = new Set(data.handles || []);
-        console.log('[proto] Premium handles loaded:', PREMIUM_HANDLES.size);
+        PREMIUM_NAMES = new Set((data.names || []).map(n => n.trim().toLowerCase()));
+        console.log('[proto] Premium names loaded:', PREMIUM_NAMES.size);
       })
       .catch(err => {
-        console.warn('[proto] Could not fetch premium handles, falling back to empty set:', err);
+        console.warn('[proto] Could not fetch premium names, falling back to empty set:', err);
       })
       .then(() => loadCSV('/backend/uploads/master_stores.csv'))
       .then(rows => {
@@ -1098,7 +1101,7 @@
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-          row._isPremium = PREMIUM_HANDLES.has((row['Handle'] || '').trim());
+          row._isPremium = PREMIUM_NAMES.has((row['Name'] || '').trim().toLowerCase());
           row._isServiceCenter = isServiceCenterRow(row);
 
           const iconToUse = getMarkerIconForRow(row);
