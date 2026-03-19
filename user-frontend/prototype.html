@@ -3,6 +3,7 @@
 
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Prototype Map for 485</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
@@ -37,6 +38,8 @@
 
 <body>
   <header id="sidebar">
+
+    <button id="mobileCloseBtn" aria-label="Close menu">&times;</button>
 
     <div id="top">
       <div id="inner">
@@ -158,6 +161,11 @@
 
   </header>
 
+  <!-- Mobile hamburger (visible only on small screens) -->
+  <button id="mobileMenuBtn" aria-label="Open menu">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
+
   <div id="map"></div>
 
   <script>
@@ -167,6 +175,39 @@
     L.maplibreGL({
       style: 'https://tiles.openfreemap.org/styles/positron',
     }).addTo(map);
+
+    // --- Mobile sidebar toggle ---
+    function closeMobileSidebar() {
+      const sidebar = document.getElementById('sidebar');
+      if (sidebar) {
+        sidebar.classList.remove('sidebar-open');
+        document.body.classList.remove('sidebar-visible');
+        // Ensure map tiles render correctly after layout shift
+        setTimeout(() => map.invalidateSize(), 350);
+      }
+    }
+
+    (function() {
+      const sidebar = document.getElementById('sidebar');
+      const openBtn = document.getElementById('mobileMenuBtn');
+      const closeBtn = document.getElementById('mobileCloseBtn');
+      if (!sidebar || !openBtn || !closeBtn) return;
+
+      openBtn.addEventListener('click', () => {
+        sidebar.classList.add('sidebar-open');
+        document.body.classList.add('sidebar-visible');
+      });
+      closeBtn.addEventListener('click', closeMobileSidebar);
+
+      // Close sidebar when tapping the dim overlay (area outside sidebar)
+      document.addEventListener('click', (e) => {
+        if (document.body.classList.contains('sidebar-visible') &&
+            !sidebar.contains(e.target) &&
+            !openBtn.contains(e.target)) {
+          closeMobileSidebar();
+        }
+      });
+    })();
 
     // Default zoom out logic. Will be used if user did not use Near Me features
     const originalCenter = map.getCenter();
@@ -992,6 +1033,9 @@
           map.flyTo([latitude, longitude], 14, { animate: true, duration: 0.8 });
         }
 
+        // Close sidebar on mobile so user sees the map
+        closeMobileSidebar();
+
         focusedMarker = marker;
         openStoreDetail(row, marker);
       });
@@ -1307,6 +1351,7 @@
               map.flyTo([latitude, longitude], 14, { animate: true, duration: 0.8 });
             }
 
+            closeMobileSidebar();
             focusedMarker = marker;
             openStoreDetail(row, marker);
           });

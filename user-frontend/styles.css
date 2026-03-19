@@ -286,28 +286,133 @@
       cursor: pointer;
     }
 
-    /* On small screens keep the original top-header behavior: make the header a normal top bar */
-    @media(max-width:899px) {
+    /* --- Mobile menu button (hidden on desktop) --- */
+    #mobileMenuBtn {
+      display: none;
+    }
+
+    #mobileCloseBtn {
+      display: none;
+    }
+
+    /* --- Mobile layout --- */
+    @media (max-width: 899px) {
       body {
         display: block;
       }
 
-      header {
-        position: static;
-        width: 100%;
-        height: auto;
-        border-right: none;
-        padding: 12px 16px;
-        display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        background: var(--card);
-      }
-
+      /* Map takes full screen on mobile */
       #map {
         margin-left: 0;
         width: 100%;
-        height: 640px;
+        height: 100vh;
+        height: 100dvh;
+      }
+
+      /* Sidebar hidden off-screen by default */
+      header {
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 100%;
+        max-width: 380px;
+        height: 100vh;
+        height: 100dvh;
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+        border-right: 1px solid var(--border);
+        box-shadow: none;
+        z-index: 2000;
+        padding: 16px;
+        padding-top: 52px;
+      }
+
+      /* Slide in when open */
+      header.sidebar-open {
+        transform: translateX(0);
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
+      }
+
+      /* Dim overlay when sidebar is open */
+      body.sidebar-visible::after {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.3);
+        z-index: 1999;
+      }
+
+      /* Hamburger button — top right on map */
+      #mobileMenuBtn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 1500;
+        width: 44px;
+        height: 44px;
+        border: none;
+        border-radius: 10px;
+        background: var(--card);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        cursor: pointer;
+        color: var(--text);
+      }
+
+      /* Close button inside sidebar */
+      #mobileCloseBtn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 36px;
+        height: 36px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--card2);
+        font-size: 22px;
+        cursor: pointer;
+        color: var(--text);
+        z-index: 1;
+      }
+
+      /* Tighten spacing on mobile */
+      #top #inner h2 {
+        font-size: 1.1rem;
+      }
+
+      #top #inner p {
+        font-size: 0.85rem;
+        line-height: 1.3;
+      }
+
+      #storeFilter {
+        font-size: 16px; /* prevents iOS zoom on focus */
+      }
+
+      /* Store cards */
+      .store {
+        padding: 10px;
+      }
+
+      /* Near Me control */
+      .nearme-control {
+        min-width: 160px;
+        padding: 10px 14px;
+      }
+
+      /* Store detail panel on mobile */
+      .store-detail {
+        margin-top: 6px;
+      }
+
+      .store-detail__image {
+        height: 140px;
       }
     }
 
