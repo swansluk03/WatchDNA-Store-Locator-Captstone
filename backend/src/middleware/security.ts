@@ -29,11 +29,13 @@ export function securityHeaders(req: Request, res: Response, next: NextFunction)
     res.setHeader(
       'Content-Security-Policy',
       "default-src 'self'; " +
-      "script-src 'self'; " +
-      "style-src 'self' 'unsafe-inline'; " +
+      "script-src 'self' 'unsafe-inline' https://unpkg.com; " +
+      "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com; " +
       "img-src 'self' data: https:; " +
-      "font-src 'self'; " +
-      "connect-src 'self'; " +
+      "font-src 'self' https://fonts.gstatic.com; " +
+      "connect-src 'self' https://tiles.openfreemap.org https://*.openfreemap.org; " +
+      "worker-src 'self' blob:; " +
+      "child-src 'self' blob:; " +
       "frame-ancestors 'none'"
     );
   }
