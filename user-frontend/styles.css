@@ -408,3 +408,30 @@
     font-weight: 700;
     line-height: 1;
   }
+
+  .marker-cluster-small {
+    /* 196 all; current, could change */
+    background-color: rgba(196, 196, 196, 0.6);
+  }
+
+  .marker-cluster-small div {
+    background-color: rgba(196, 196, 196, 1.0);
+  }
+
+  .marker-cluster-medium {
+    /* 173 all; current, could change */
+    background-color: rgba(173, 173, 173, 0.6);
+  }
+
+  .marker-cluster-medium div {
+    background-color: rgba(173, 173, 173, 1.0);
+  }
+
+  .marker-cluster-large {
+    /* 128 all; current, could change */
+    background-color: rgba(128, 128, 128, 0.6);
+  }
+
+  .marker-cluster-large div {
+   background-color: rgba(128, 128, 128, 1.0);
+  }
