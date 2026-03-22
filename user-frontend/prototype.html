@@ -91,6 +91,7 @@
 
       <div class="store-detail__actions">
         <a id="detailDirectionsBtn" class="store-detail__btn" href="#" target="_blank" rel="noopener">Directions</a>
+        <a id="detailPhoneBtn" class="store-detail__btn" href="#">Call</a>
         <a id="detailConnectBtn" class="store-detail__btn" href="#">Connect</a>
       </div>
 
@@ -533,6 +534,7 @@
     const brandsSectionEl = document.getElementById('detailBrandsSection');
     const imageEl = document.getElementById('detailImage');
     const directionsBtn = document.getElementById('detailDirectionsBtn');
+    const phoneBtn = document.getElementById('detailPhoneBtn');
     const connectBtn = document.getElementById('detailConnectBtn');
     const aboutSectionEl = document.getElementById('detailAboutSection');
     const aboutEl = document.getElementById('detailAbout');
@@ -552,7 +554,13 @@
       addressEl.style.whiteSpace = 'pre-line';
     }
 
-    if (phoneEl) phoneEl.textContent = phone || 'Not provided';
+    if (phoneEl) {
+      if (isValidPhone(phone)) {
+        phoneEl.innerHTML = `<a href="${formatPhoneHref(phone)}">${phone}</a>`;
+      } else {
+        phoneEl.textContent = 'Not provided';
+      }
+    }
     const isVerified = !!row._isPremium;
 
     const aboutText =
@@ -612,6 +620,18 @@
     directionsBtn.href = hasCoords
       ? `https://www.google.com/maps/search/?api=1&query=${q}`
       : `https://www.google.com/maps/search/?api=1&query=${q}`;
+    }
+
+    if (phoneBtn) {
+      if (isValidPhone(phone)) {
+        phoneBtn.href = formatPhoneHref(phone);
+        phoneBtn.textContent = 'Call';
+        phoneBtn.removeAttribute('aria-disabled');
+      } else {
+        phoneBtn.href = '#';
+        phoneBtn.textContent = 'Call';
+        phoneBtn.setAttribute('aria-disabled', 'true');
+      }
     }
 
     // Connect: prefer email; otherwise disable
@@ -1124,6 +1144,33 @@
     if (bad.has(cleaned)) return false;
 
     return cleaned.includes('@') && cleaned.includes('.');
+    }
+
+    function isValidPhone(val) {
+      if (!val) return false;
+
+      const cleaned = String(val).trim();
+      const lowered = cleaned.toLowerCase();
+
+      const bad = new Set([
+        '', ' ', '-', '--', '---', '.', 'n/a', 'na', 'none', 'null',
+        'not provided', 'not available', 'no phone', '0'
+      ]);
+
+      if (bad.has(lowered)) return false;
+
+      const digitsOnly = cleaned.replace(/\D/g, '');
+      return digitsOnly.length >= 10;
+    }
+
+    function formatPhoneHref(val) {
+      const raw = String(val || '').trim();
+      const hasPlus = raw.startsWith('+');
+      const digitsOnly = raw.replace(/\D/g, '');
+
+      if (!digitsOnly) return '#';
+
+      return hasPlus ? `tel:+${digitsOnly}` : `tel:${digitsOnly}`;
     }
 
     // --- Load data & render (with helpful logs) ---

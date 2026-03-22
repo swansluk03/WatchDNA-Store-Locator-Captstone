@@ -339,15 +339,17 @@
       font-size: 1rem;
       opacity: 0.8;
     }
-    
+
     .store-detail__actions {
       display: flex;
       gap: 10px;
       margin-bottom: 12px;
+      flex-wrap: wrap;
     }
-    
+
     .store-detail__btn {
-      flex: 1;
+      flex: 1 1 110px;
+      min-width: 0;
       text-align: center;
       padding: 10px 12px;
       border: 1px solid var(--border);
@@ -357,6 +359,11 @@
       text-decoration: none;
       cursor: pointer;
       font-weight: 600;
+    }
+
+    .store-detail__btn[aria-disabled="true"] {
+      opacity: 0.5;
+      pointer-events: none;
     }
     
     .store-detail__btn:hover {
