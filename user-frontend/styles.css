@@ -400,10 +400,46 @@
         padding: 10px;
       }
 
-      /* Near Me control */
-      .nearme-control {
-        min-width: 160px;
-        padding: 10px 14px;
+      /* Near Me control — circular icon on mobile */
+      .nearme-control.nearme-collapsed {
+        min-width: unset;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        padding: 0;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .nearme-control.nearme-collapsed .nearme-prompt-btn {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--card);
+        color: var(--text);
+        border: none;
+      }
+
+      /* Hide text, show icon on mobile */
+      .nearme-prompt-text {
+        display: none !important;
+      }
+
+      .nearme-prompt-icon {
+        display: block !important;
+      }
+
+      /* When expanded on mobile, restore full panel */
+      .nearme-control:not(.nearme-collapsed) {
+        width: auto;
+        min-width: 200px;
+        height: auto;
+        border-radius: 10px;
+        padding: 14px 18px;
       }
 
       /* Store detail panel on mobile */
@@ -662,6 +698,8 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    padding-top: 24px;
+    position: relative;
   }
 
   .nearme-slider-row {
@@ -746,4 +784,42 @@
   .nearme-reset:hover {
     opacity: 1;
     text-decoration: underline;
+  }
+
+  /* Close button inside near me expanded panel */
+  .nearme-close-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--card2);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .nearme-close-btn:hover {
+    background: var(--hover-bg);
+  }
+
+  /* Near me needs relative positioning for the close button */
+  .nearme-control {
+    position: relative;
+  }
+
+  /* Desktop: show text, hide icon */
+  .nearme-prompt-icon {
+    display: none;
+  }
+
+  .nearme-prompt-text {
+    display: inline;
   }

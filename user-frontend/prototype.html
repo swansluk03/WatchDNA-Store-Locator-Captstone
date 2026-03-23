@@ -1236,10 +1236,22 @@
 
             // --- Collapsed state: just the prompt button ---
             const promptBtn = L.DomUtil.create('button', 'nearme-btn nearme-prompt-btn', container);
-            promptBtn.textContent = 'Search Near Me';
+            promptBtn.innerHTML = '<span class="nearme-prompt-text">Search Near Me</span>' +
+              '<svg class="nearme-prompt-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+              '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>' +
+              '<line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/>' +
+              '<line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>';
 
             // --- Expanded state: slider + controls (hidden until location granted) ---
             const expanded = L.DomUtil.create('div', 'nearme-expanded', container);
+
+            // Close button for the expanded panel
+            const closeBtn = L.DomUtil.create('button', 'nearme-close-btn', expanded);
+            closeBtn.innerHTML = '&times;';
+            closeBtn.title = 'Close';
+            closeBtn.addEventListener('click', () => {
+              container.classList.add('nearme-collapsed');
+            });
 
             // Slider row
             const sliderRow = L.DomUtil.create('div', 'nearme-slider-row', expanded);
