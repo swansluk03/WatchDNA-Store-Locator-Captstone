@@ -411,6 +411,16 @@
     margin: 2px 6px 2px 0;
   }
 
+  .brand-pill--link {
+  color: var(--text);
+  text-decoration: none;
+  }
+
+  .brand-pill--link:hover {
+  background: var(--hover-bg);
+  text-decoration: underline;
+  }
+
   .verified-check {
     font-weight: 700;
     line-height: 1;

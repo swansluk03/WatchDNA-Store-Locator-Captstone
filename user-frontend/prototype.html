@@ -400,13 +400,21 @@
     // HTML string used for UI display (adds verified checkmark)
     function getDisplayBrandsHTMLForRow(row) {
       const list = getVisibleBrandsList(row);
+      const brandLinks = extractBrandLinksMap(row);
 
       if (!list.length) return "";
 
       return list.map(b => {
         const clean = b.trim();
-        const isVerifiedBrand = VERIFIED_BRANDS.has(clean.toUpperCase());
+        const key = clean.toUpperCase();
+        const isVerifiedBrand = VERIFIED_BRANDS.has(key);
         const check = isVerifiedBrand ? ` <span class="verified-check" title="Verified brand">✓</span>` : "";
+        const href = brandLinks.get(key);
+
+        if (isValidBrandHref(href)) {
+          return `<a class="brand-pill brand-pill--link" href="${escapeHtml(buildBrandHref(href))}" target="_blank" rel="noopener">${escapeHtml(clean)}${check}</a>`;
+        }
+
         return `<span class="brand-pill">${escapeHtml(clean)}${check}</span>`;
       }).join(" ");
     }
@@ -503,6 +511,50 @@
       }
       
       return brands;
+    }
+
+    function extractBrandLinksMap(row) {
+    const map = new Map();
+    const html = String(row['Custom Brands'] || '');
+
+    if (!html) return map;
+
+    const regex = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([^<]+)<\/a>/gi;
+    let match;
+
+    while ((match = regex.exec(html)) !== null) {
+      const href = String(match[1] || '').trim();
+      const label = String(match[2] || '').trim();
+
+      if (label && href && !map.has(label.toUpperCase())) {
+        map.set(label.toUpperCase(), href);
+        }
+      }
+
+      return map;
+    }
+
+    function isValidBrandHref(href) {
+      if (!href) return false;
+
+      const cleaned = String(href).trim().toLowerCase();
+      const bad = new Set([
+        '', '#', '/', 'n/a', 'na', 'none', 'null', 'not available'
+    ]);
+
+    if (bad.has(cleaned)) return false;
+
+    return /^https?:\/\//i.test(href) || href.startsWith('/');
+    }
+
+    function buildBrandHref(href) {
+      const raw = String(href || '').trim();
+      if (!raw) return '#';
+
+      if (/^https?:\/\//i.test(raw)) return raw;
+      if (raw.startsWith('/')) return raw;
+
+      return '#';
     }
 
     function setDetailPanelVisible(visible) {
