@@ -1433,7 +1433,7 @@ def universal_scrape(
             stores = scrape_viewport_expansion(url, locator_analysis["url_params"], region)
             results["expansion_used"] = True
         
-        elif detected_type == "radius" or (has_radius and has_center):
+        elif (detected_type == "radius" or (has_radius and has_center)) and detected_type != "single_call":
             # Radius-based API - use multi-point expansion
             log_debug("Strategy: Radius-based multi-point expansion", "INFO")
             custom_headers = _get_custom_headers(brand_config)
@@ -1714,13 +1714,23 @@ Auto-detects everything and uses the right strategy!
         except json.JSONDecodeError:
             print(f"⚠️  Warning: Invalid brand-config JSON, ignoring")
             brand_config = None
-    
+
+    # Resolve force_type: CLI --type wins, then brand config "type", then auto-detect
+    # Normalize "json" (brand config shorthand) to the scraper's "single_call" token
+    _TYPE_NORMALISE = {"json": "single_call", "html": "single_call"}
+    force_type = args.type
+    if not force_type and brand_config:
+        cfg_type = brand_config.get("type", "")
+        if cfg_type:
+            force_type = _TYPE_NORMALISE.get(cfg_type, cfg_type)
+            log_debug(f"Using force_type from brand config: {force_type}", "INFO")
+
     # Run universal scraper
     results = universal_scrape(
         url=args.url,
         output_file=args.output,
         region=args.region,
-        force_type=args.type,
+        force_type=force_type,
         validate_output=not args.no_validate,
         brand_config=brand_config,
         compare_techniques=args.compare_techniques,

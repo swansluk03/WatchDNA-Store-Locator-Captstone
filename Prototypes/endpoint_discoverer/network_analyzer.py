@@ -4,7 +4,7 @@
 import json
 import re
 from typing import Dict, List, Optional, Any
-from urllib.parse import urlparse, parse_qs, urljoin, urlencode
+from urllib.parse import urlparse, parse_qs, urlencode
 import requests
 
 DISCOVERY_SAMPLE_LIMIT = 15
@@ -42,17 +42,32 @@ class NetworkAnalyzer:
     def __init__(self):
         pass
 
+    # Maximum number of candidate URLs to run full analysis (including HTTP fetches) on.
+    # Pre-filtering by keyword relevance keeps this fast without losing accuracy.
+    MAX_CANDIDATES = 30
+
+    def _keyword_score(self, url: str) -> int:
+        """Return a quick relevance score for pre-sorting candidates before full analysis."""
+        url_lower = url.lower()
+        score = 0
+        for kw in self.STORE_KEYWORDS:
+            if kw in url_lower:
+                score += 2
+        for pat in self.API_PATTERNS:
+            if re.search(pat, url_lower):
+                score += 1
+        return score
+
     def analyze_requests(self, requests: List[Dict], base_url: str) -> List[Dict]:
         analyzed = []
-        
-        for req in requests:
+
+        # Filter and pre-sort by keyword relevance, then cap to avoid excessive HTTP fetches
+        candidates = [r for r in requests if r.get('url') and not self._should_skip_url(r['url'])]
+        candidates.sort(key=lambda r: self._keyword_score(r['url']), reverse=True)
+        candidates = candidates[:self.MAX_CANDIDATES]
+
+        for req in candidates:
             url = req.get('url', '')
-            if not url:
-                continue
-            
-            # Skip non-relevant URLs
-            if self._should_skip_url(url):
-                continue
             
             # Analyze the endpoint
             analysis = self._analyze_endpoint(url, req, base_url)
@@ -177,32 +192,6 @@ class NetworkAnalyzer:
         if params:
             variation_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
             variations.append(variation_url)
-        
-        # Variation 3: Try common base paths (e.g., /api/search/store/locator)
-        path_parts = parsed.path.split('/')
-        if len(path_parts) > 2:
-            # Try removing last part (e.g., /api/search?keyword=X -> /api/search)
-            if any(keyword in path_parts[-1].lower() for keyword in ['search', 'locator', 'store', 'location']):
-                base_path = '/'.join(path_parts[:-1])
-                variation_url = f"{parsed.scheme}://{parsed.netloc}{base_path}"
-                variations.append(variation_url)
-            
-            # Try /api/search/store/locator pattern
-            if 'api' in path_parts and 'search' in path_parts:
-                # Look for /api/search/store/locator or similar
-                api_index = path_parts.index('api')
-                if api_index + 1 < len(path_parts):
-                    # Try /api/search/store/locator
-                    potential_paths = [
-                        '/api/search/store/locator',
-                        '/api/store/locator',
-                        '/api/locator',
-                        '/api/stores',
-                        '/api/locations'
-                    ]
-                    for potential_path in potential_paths:
-                        variation_url = f"{parsed.scheme}://{parsed.netloc}{potential_path}"
-                        variations.append(variation_url)
         
         # Remove duplicates while preserving order
         seen = set()
@@ -377,16 +366,19 @@ class NetworkAnalyzer:
         # Default to JSON
         return 'json'
     
+    # Maximum bytes to read from an HTML response to detect store patterns.
+    # 200 KB is enough for any embedded JSON/data-attribute pattern while avoiding
+    # downloading multi-MB pages like Omega's 1400-store HTML.
+    HTML_READ_LIMIT = 200 * 1024
+
     def _fetch_endpoint(self, url: str, request: Dict) -> Optional[Dict]:
         """
-        Try to fetch endpoint data. Uses sample limit first for large APIs (avoids 1600+ store downloads).
-        
-        Args:
-            url: Endpoint URL
-            request: Request dictionary
-            
-        Returns:
-            Response data or None
+        Try to fetch endpoint data.
+
+        For JSON/API endpoints, tries a sample-limited URL first to avoid
+        downloading thousands of stores (e.g. Omega 1400 stores).
+        For HTML endpoints, streams the response and reads only the first
+        200 KB to keep detection fast without downloading the full page.
         """
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -395,13 +387,17 @@ class NetworkAnalyzer:
         req_headers = request.get('headers', {})
         if 'accept' in req_headers:
             headers['Accept'] = req_headers['accept']
-        timeout = 15 if 'html' in request.get('mimeType', '').lower() else 10
-        
-        # Try limited URL first for JSON/API endpoints (avoids fetching 1600+ stores)
+
         mime = request.get('mimeType', '').lower()
         url_lower = url.lower()
-        is_json_api = 'json' in mime or '/api/' in url_lower or 'location' in url_lower or 'store' in url_lower
-        if is_json_api:
+        is_html = 'html' in mime or (
+            'json' not in mime and '/api/' not in url_lower
+            and not url_lower.endswith('.json')
+        )
+        timeout = 15 if is_html else 10
+
+        # For JSON/API endpoints try a sample-limited URL first
+        if not is_html:
             limited_url = _url_with_sample_limit(url)
             if limited_url != url:
                 try:
@@ -413,6 +409,26 @@ class NetworkAnalyzer:
                         return data  # Limit worked, use smaller payload
                 except Exception:
                     pass  # Fall through to full URL
+
+        # For HTML responses stream and read only HTML_READ_LIMIT bytes
+        if is_html:
+            try:
+                response = requests.get(url, headers=headers, timeout=timeout, stream=True)
+                response.raise_for_status()
+                chunk = b''
+                for piece in response.iter_content(chunk_size=8192):
+                    chunk += piece
+                    if len(chunk) >= self.HTML_READ_LIMIT:
+                        break
+                response.close()
+                try:
+                    text = chunk.decode('utf-8', errors='replace')
+                except Exception:
+                    text = chunk.decode('latin-1', errors='replace')
+                return {'html': text}
+            except Exception:
+                return None
+
         try:
             response = requests.get(url, headers=headers, timeout=timeout)
             response.raise_for_status()

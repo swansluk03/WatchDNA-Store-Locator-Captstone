@@ -4,6 +4,10 @@ import validationService from './validation.service';
 import locationService from './location.service';
 import prisma from '../lib/prisma';
 import { logger } from '../utils/logger';
+import {
+  VALIDATION_MANUAL_UPLOAD,
+  VALIDATION_REVALIDATE_DEFAULT,
+} from '../config/validation-policy';
 
 export class UploadService {
 
@@ -32,10 +36,7 @@ export class UploadService {
       });
 
       logger.info(`[Upload ${uploadId}] Validating...`);
-      const validationResult = await validationService.validateCSV(filePath, {
-        autoFix: true,
-        checkUrls: false
-      });
+      const validationResult = await validationService.validateCSV(filePath, VALIDATION_MANUAL_UPLOAD);
       logger.info(`[Upload ${uploadId}] Validation ${validationResult.valid ? 'passed' : 'failed'} — errors: ${validationResult.errors.length}, warnings: ${validationResult.warnings.length}`);
 
       const updateData = validationService.formatForDatabase(validationResult);
@@ -49,7 +50,7 @@ export class UploadService {
       if (updateData.status === 'valid') {
         logger.info(`[Upload ${uploadId}] Importing to DB...`);
         try {
-          const importResult = await locationService.importFromCSV(filePath);
+          const importResult = await locationService.importFromCSV(filePath, uploadId);
           logger.info(`[Upload ${uploadId}] Import done — new: ${importResult.newCount}, updated: ${importResult.updatedCount}`);
           await prisma.upload.update({
             where: { id: uploadId },
@@ -197,7 +198,10 @@ export class UploadService {
       await prisma.upload.update({ where: { id: uploadId }, data: { status: 'validating' } });
 
       logger.info(`[Upload ${uploadId}] Re-validating${options?.autoFix ? ' with auto-fix' : ''}...`);
-      const validationResult = await validationService.validateCSV(filePath, options || {});
+      const validationResult = await validationService.validateCSV(filePath, {
+        ...VALIDATION_REVALIDATE_DEFAULT,
+        ...options,
+      });
 
       await prisma.validationLog.deleteMany({ where: { uploadId } });
 

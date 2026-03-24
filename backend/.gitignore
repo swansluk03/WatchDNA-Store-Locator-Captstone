@@ -7,6 +7,9 @@ dist/
 # Environment
 .env
 
+# Local DB backups (normalize-db-countries.ts, etc.)
+backups/
+
 # Database
 *.db
 *.db-journal

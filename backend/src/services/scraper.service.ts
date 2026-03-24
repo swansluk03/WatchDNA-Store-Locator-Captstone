@@ -1,14 +1,65 @@
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import Papa from 'papaparse';
 import validationService from './validation.service';
-import { storeService } from './store.service';
+import uploadService from './upload.service';
+import { storeService, UpsertResult } from './store.service';
+import {
+  VALIDATION_JOB_RECORDS_SAVE,
+  VALIDATION_SCRAPER_JOB_COMPLETION,
+} from '../config/validation-policy';
 import { SCRAPER_PATH, PYTHON_CMD } from '../utils/paths';
+import { normalizeScraperRowsForCsv } from '../utils/stable-handle';
+import { isRowCompleteForDb } from '../utils/row-completeness';
 import { logger } from '../utils/logger';
 import prisma from '../lib/prisma';
 
+/** Format a detailed DB sync summary from a batchUpsertLocations result. */
+function formatDbSyncLog(result: UpsertResult): string {
+  const lines: string[] = [
+    `Processed: ${result.upserted} | Skipped (invalid / incomplete): ${result.skipped}`,
+  ];
+  if (result.skippedIncomplete != null && result.skippedIncomplete > 0) {
+    lines.push(
+      `  Incomplete rows (not in DB — fix in job editor): ${result.skippedIncomplete}`
+    );
+  }
+  lines.push(
+    `  + ${result.created} new stores added`,
+    `  ~ ${result.updated} stores updated`,
+    `  = ${result.unchanged} stores unchanged`
+  );
+
+  if (result.newStores.length > 0) {
+    lines.push('');
+    lines.push('New stores:');
+    for (const name of result.newStores) lines.push(`  + ${name}`);
+  }
+
+  const appendChangeList = (label: string, names: string[]) => {
+    if (names.length === 0) return;
+    lines.push('');
+    lines.push(`${label} (${names.length}):`);
+    const shown = names.slice(0, 10);
+    for (const name of shown) lines.push(`  ~ ${name}`);
+    if (names.length > 10) lines.push(`  ... and ${names.length - 10} more`);
+  };
+
+  appendChangeList('Brand changes', result.brandsChanged);
+  appendChangeList('Address changes', result.addressChanged);
+  appendChangeList('Info changes', result.infoChanged);
+
+  return lines.join('\n');
+}
+
 class ScraperService {
   private runningProcesses: Map<string, ChildProcess> = new Map();
+
+  /** Location rows with this uploadId — source of truth for rowsProcessed (not per-save upsert batch size). */
+  private async countLocationsForUpload(uploadId: string): Promise<number> {
+    return prisma.location.count({ where: { uploadId } });
+  }
 
   async startScraping(
     jobId: string,
@@ -137,17 +188,50 @@ class ScraperService {
                 brandConfig: brandName,
                 scraperType: config.type || 'json',
                 rowsTotal: recordsScraped ?? 0,
-                rowsProcessed: recordsScraped ?? 0,
+                rowsProcessed: 0,
               }
             });
+
+            const displayName: string = config.display_name || brandName;
+
+            // ── STABLE HANDLES + JOB CSV (keeps incomplete rows for editor) ───
+            postProcessLogs += '\n\n=== SCRAPER CSV NORMALIZATION ===\n';
+            try {
+              const rawContent = fs.readFileSync(individualCsvFile, 'utf-8');
+              const parsed = Papa.parse(rawContent, {
+                header: true,
+                skipEmptyLines: true,
+                transformHeader: (h: string) => h.trim(),
+              });
+              const csvRecords = parsed.data as Record<string, string>[];
+              const withBrands = csvRecords.map((r) => ({
+                ...r,
+                Brands: r.Brands || displayName,
+              }));
+              const normalizedRows = normalizeScraperRowsForCsv(withBrands);
+              fs.writeFileSync(individualCsvFile, Papa.unparse(normalizedRows), 'utf-8');
+              const completeN = normalizedRows.filter((r) => isRowCompleteForDb(r)).length;
+              postProcessLogs += `Rows: ${normalizedRows.length} | Complete for DB: ${completeN} | Incomplete (CSV only): ${normalizedRows.length - completeN}\n`;
+              postProcessLogs += `Stable loc_* handles assigned to complete rows.\n`;
+              await prisma.upload.update({
+                where: { id: individualUpload.id },
+                data: {
+                  fileSize: fs.statSync(individualCsvFile).size,
+                  rowsTotal: normalizedRows.length,
+                },
+              });
+            } catch (normErr: any) {
+              postProcessLogs += `Normalization warning: ${normErr.message}\n`;
+              logger.warn(`[Job ${jobId}] CSV normalization:`, normErr.message);
+            }
 
             // ── VALIDATION ───────────────────────────────────────────────────
             postProcessLogs += '\n\n=== VALIDATION ===\n';
             try {
-              const validationResult = await validationService.validateCSV(individualCsvFile, {
-                autoFix: false,
-                checkUrls: false
-              });
+              const validationResult = await validationService.validateCSV(
+                individualCsvFile,
+                VALIDATION_SCRAPER_JOB_COMPLETION
+              );
               postProcessLogs += validationService.formatLogSection(validationResult);
 
               const updateData = validationService.formatForDatabase(validationResult);
@@ -167,21 +251,30 @@ class ScraperService {
               logger.warn(`[Job ${jobId}] Validation failed (non-fatal):`, valErr.message);
             }
 
-            // ── DB UPSERT ─────────────────────────────────────────────────────
+            // ── DB UPSERT (complete rows only; incomplete stay on CSV) ────────
             postProcessLogs += '\n\n=== DB SYNC ===\n';
             try {
-              const { default: Papa } = await import('papaparse');
               const fileContent = fs.readFileSync(individualCsvFile, 'utf-8');
               const { data: csvRecords } = Papa.parse(fileContent, {
                 header: true,
                 skipEmptyLines: true,
-                transformHeader: (h: string) => h.trim()
+                transformHeader: (h: string) => h.trim(),
               });
+              const enrichedRecords = (csvRecords as Record<string, string>[]).map((r) => ({
+                ...r,
+                Brands: r.Brands || displayName,
+              }));
               const upsertResult = await storeService.batchUpsertLocations(
-                csvRecords as Record<string, string>[],
-                individualUpload.id
+                enrichedRecords,
+                individualUpload.id,
+                { failFast: true, requireCompleteForDb: true }
               );
-              postProcessLogs += `Upserted: ${upsertResult.upserted} | Skipped: ${upsertResult.skipped}`;
+              postProcessLogs += formatDbSyncLog(upsertResult);
+              const rowsInDb = await this.countLocationsForUpload(individualUpload.id);
+              await prisma.upload.update({
+                where: { id: individualUpload.id },
+                data: { rowsProcessed: rowsInDb },
+              });
             } catch (dbErr: any) {
               postProcessLogs += `DB sync failed: ${dbErr.message}`;
               logger.error(`[Job ${jobId}] DB upsert failed (non-fatal):`, dbErr.message);
@@ -360,42 +453,33 @@ class ScraperService {
       throw new Error('Job not found or has no upload');
     }
 
-    const uploadService = (await import('./upload.service')).default;
     const filePath = await uploadService.getFilePath(job.upload.filename);
     if (!filePath || !fs.existsSync(filePath)) {
       throw new Error('Job CSV file not found');
     }
 
-    const isComplete = (r: Record<string, string>) => {
-      const phone = (r['Phone'] ?? '').trim();
-      const addr1 = (r['Address Line 1'] ?? '').trim();
-      const addr2 = (r['Address Line 2'] ?? '').trim();
-      return phone.length > 0 && (addr1.length > 0 || addr2.length > 0);
-    };
-
     const Papa = (await import('papaparse')).default;
 
+    const normalizedRecords = normalizeScraperRowsForCsv(records);
     // Write all records back to the job CSV — serves as the per-job audit copy
-    fs.writeFileSync(filePath, Papa.unparse(records), 'utf-8');
+    fs.writeFileSync(filePath, Papa.unparse(normalizedRecords), 'utf-8');
 
-    const completeCount = records.filter(isComplete).length;
-    const skippedIncomplete = records.length - completeCount;
+    const completeCount = normalizedRecords.filter(isRowCompleteForDb).length;
+    const skippedIncomplete = normalizedRecords.length - completeCount;
     let dbUpserted = 0;
+    let lastUpsert: UpsertResult | null = null;
     let validationErrors: number | undefined;
     const editTimestamp = new Date().toISOString();
     let editLogSection = `\n\n=== RECORDS UPDATED [${editTimestamp}] ===\n`;
-    editLogSection += `Saved to job CSV: ${records.length} | Complete: ${completeCount} | Skipped incomplete: ${skippedIncomplete}`;
+    editLogSection += `Saved to job CSV: ${normalizedRecords.length} | Complete: ${completeCount} | Skipped incomplete: ${skippedIncomplete}`;
 
     if (completeCount > 0) {
       // Run validate_csv.py --fix directly on the job CSV in-place (no tmp files)
-      let fixedRecords: Record<string, string>[] = records.filter(isComplete);
+      let fixedRecords: Record<string, string>[] = normalizedRecords.filter(isRowCompleteForDb);
       let validationResult: import('./validation.service').ValidationResult | null = null;
 
       try {
-        validationResult = await validationService.validateCSV(filePath, {
-          autoFix: true,
-          checkUrls: false
-        });
+        validationResult = await validationService.validateCSV(filePath, VALIDATION_JOB_RECORDS_SAVE);
         editLogSection += `\n\n=== VALIDATION ===\n${validationService.formatLogSection(validationResult)}`;
 
         // Re-read the job CSV — the validator may have fixed values in-place
@@ -407,7 +491,7 @@ class ScraperService {
             transformHeader: (h: string) => h.trim()
           });
           const allFixed = parsed.data as Record<string, string>[];
-          fixedRecords = allFixed.filter(isComplete);
+          fixedRecords = normalizeScraperRowsForCsv(allFixed).filter(isRowCompleteForDb);
         }
 
         editLogSection += `\n\n=== NORMALIZATION ===\nAuto-fix applied — ${fixedRecords.length} complete records normalized`;
@@ -416,7 +500,7 @@ class ScraperService {
           validationErrors = validationResult.errors.length;
           await this.appendJobLog(jobId, job.logs, editLogSection);
           return {
-            savedToJob: records.length,
+            savedToJob: normalizedRecords.length,
             skippedIncomplete,
             dbUpserted: 0,
             validationErrors
@@ -428,9 +512,12 @@ class ScraperService {
 
       // ── DB UPSERT ─────────────────────────────────────────────────────────
       try {
-        const upsertResult = await storeService.batchUpsertLocations(fixedRecords, job.uploadId);
-        dbUpserted = upsertResult.upserted;
-        editLogSection += `\n\n=== DB SYNC ===\nUpserted: ${upsertResult.upserted} | Skipped: ${upsertResult.skipped}`;
+        lastUpsert = await storeService.batchUpsertLocations(fixedRecords, job.uploadId, {
+          failFast: true,
+          requireCompleteForDb: true,
+        });
+        dbUpserted = lastUpsert.upserted;
+        editLogSection += `\n\n=== DB SYNC ===\n${formatDbSyncLog(lastUpsert)}`;
       } catch (dbErr: any) {
         editLogSection += `\n\n=== DB SYNC ===\nFailed: ${dbErr.message}`;
         logger.error(`[Job ${jobId}] DB upsert failed:`, dbErr.message);
@@ -440,13 +527,14 @@ class ScraperService {
       if (validationResult) {
         try {
           const dbFormat = validationService.formatForDatabase(validationResult);
+          const rowsProcessed = await this.countLocationsForUpload(job.uploadId);
           await prisma.upload.update({
             where: { id: job.uploadId },
             data: {
               validationErrors: dbFormat.validationErrors,
               validationWarnings: dbFormat.validationWarnings,
-              rowsTotal: fixedRecords.length,
-              rowsProcessed: fixedRecords.length,
+              rowsTotal: normalizedRecords.length,
+              rowsProcessed,
             }
           });
           await prisma.validationLog.deleteMany({ where: { uploadId: job.uploadId } });
@@ -461,7 +549,7 @@ class ScraperService {
     }
 
     await this.appendJobLog(jobId, job.logs, editLogSection);
-    return { savedToJob: records.length, skippedIncomplete, dbUpserted, validationErrors };
+    return { savedToJob: normalizedRecords.length, skippedIncomplete, dbUpserted, validationErrors };
   }
 
   /**
@@ -494,6 +582,82 @@ class ScraperService {
       `URL: ${url}\n` +
       `Started: ${startedAt}`
     );
+  }
+
+  /**
+   * Records for a completed job.
+   * Scraper jobs: always load from job CSV when present so incomplete rows stay editable.
+   * Other uploads: prefer DB by uploadId, else CSV (legacy).
+   */
+  async getJobRecordsPayload(jobId: string): Promise<{
+    jobId: string;
+    brandName: string;
+    source: 'db' | 'csv';
+    columns: string[];
+    records: Record<string, string>[];
+  }> {
+    const job = await prisma.scraperJob.findUnique({
+      where: { id: jobId },
+      include: { upload: true },
+    });
+    if (!job) {
+      throw new Error('Job not found');
+    }
+    if (job.status !== 'completed') {
+      throw new Error('Only completed jobs have viewable records');
+    }
+    if (!job.uploadId || !job.upload) {
+      throw new Error('No upload linked to this job');
+    }
+
+    const upload = job.upload;
+    const filePath = await uploadService.getFilePath(upload.filename);
+    if (upload.uploadedBy === 'scraper' && filePath && fs.existsSync(filePath)) {
+      const fileContent = fs.readFileSync(filePath, 'utf-8');
+      const parseResult = Papa.parse(fileContent, {
+        header: true,
+        skipEmptyLines: true,
+        transformHeader: (h: string) => h.trim(),
+      });
+      const rows = parseResult.data as Record<string, string>[];
+      return {
+        jobId: job.id,
+        brandName: job.brandName,
+        source: 'csv',
+        columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+        records: rows,
+      };
+    }
+
+    const dbRows = await storeService.getLocationsByUploadId(job.uploadId);
+    if (dbRows.length > 0) {
+      return {
+        jobId: job.id,
+        brandName: job.brandName,
+        source: 'db',
+        columns: Object.keys(dbRows[0]),
+        records: dbRows,
+      };
+    }
+
+    if (!filePath || !fs.existsSync(filePath)) {
+      throw new Error('Job CSV file not found');
+    }
+
+    const fileContent = fs.readFileSync(filePath, 'utf-8');
+    const parseResult = Papa.parse(fileContent, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: (h: string) => h.trim(),
+    });
+    const rows = parseResult.data as Record<string, string>[];
+    return {
+      jobId: job.id,
+      brandName: job.brandName,
+      source: 'csv',
+      columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+      records: rows,
+    };
   }
 
   /**

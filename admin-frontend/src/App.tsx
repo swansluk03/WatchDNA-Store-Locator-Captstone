@@ -8,6 +8,7 @@ import Uploads from './pages/Uploads';
 import UploadDetail from './pages/UploadDetail';
 import Scraper from './pages/Scraper';
 import HealthStatus from './pages/HealthStatus';
+import PremiumStores from './pages/PremiumStores';
 import './styles/App.css';
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
             <Route path="uploads/:id" element={<UploadDetail />} />
             <Route path="scraper" element={<Scraper />} />
             <Route path="health" element={<HealthStatus />} />
+            <Route path="premium-stores" element={<PremiumStores />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />

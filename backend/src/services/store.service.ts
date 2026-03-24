@@ -6,10 +6,74 @@
 
 import Papa from 'papaparse';
 import prisma from '../lib/prisma';
-import { parseRowToLocationData, locationToCSVRow } from '../utils/csv-to-location';
+import { parseRowToLocationData, locationToCSVRow, type LocationData } from '../utils/csv-to-location';
+import { isRowCompleteForDb } from '../utils/row-completeness';
 import { logger } from '../utils/logger';
 
 const BATCH_SIZE = 500;
+
+export interface UpsertResult {
+  upserted: number;
+  skipped: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  newStores: string[];
+  brandsChanged: string[];
+  addressChanged: string[];
+  infoChanged: string[];
+  /** DB errors when failFast is false (per-row resilient import). */
+  dbErrors?: string[];
+  /** Count of rows that failed to upsert (resilient mode only). */
+  failed?: number;
+  /** Rows excluded by requireCompleteForDb before parse. */
+  skippedIncomplete?: number;
+}
+
+type ExistingLocationSnapshot = {
+  handle: string;
+  name: string;
+  brands: string | null;
+  customBrands: string | null;
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string;
+  stateProvinceRegion: string | null;
+  country: string;
+  postalCode: string | null;
+  phone: string | null;
+  website: string | null;
+  email: string | null;
+};
+
+/** Compare an incoming parsed row against what's already in the DB. */
+function classifyLocationChange(
+  incoming: LocationData,
+  existing: ExistingLocationSnapshot
+): { brandsChanged: boolean; addressChanged: boolean; infoChanged: boolean } {
+  const norm = (v: string | null | undefined) => (v ?? '').trim();
+  const normLower = (v: string | null | undefined) => norm(v).toLowerCase();
+
+  const brandsChanged =
+    norm(incoming.brands) !== norm(existing.brands) ||
+    norm(incoming.customBrands) !== norm(existing.customBrands);
+
+  const addressChanged =
+    normLower(incoming.addressLine1) !== normLower(existing.addressLine1) ||
+    normLower(incoming.addressLine2) !== normLower(existing.addressLine2) ||
+    normLower(incoming.city) !== normLower(existing.city) ||
+    normLower(incoming.stateProvinceRegion) !== normLower(existing.stateProvinceRegion) ||
+    normLower(incoming.country) !== normLower(existing.country) ||
+    norm(incoming.postalCode) !== norm(existing.postalCode);
+
+  const infoChanged =
+    norm(incoming.name) !== norm(existing.name) ||
+    norm(incoming.phone) !== norm(existing.phone) ||
+    norm(incoming.website) !== norm(existing.website) ||
+    norm(incoming.email) !== norm(existing.email);
+
+  return { brandsChanged, addressChanged, infoChanged };
+}
 
 /** Normalize brand config ID (e.g. omega_stores) to display format used in Brands column (e.g. OMEGA) */
 function brandIdToDisplayName(brandId: string): string {
@@ -17,6 +81,7 @@ function brandIdToDisplayName(brandId: string): string {
     .replace(/_stores$/, '')
     .replace(/_retailers$/, '')
     .replace(/_dealers$/, '')
+    .replace(/_watches$/, '')
     .replace(/_/g, ' ')
     .toUpperCase();
   const mappings: Record<string, string> = {
@@ -79,23 +144,109 @@ export const storeService = {
    * - Preserves existing isPremium values; re-applies from PremiumStore for
    *   any handle that matches.
    * - Optionally stamps all rows with an uploadId.
-   * Returns counts of upserted and skipped rows.
+   * - failFast: true (default) — one transaction per 500-row batch (scraper jobs).
+   * - failFast: false — per-row upsert with try/catch (manual CSV upload parity).
+   * - requireCompleteForDb — only rows passing isRowCompleteForDb are upserted (incomplete stay on CSV only).
    */
   async batchUpsertLocations(
     records: Record<string, string>[],
-    uploadId?: string
-  ): Promise<{ upserted: number; skipped: number }> {
-    const parsed = records
+    uploadId?: string,
+    options?: { failFast?: boolean; requireCompleteForDb?: boolean }
+  ): Promise<UpsertResult> {
+    const failFast = options?.failFast !== false;
+    const requireComplete = options?.requireCompleteForDb === true;
+
+    let working = records;
+    let skippedIncomplete = 0;
+    if (requireComplete) {
+      working = records.filter(isRowCompleteForDb);
+      skippedIncomplete = records.length - working.length;
+    }
+
+    const parsed = working
       .map(parseRowToLocationData)
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
-    const skipped = records.length - parsed.length;
-    if (parsed.length === 0) return { upserted: 0, skipped };
+    const skipped = skippedIncomplete + (working.length - parsed.length);
+    if (parsed.length === 0) {
+      return {
+        upserted: 0,
+        skipped,
+        created: 0,
+        updated: 0,
+        unchanged: 0,
+        newStores: [],
+        brandsChanged: [],
+        addressChanged: [],
+        infoChanged: [],
+        skippedIncomplete: requireComplete ? skippedIncomplete : undefined,
+      };
+    }
 
+    if (failFast) {
+      const result = await storeService.batchUpsertLocationsFailFast(parsed, uploadId, skipped);
+      return { ...result, skippedIncomplete: requireComplete ? skippedIncomplete : result.skippedIncomplete };
+    }
+    const result = await storeService.batchUpsertLocationsResilient(parsed, uploadId, skipped);
+    return { ...result, skippedIncomplete: requireComplete ? skippedIncomplete : result.skippedIncomplete };
+  },
+
+  /** Scraper path: batched transactions for throughput. */
+  async batchUpsertLocationsFailFast(
+    parsed: LocationData[],
+    uploadId: string | undefined,
+    skipped: number
+  ): Promise<UpsertResult> {
     let upserted = 0;
+    let created = 0;
+    let updated = 0;
+    let unchanged = 0;
+    const newStores: string[] = [];
+    const brandsChanged: string[] = [];
+    const addressChanged: string[] = [];
+    const infoChanged: string[] = [];
 
     for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
       const batch = parsed.slice(i, i + BATCH_SIZE);
+      const batchHandles = batch.map((r) => r.handle);
+
+      const existingRecords = await prisma.location.findMany({
+        where: { handle: { in: batchHandles } },
+        select: {
+          handle: true,
+          name: true,
+          brands: true,
+          customBrands: true,
+          addressLine1: true,
+          addressLine2: true,
+          city: true,
+          stateProvinceRegion: true,
+          country: true,
+          postalCode: true,
+          phone: true,
+          website: true,
+          email: true,
+        },
+      });
+      const existingMap = new Map(existingRecords.map((r) => [r.handle, r]));
+
+      for (const row of batch) {
+        const existing = existingMap.get(row.handle);
+        if (!existing) {
+          newStores.push(row.name);
+          created++;
+        } else {
+          const changes = classifyLocationChange(row, existing);
+          if (changes.brandsChanged || changes.addressChanged || changes.infoChanged) {
+            if (changes.brandsChanged) brandsChanged.push(row.name);
+            if (changes.addressChanged) addressChanged.push(row.name);
+            if (changes.infoChanged) infoChanged.push(row.name);
+            updated++;
+          } else {
+            unchanged++;
+          }
+        }
+      }
 
       await prisma.$transaction(
         batch.map((row) =>
@@ -116,11 +267,108 @@ export const storeService = {
       upserted += batch.length;
     }
 
-    // Re-apply premium flags for just the handles we touched
     const handles = parsed.map((r) => r.handle);
     await storeService.reapplyPremiumFlags(handles);
 
-    return { upserted, skipped };
+    return { upserted, skipped, created, updated, unchanged, newStores, brandsChanged, addressChanged, infoChanged };
+  },
+
+  /** Manual upload path: per-row upsert so one bad row does not roll back the batch. */
+  async batchUpsertLocationsResilient(
+    parsed: LocationData[],
+    uploadId: string | undefined,
+    skipped: number
+  ): Promise<UpsertResult> {
+    let upserted = 0;
+    let created = 0;
+    let updated = 0;
+    let unchanged = 0;
+    const newStores: string[] = [];
+    const brandsChanged: string[] = [];
+    const addressChanged: string[] = [];
+    const infoChanged: string[] = [];
+    const dbErrors: string[] = [];
+    let failed = 0;
+    const successfulHandles: string[] = [];
+
+    for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
+      const batch = parsed.slice(i, i + BATCH_SIZE);
+      const batchHandles = batch.map((r) => r.handle);
+
+      const existingRecords = await prisma.location.findMany({
+        where: { handle: { in: batchHandles } },
+        select: {
+          handle: true,
+          name: true,
+          brands: true,
+          customBrands: true,
+          addressLine1: true,
+          addressLine2: true,
+          city: true,
+          stateProvinceRegion: true,
+          country: true,
+          postalCode: true,
+          phone: true,
+          website: true,
+          email: true,
+        },
+      });
+      const existingMap = new Map(existingRecords.map((r) => [r.handle, r]));
+
+      for (const row of batch) {
+        const snapshot = existingMap.get(row.handle);
+        try {
+          await prisma.location.upsert({
+            where: { handle: row.handle },
+            update: {
+              ...row,
+              ...(uploadId ? { uploadId } : {}),
+            },
+            create: {
+              ...row,
+              ...(uploadId ? { uploadId } : {}),
+            },
+          });
+          successfulHandles.push(row.handle);
+          upserted++;
+
+          if (!snapshot) {
+            newStores.push(row.name);
+            created++;
+          } else {
+            const changes = classifyLocationChange(row, snapshot);
+            if (changes.brandsChanged || changes.addressChanged || changes.infoChanged) {
+              if (changes.brandsChanged) brandsChanged.push(row.name);
+              if (changes.addressChanged) addressChanged.push(row.name);
+              if (changes.infoChanged) infoChanged.push(row.name);
+              updated++;
+            } else {
+              unchanged++;
+            }
+          }
+        } catch (err: any) {
+          failed++;
+          dbErrors.push(`Error importing ${row.name || row.handle}: ${err.message}`);
+          logger.error(`[storeService] Resilient upsert failed for ${row.handle}:`, err);
+        }
+      }
+    }
+
+    await storeService.reapplyPremiumFlags(successfulHandles);
+
+    return {
+      upserted,
+      skipped,
+      created,
+      updated,
+      unchanged,
+      newStores,
+      brandsChanged,
+      addressChanged,
+      infoChanged,
+      dbErrors,
+      failed,
+    };
   },
 
   /**

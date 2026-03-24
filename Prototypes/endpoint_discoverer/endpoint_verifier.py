@@ -485,22 +485,29 @@ class EndpointVerifier:
         
         return result
     
-    def verify_multiple(self, endpoints: List[Dict], max_concurrent: int = 3) -> List[Dict]:
+    def verify_multiple(self, endpoints: List[Dict]) -> List[Dict]:
         """
-        Verify multiple endpoints efficiently
-        
+        Verify multiple endpoints efficiently.
+
+        HTML-type endpoints are skipped — they are already handled by the
+        discoverer's _analyze_html_content and re-downloading the full page
+        is expensive (e.g. Omega's 1400-store HTML).
+
+        Stops early once a high-confidence verified endpoint is found so
+        lower-confidence candidates don't trigger unnecessary HTTP requests.
+
         Args:
             endpoints: List of endpoint dicts with 'url' key
-            max_concurrent: Max concurrent verifications (for future async support)
-            
+
         Returns:
             List of endpoints with verification results added
         """
         verified_endpoints = []
-        
+        best_verified_count = 0
+
         for endpoint in endpoints:
             url = endpoint.get('url', '')
-            
+
             # If endpoint has no URL, mark it as failed verification but still include it
             if not url:
                 endpoint.update({
@@ -514,10 +521,47 @@ class EndpointVerifier:
                     'data_path': '',
                     'field_mapping': {}
                 })
-                # Ensure indicators list exists
                 if 'indicators' not in endpoint:
                     endpoint['indicators'] = []
                 endpoint['indicators'].append('missing_url')
+                verified_endpoints.append(endpoint)
+                continue
+
+            # HTML endpoints are already handled by _analyze_html_content; skip
+            # re-downloading them here to avoid fetching multi-MB pages.
+            if endpoint.get('type') == 'html':
+                endpoint.update({
+                    'verified': False,
+                    'verified_store_count': 0,
+                    'verified_type': 'html',
+                    'verified_is_region_specific': False,
+                    'verification_error': 'HTML endpoints verified via html_analysis',
+                    'verification_time': 0,
+                    'sample_stores': [],
+                    'data_path': '',
+                    'field_mapping': {}
+                })
+                if 'indicators' not in endpoint:
+                    endpoint['indicators'] = []
+                verified_endpoints.append(endpoint)
+                continue
+
+            # Early exit: a high-confidence verified result means remaining
+            # lower-confidence candidates are unlikely to be better.
+            if best_verified_count > 0 and endpoint.get('confidence', 0) < 0.8:
+                endpoint.update({
+                    'verified': False,
+                    'verified_store_count': 0,
+                    'verified_type': None,
+                    'verified_is_region_specific': False,
+                    'verification_error': 'Skipped: higher-confidence endpoint already verified',
+                    'verification_time': 0,
+                    'sample_stores': [],
+                    'data_path': '',
+                    'field_mapping': {}
+                })
+                if 'indicators' not in endpoint:
+                    endpoint['indicators'] = []
                 verified_endpoints.append(endpoint)
                 continue
             
@@ -532,7 +576,6 @@ class EndpointVerifier:
                 custom_headers.setdefault('Accept', 'application/json')
             
             # Check if this is a radius-based endpoint that might need optimization
-            from urllib.parse import urlparse, parse_qs
             parsed = urlparse(url)
             params = parse_qs(parsed.query, keep_blank_values=True)
             radius_params = ['r', 'radius', 'distance']
@@ -597,11 +640,12 @@ class EndpointVerifier:
             
             # Update confidence based on verification
             if verification['success'] and verification.get('store_count', 0) > 0:
-                # Boost confidence if verification succeeded
                 current_confidence = endpoint.get('confidence', 0)
                 endpoint['confidence'] = min(current_confidence + 0.2, 1.0)
                 endpoint['indicators'].append(f"verified:{verification['store_count']}_stores")
-            
+                if verification['store_count'] > best_verified_count:
+                    best_verified_count = verification['store_count']
+
             verified_endpoints.append(endpoint)
         
         # Re-sort by confidence after verification

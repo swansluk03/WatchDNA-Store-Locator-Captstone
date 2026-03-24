@@ -34,7 +34,9 @@ def _extract_store_from_obj(obj: Dict, mapping: Dict[str, str]) -> Dict[str, str
     return result
 
 
-def _get_nested(obj: Dict, path: str) -> Any:
+def _get_nested(obj: Dict, path: Any) -> Any:
+    if not isinstance(path, str):
+        return None
     keys = path.split(".")
     v = obj
     for k in keys:

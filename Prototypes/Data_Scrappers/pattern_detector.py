@@ -261,9 +261,9 @@ def auto_generate_field_mapping(sample_data: Any) -> Dict[str, Any]:
         if len(matches) == 1:
             mapping[canonical_field] = matches[0]
         elif len(matches) > 1:
-            # Prefer exact matches, then shorter names
+            # Prefer exact matches, then shorter names — always pick one winner
             matches.sort(key=lambda x: (x.lower() not in [p.lower() for p in patterns], len(x)))
-            mapping[canonical_field] = matches[:2]  # Return top 2 matches
+            mapping[canonical_field] = matches[0]
     
     # Always set Status to TRUE for scraped data
     mapping["Status"] = "TRUE"

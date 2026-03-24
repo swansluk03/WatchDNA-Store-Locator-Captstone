@@ -1,189 +1,178 @@
 #!/usr/bin/env python3
-"""Quick test for endpoint discoverer."""
+"""Pytest suite for the endpoint discoverer.
+
+Run with:
+    cd Prototypes/endpoint_discoverer
+    pytest test_discoverer.py -v
+
+Each test uses a real store-locator page from a brand already in brand_configs.json,
+verifies that the discoverer succeeds, and checks that the discovered endpoint/config
+matches what we already know works.
+"""
 
 import sys
 import os
-import json
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from endpoint_discoverer import EndpointDiscoverer
 
 
-def test_simple_discovery():
-    print("=" * 80)
-    print("TEST 1: Simple Store Locator Discovery")
-    print("=" * 80)
-    print()
-    
-    test_url = "https://www.alange-soehne.com/us-en/store-locator"
-    
-    print(f"Testing URL: {test_url}")
-    print("This should find the JSON API endpoint...")
-    print()
-    
-    try:
-        discoverer = EndpointDiscoverer(headless=True, timeout=30)
-        result = discoverer.discover(test_url)
-        
-        print("\n" + "=" * 80)
-        print("RESULTS")
-        print("=" * 80)
-        print()
-        
-        if result['success']:
-            print("✅ Discovery completed successfully!")
-            print()
-            
-            if result['endpoints']:
-                print(f"Found {len(result['endpoints'])} potential endpoints:\n")
-                for i, endpoint in enumerate(result['endpoints'][:5], 1):  # Show top 5
-                    print(f"{i}. {endpoint.get('url', 'Unknown')[:100]}...")
-                    print(f"   Type: {endpoint.get('type', 'unknown')}")
-                    print(f"   Confidence: {endpoint.get('confidence', 0):.1%}")
-                    if endpoint.get('store_count'):
-                        print(f"   Stores detected: {endpoint.get('store_count')}")
-                    print()
-            else:
-                print("⚠️  No endpoints found in network requests")
-            
-            if result.get('suggested_config'):
-                print("\n📋 Suggested Brand Configuration:\n")
-                print(json.dumps(result['suggested_config'], indent=2))
-            else:
-                print("\n⚠️  No configuration suggested")
-        else:
-            print("❌ Discovery failed")
-            if result.get('errors'):
-                print("\nErrors:")
-                for error in result['errors']:
-                    print(f"  - {error}")
-        
-        return result
-        
-    except Exception as e:
-        print(f"\n❌ Error during discovery: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+def _make_discoverer() -> EndpointDiscoverer:
+    return EndpointDiscoverer(headless=True, timeout=30, verify_endpoints=True)
 
 
-def test_html_page():
-    """Test with an HTML-based store locator"""
-    print("\n" + "=" * 80)
-    print("TEST 2: HTML Store Locator Discovery")
-    print("=" * 80)
-    print()
-    
-    test_url = "https://www.blancpain.com/en-us/service/points-sale"
-    
-    print(f"Testing URL: {test_url}")
-    print("This should detect HTML with embedded data...")
-    print()
-    
-    try:
-        discoverer = EndpointDiscoverer(headless=True, timeout=30)
-        result = discoverer.discover(test_url)
-        
-        print("\n" + "=" * 80)
-        print("RESULTS")
-        print("=" * 80)
-        print()
-        
-        if result['success']:
-            print("✅ Discovery completed!")
-            
-            if result.get('html_analysis'):
-                print("\n📄 HTML Analysis:")
-                print(json.dumps(result['html_analysis'], indent=2))
-            
-            if result.get('suggested_config'):
-                print("\n📋 Suggested Configuration:\n")
-                print(json.dumps(result['suggested_config'], indent=2))
-        else:
-            print("❌ Discovery failed")
-            if result.get('errors'):
-                for error in result['errors']:
-                    print(f"  - {error}")
-        
-        return result
-        
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+def _top_endpoint(result: dict) -> dict:
+    """Return the highest-confidence endpoint from a discovery result."""
+    endpoints = result.get('endpoints', [])
+    return endpoints[0] if endpoints else {}
 
 
-def test_viewport_endpoint():
-    """Test with a viewport-based endpoint (if we can find the page)"""
-    print("\n" + "=" * 80)
-    print("TEST 3: Viewport-Based Endpoint Discovery")
-    print("=" * 80)
-    print()
-    
-    # Note: Rolex doesn't have a public store locator page, so we'll skip this
-    # or use a different example
-    print("⚠️  Skipping viewport test (requires store locator page URL)")
-    print("   To test viewport detection, use a store locator that uses map bounds")
-    print()
+# ---------------------------------------------------------------------------
+# A. Lange & Söhne — single-call JSON API
+# ---------------------------------------------------------------------------
+
+class TestAlangeSoehne:
+    """The store locator page at alange-soehne.com triggers a single JSON API call
+    that returns all stores.  The discoverer must find a URL containing
+    /api/search/store/locator and suggest a 'json' config."""
+
+    STORE_LOCATOR_URL = "https://www.alange-soehne.com/us-en/store-locator"
+    EXPECTED_API_FRAGMENT = "/api/search/store/locator"
+
+    def test_discovery_succeeds(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        assert result['success'] is True, f"Discovery failed: {result.get('errors')}"
+
+    def test_endpoints_found(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        assert len(result['endpoints']) > 0, "No endpoints discovered"
+
+    def test_correct_api_url_found(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        urls = [ep.get('url', '') for ep in result['endpoints']]
+        assert any(self.EXPECTED_API_FRAGMENT in u for u in urls), (
+            f"Expected fragment '{self.EXPECTED_API_FRAGMENT}' not found in: {urls}"
+        )
+
+    def test_suggested_config_is_json(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        cfg = result.get('suggested_config') or {}
+        assert cfg.get('type') == 'json', f"Expected type 'json', got: {cfg.get('type')}"
+
+    def test_top_endpoint_has_stores(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        top = _top_endpoint(result)
+        store_count = top.get('verified_store_count') or top.get('store_count') or 0
+        assert store_count > 0, f"Expected stores in top endpoint, got: {top}"
 
 
-def main():
-    """Run all tests"""
-    print("\n" + "=" * 80)
-    print("ENDPOINT DISCOVERER TEST SUITE")
-    print("=" * 80)
-    print()
-    print("This will test the endpoint discoverer with known store locators.")
-    print("Make sure you have:")
-    print("  1. Installed dependencies: pip install -r requirements.txt")
-    print("  2. Chrome/Chromium browser installed")
-    print("  3. Internet connection")
-    print()
-    
-    input("Press Enter to start tests...")
-    print()
-    
-    # Run tests
-    results = []
-    
-    # Test 1: Simple JSON API
-    result1 = test_simple_discovery()
-    results.append(("Simple Discovery", result1))
-    
-    # Test 2: HTML page
-    result2 = test_html_page()
-    results.append(("HTML Discovery", result2))
-    
-    # Test 3: Viewport (skipped)
-    test_viewport_endpoint()
-    
-    # Summary
-    print("\n" + "=" * 80)
-    print("TEST SUMMARY")
-    print("=" * 80)
-    print()
-    
-    for name, result in results:
-        if result:
-            status = "✅ PASSED" if result.get('success') else "❌ FAILED"
-            print(f"{name}: {status}")
-        else:
-            print(f"{name}: ❌ ERROR")
-    
-    print()
-    print("=" * 80)
-    print("Testing complete!")
-    print("=" * 80)
-    print()
-    print("Next steps:")
-    print("  1. Review the suggested configurations")
-    print("  2. Test the endpoints manually")
-    print("  3. Add to brand_configs.json if working correctly")
-    print()
+# ---------------------------------------------------------------------------
+# Rolex — related-domain viewport API
+# ---------------------------------------------------------------------------
+
+class TestRolex:
+    """Rolex's store locator is on www.rolex.com but the API lives on
+    retailers.rolex.com.  The discoverer must find the related-domain API."""
+
+    STORE_LOCATOR_URL = "https://www.rolex.com/en-us/retailers"
+    EXPECTED_DOMAIN_FRAGMENT = "retailers.rolex.com"
+
+    def test_discovery_succeeds(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        assert result['success'] is True, f"Discovery failed: {result.get('errors')}"
+
+    def test_endpoints_found(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        assert len(result['endpoints']) > 0, "No endpoints discovered"
+
+    def test_retailers_domain_discovered(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        urls = [ep.get('url', '') for ep in result['endpoints']]
+        assert any(self.EXPECTED_DOMAIN_FRAGMENT in u for u in urls), (
+            f"Expected domain '{self.EXPECTED_DOMAIN_FRAGMENT}' not found in: {urls}"
+        )
+
+    def test_suggested_config_present(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        assert result.get('suggested_config') is not None, "No suggested config returned"
 
 
-if __name__ == "__main__":
-    main()
+# ---------------------------------------------------------------------------
+# Alpina — radius-based JSON endpoint
+# ---------------------------------------------------------------------------
 
+class TestAlpina:
+    """Alpina uses a Demandware radius-based JSON endpoint.
+    The discoverer must find a URL containing FindStores and classify it
+    as radius or json type."""
+
+    STORE_LOCATOR_URL = "https://us.alpinawatches.com/store-locator"
+    EXPECTED_API_FRAGMENT = "FindStores"
+
+    def test_discovery_succeeds(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        assert result['success'] is True, f"Discovery failed: {result.get('errors')}"
+
+    def test_endpoints_found(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        assert len(result['endpoints']) > 0, "No endpoints discovered"
+
+    def test_findstores_endpoint_discovered(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        urls = [ep.get('url', '') for ep in result['endpoints']]
+        assert any(self.EXPECTED_API_FRAGMENT in u for u in urls), (
+            f"Expected fragment '{self.EXPECTED_API_FRAGMENT}' not found in: {urls}"
+        )
+
+    def test_suggested_config_present(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        assert result.get('suggested_config') is not None, "No suggested config returned"
+
+
+# ---------------------------------------------------------------------------
+# Omega — HTML page (large, 1400+ stores)
+# Verifies that the discoverer does NOT time out / hang on large HTML pages.
+# ---------------------------------------------------------------------------
+
+class TestOmega:
+    """Omega's store locator is a large HTML page with 1400+ stores embedded.
+    The discoverer must complete without timing out and correctly identify
+    it as an HTML endpoint."""
+
+    STORE_LOCATOR_URL = "https://www.omegawatches.com/en-us/store-locator"
+
+    def test_discovery_completes(self):
+        """Discovery must finish (not hang) even with a very large HTML page."""
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        # Success or failure is acceptable; what matters is it completes
+        assert isinstance(result, dict)
+        assert 'success' in result
+
+    def test_html_type_identified(self):
+        discoverer = _make_discoverer()
+        result = discoverer.discover(self.STORE_LOCATOR_URL)
+        endpoints = result.get('endpoints', [])
+        html_analysis = result.get('html_analysis')
+        # Either html_analysis is populated OR an html-type endpoint is found
+        has_html_signal = (
+            html_analysis is not None
+            or any(ep.get('type') == 'html' for ep in endpoints)
+        )
+        assert has_html_signal, (
+            "Expected html_analysis or an html-type endpoint for Omega"
+        )
