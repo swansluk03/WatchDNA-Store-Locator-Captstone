@@ -175,12 +175,18 @@
     const originalCenter = map.getCenter();
     const originalZoom = map.getZoom();
 
-    map.on('popupclose', () => {
-      if(radiusCircle) {
+    map.on('popupclose', (e) => {
+      if (!focusedMarker) return;
+
+      const closedPopup = e.popup;
+      const focusedPopup = focusedMarker.getPopup ? focusedMarker.getPopup() : null;
+
+      if (closedPopup !== focusedPopup) return;
+
+      if (radiusCircle) {
         setDetailPanelVisible(false);
         map.fitBounds(radiusCircle.getBounds().pad(0.2));
       } else {
-        // Reset to default zoom
         resetFocusedStore();
       }
     });
@@ -1356,9 +1362,7 @@
                   const best = findNearestAmong(ll, visible);
                   emphasizeNearest(ll, { ...best, row: getRowForMarker(best.marker) });
 
-                  // Apply a default 10-mile radius filter
-                  const radiusMeters = meters(10);
-                  applyRadiusToCurrent(ll, radiusMeters);
+                  map.setView(best.marker.getLatLng(), 11);
                 },
                 (err) => {
                   const m = {1: 'Permission Denied.', 2: 'Position Unavailable.', 3: 'Request Timed Out.'};
