@@ -452,3 +452,16 @@
   .marker-cluster-large div {
    background-color: rgba(128, 128, 128, 1.0);
   }
+
+  .map-info-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    font-size: 16px;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
