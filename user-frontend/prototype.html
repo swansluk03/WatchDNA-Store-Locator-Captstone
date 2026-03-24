@@ -1035,7 +1035,8 @@
       map.fitBounds(b);
 
       setNearMeStatus(`Closest: ${(row['Name'] || 'Location')} — ${miles} mi / ${km} km`);
-      nearestMarker.openPopup();
+      //nearestMarker.openPopup();
+      nearestMarker.fire("click"); // Now also opens the sidebar card, not just the marker popup when using Near Me
     }
 
     function showUserMarker(ll) {
