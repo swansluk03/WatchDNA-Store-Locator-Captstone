@@ -175,14 +175,7 @@
     const originalCenter = map.getCenter();
     const originalZoom = map.getZoom();
 
-    map.on('popupclose', (e) => {
-      if (!focusedMarker) return;
-
-      const closedPopup = e.popup;
-      const focusedPopup = focusedMarker.getPopup ? focusedMarker.getPopup() : null;
-
-      if (closedPopup !== focusedPopup) return;
-
+    map.on('popupclose', () => {
       if (radiusCircle) {
         setDetailPanelVisible(false);
         map.fitBounds(radiusCircle.getBounds().pad(0.2));
