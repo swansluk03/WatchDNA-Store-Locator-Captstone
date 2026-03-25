@@ -5,6 +5,8 @@ import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { parseRowToLocationData } from '../utils/csv-to-location';
+import { storeService } from './store.service';
+import { normalizeCountry } from '../utils/country';
 
 export interface LocationFilters {
   brand?: string;
@@ -36,9 +38,12 @@ export interface ImportResult {
 class LocationService {
   /**
    * Import locations from CSV file to database.
-   * Uses batch upsert and re-applies premium flags after import.
+   * Delegates to storeService.batchUpsertLocations (resilient per-row mode) so
+   * manual uploads share the same Location write logic as scraper jobs.
+   *
+   * @param uploadId When set (e.g. admin CSV upload), stamps Location.uploadId for reporting.
    */
-  async importFromCSV(csvFilePath: string): Promise<ImportResult> {
+  async importFromCSV(csvFilePath: string, uploadId?: string): Promise<ImportResult> {
     const result: ImportResult = {
       success: false,
       newCount: 0,
@@ -56,57 +61,26 @@ class LocationService {
         transformHeader: (header: string) => header.trim()
       });
 
-      const rows = parseResult.data as any[];
+      const rows = parseResult.data as Record<string, string>[];
       logger.warn(`[LocationService] Importing ${rows.length} rows from CSV...`);
 
-      const BATCH_SIZE = 500;
-      const upsertedHandles: string[] = [];
-
       for (const row of rows) {
-        const locationData = parseRowToLocationData(row);
-        if (!locationData) {
-          result.skippedCount++;
-          if (row.Name || row.Handle) {
-            result.errors.push(`Invalid or missing required fields for: ${row.Name || row.Handle}`);
-          }
-          continue;
-        }
-
-        try {
-          const existing = await prisma.location.findUnique({
-            where: { handle: locationData.handle },
-            select: { id: true }
-          });
-
-          await prisma.location.upsert({
-            where: { handle: locationData.handle },
-            update: locationData,
-            create: locationData
-          });
-
-          upsertedHandles.push(locationData.handle);
-
-          if (existing) {
-            result.updatedCount++;
-          } else {
-            result.newCount++;
-          }
-        } catch (error: any) {
-          result.errorCount++;
-          result.errors.push(`Error importing ${row.Name || 'unknown'}: ${error.message}`);
-          logger.error(`[LocationService] Error importing row:`, error);
+        if (!parseRowToLocationData(row) && (row.Name || row.Handle)) {
+          result.errors.push(`Invalid or missing required fields for: ${row.Name || row.Handle}`);
         }
       }
 
-      // Re-apply premium flags for all upserted handles in one query
-      if (upsertedHandles.length > 0) {
-        await prisma.$executeRaw`
-          UPDATE "Location" l
-          SET "isPremium" = true
-          FROM "PremiumStore" ps
-          WHERE l.handle = ps.handle
-            AND l.handle = ANY(${upsertedHandles}::text[])
-        `;
+      const upsert = await storeService.batchUpsertLocations(rows, uploadId, {
+        failFast: false,
+        requireCompleteForDb: true,
+      });
+
+      result.newCount = upsert.created;
+      result.updatedCount = upsert.updated + upsert.unchanged;
+      result.skippedCount = upsert.skipped;
+      result.errorCount = upsert.failed ?? 0;
+      if (upsert.dbErrors && upsert.dbErrors.length > 0) {
+        result.errors.push(...upsert.dbErrors);
       }
 
       result.success = true;
@@ -114,7 +88,6 @@ class LocationService {
         `[LocationService] Import complete: ${result.newCount} new, ${result.updatedCount} updated, ` +
         `${result.skippedCount} skipped, ${result.errorCount} errors`
       );
-
     } catch (error: any) {
       result.success = false;
       result.errors.push(`Failed to read/parse CSV: ${error.message}`);
@@ -146,7 +119,7 @@ class LocationService {
     }
 
     if (country) {
-      where.country = country;
+      where.country = normalizeCountry(country) || country;
     }
 
     if (city) {

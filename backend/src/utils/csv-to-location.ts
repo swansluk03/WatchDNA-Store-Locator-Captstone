@@ -5,6 +5,7 @@
  * The CSV uses human-readable column headers (e.g. "Address Line 1").
  * Prisma model fields use camelCase (e.g. addressLine1).
  */
+import { normalizeCountry } from './country';
 export interface LocationData {
   handle: string;
   name: string;
@@ -88,7 +89,7 @@ export function parseRowToLocationData(row: Record<string, any>): LocationData |
     postalCode: row['Postal/ZIP Code'] || null,
     city: row.City || '',
     stateProvinceRegion: row['State/Province/Region'] || null,
-    country: row.Country || '',
+    country: normalizeCountry(String(row.Country || '')),
     phone: row.Phone || null,
     email: row.Email || null,
     website: row.Website || null,
