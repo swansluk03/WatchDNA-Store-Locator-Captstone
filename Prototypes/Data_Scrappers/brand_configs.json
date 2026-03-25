@@ -464,11 +464,11 @@
       "Longitude": "longitude",
       "Name": "name",
       "Address Line 1": "address",
-      "Address Line 2": "address",
       "Phone": "phone",
       "Email": "email",
       "Website": "directions_url",
-      "Handle": "id"
+      "Handle": "id",
+      "_parse_combined_address": "address"
     }
   },
   "bremont_watches": {

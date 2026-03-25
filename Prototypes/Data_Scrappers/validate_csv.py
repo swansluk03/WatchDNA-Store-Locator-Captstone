@@ -25,6 +25,7 @@ from typing import List, Dict, Tuple, Set, Any, Optional
 from collections import defaultdict
 
 from scraper_utils import resolve_partial_url
+from country_normalize import normalize_country
 from urllib.parse import urlparse
 
 # Handle Windows console encoding
@@ -257,7 +258,13 @@ class CSVValidator:
             return value
         
         original = value
-        
+
+        # Normalize country codes / aliases to canonical full name
+        if field == "Country":
+            normalized = normalize_country(value)
+            if normalized != value:
+                return normalized
+
         # Fix backslashes in text fields (convert to forward slashes or spaces)
         if field not in ["Website", "Image URL"]:
             # Replace backslashes with forward slashes in addresses (e.g., "1\F" -> "1/F")
@@ -312,6 +319,16 @@ class CSVValidator:
                     row[field] = fixed_value
                     value = fixed_value
             
+            # Warn when Country looks like a code / alias that will be normalized
+            if field == "Country" and not auto_fix:
+                normalized_country = normalize_country(value)
+                if normalized_country and normalized_country != value:
+                    self.warnings.append(ValidationWarning(
+                        "country_not_canonical",
+                        f"Row {row_num}: Country '{value}' should be '{normalized_country}' (run --fix to correct)",
+                        {"row": row_num, "field": field, "value": value, "canonical": normalized_country}
+                    ))
+
             # Check for backslashes (except in URLs where they might be valid)
             if '\\' in value and field not in ["Website", "Image URL"]:
                 self.warnings.append(ValidationWarning(

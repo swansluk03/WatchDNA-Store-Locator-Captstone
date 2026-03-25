@@ -23,6 +23,7 @@ const Layout: React.FC = () => {
           <Link to="/">Dashboard</Link>
           <Link to="/uploads">Uploads</Link>
           <Link to="/scraper">Scraper</Link>
+          <Link to="/premium-stores">Premium Stores</Link>
           <Link to="/health">Health</Link>
         </div>
 

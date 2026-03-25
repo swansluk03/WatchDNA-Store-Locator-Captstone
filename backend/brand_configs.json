@@ -382,12 +382,12 @@
     "_note": "This endpoint uses pagination. The universal scraper will automatically follow all pages."
   },
   "bulgari_stores": {
-    "type": "radius",
-    "url": "https://www.bulgari.com/en-us/storelocator?country-region=US&l=en_US&per=50&offset=0",
+    "type": "json",
+    "url": "NEEDS_YEXT_API_URL",
     "method": "GET",
-    "description": "Country-filter API - Change country param (e.g. country-region=US to IT, FR) for worldwide stores. Universal scraper iterates through all countries automatically.",
+    "description": "BULGARI store locator is fully server-side rendered (SSR). Yext powers the backend but the API key is NEVER exposed client-side - it is called server-to-server on Bulgari's infrastructure. The page is protected by an Akamai WAF that blocks Python/curl requests. No XHR calls to liveapi.yext.com are made by the browser; the store data is embedded in the 1.4MB SSR HTML response.",
     "display_name": "BULGARI",
-    "enabled": true,
+    "enabled": false,
     "data_path": "response.entities",
     "field_mapping": {
       "Latitude": "profile.geocodedCoordinate.lat",
@@ -403,7 +403,10 @@
       "Website": "profile.websiteUrl.url",
       "Handle": "profile.meta.id"
     },
-    "_note": "This endpoint filters by country. To get all stores worldwide, iterate country-region (or country) param: US, IT, FR, DE, etc. Scraper uses comprehensive country list."
+    "_ssr_url_pattern": "https://www.bulgari.com/en-us/storelocator/?q={lat},{lon}&qp={city_name}&l=en_US (returns up to 10 nearby stores SSR'd in HTML; need multi-point radius coverage for global scrape)",
+    "_fix_option_1": "Find the Yext API key: it is only accessible server-side. Check Bulgari's server logs, or ask their tech team. The key is NOT in the browser JS bundle or any client-side request.",
+    "_fix_option_2": "Add Playwright/Selenium browser automation support to the scraper. This would bypass the Akamai WAF and allow parsing the SSR HTML at the URL above using real Chrome. Each coordinate point returns ~10 nearest stores.",
+    "_known": "Yext businessId=3415321, siteId=16789. The field_mapping above matches the Yext Knowledge Graph entity structure. Confirmed: no liveapi.yext.com calls are ever made in the browser - all Yext calls are server-side."
   },
   "benrus": {
     "type": "single_call",
@@ -464,11 +467,11 @@
       "Longitude": "longitude",
       "Name": "name",
       "Address Line 1": "address",
-      "Address Line 2": "address",
       "Phone": "phone",
       "Email": "email",
       "Website": "directions_url",
-      "Handle": "id"
+      "Handle": "id",
+      "_parse_combined_address": "address"
     }
   },
   "bremont_watches": {

@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Optional, Tuple, Set
 from urllib.parse import urlparse, urljoin
 
 from scraper_utils import resolve_partial_url
+from country_normalize import normalize_country
 
 CANONICAL_SCHEMA = [
     "Handle", "Name", "Status", "Address Line 1", "Address Line 2", "Postal/ZIP Code",
@@ -145,6 +146,47 @@ def clean_address(address: Any) -> str:
     address_str = re.sub(r',\s*,', ',', address_str)  # Remove double commas
 
     return address_str.strip()
+
+
+def parse_combined_address(address_str: str) -> Dict[str, str]:
+    """
+    Parse a combined address string in 'Street, City[, Postal][, COUNTRY]' format
+    into its component parts.
+
+    Designed for sources (e.g. StoreMapper) that return the full address as a
+    single comma-delimited string.  Returns a dict with zero or more of:
+        street, city, postal, country
+    """
+    parts = [p.strip() for p in address_str.split(',') if p.strip()]
+    if len(parts) < 2:
+        return {"street": address_str.strip()}
+
+    result: Dict[str, str] = {}
+
+    # Last part: treat as country if it looks like one (all uppercase word(s) ≥ 3 chars)
+    last = parts[-1].strip()
+    if re.match(r'^[A-Z][A-Z\s\-]{2,}$', last):
+        result["country"] = last.title()
+        parts = parts[:-1]
+        if not parts:
+            return result
+        last = parts[-1].strip()
+
+    # New last part: treat as postal code if it's short and contains a digit
+    if re.match(r'^[\w\s\-]{2,10}$', last) and any(c.isdigit() for c in last) and len(last) <= 10:
+        result["postal"] = last
+        parts = parts[:-1]
+        if not parts:
+            return result
+
+    # Remaining: last part is city, everything before is the street
+    if len(parts) >= 2:
+        result["city"] = parts[-1].strip()
+        result["street"] = ", ".join(parts[:-1])
+    else:
+        result["street"] = parts[0].strip()
+
+    return result
 
 
 def strip_redundant_address_parts(
@@ -917,7 +959,25 @@ def normalize_location(
     normalized["City"] = clean_html_tags(mapped_data.get("City", ""))
     normalized["State/Province/Region"] = clean_html_tags(mapped_data.get("State/Province/Region", ""))
     country_raw = clean_html_tags(mapped_data.get("Country", ""))
-    
+
+    # If a combined address field is configured, parse it to fill empty components.
+    # Activated via "_parse_combined_address": "<source_field>" in the field mapping.
+    if field_mapping:
+        parse_src = field_mapping.get("_parse_combined_address")
+        if parse_src and not normalized["City"]:
+            raw_addr = raw_data.get(parse_src, "")
+            if raw_addr and isinstance(raw_addr, str):
+                parsed = parse_combined_address(raw_addr)
+                if parsed.get("street"):
+                    normalized["Address Line 1"] = parsed["street"]
+                    normalized["Address Line 2"] = ""
+                if parsed.get("city"):
+                    normalized["City"] = parsed["city"]
+                if not normalized["Postal/ZIP Code"] and parsed.get("postal"):
+                    normalized["Postal/ZIP Code"] = parsed["postal"]
+                if not country_raw and parsed.get("country"):
+                    country_raw = parsed["country"]
+
     # If country is missing, try to infer it from address
     if not country_raw or not country_raw.strip():
         inferred_country = infer_country_from_address(
@@ -926,12 +986,9 @@ def normalize_location(
             normalized["State/Province/Region"],
             country_raw
         )
-        if inferred_country:
-            normalized["Country"] = inferred_country
-        else:
-            normalized["Country"] = ""
+        normalized["Country"] = normalize_country(inferred_country) if inferred_country else ""
     else:
-        normalized["Country"] = country_raw
+        normalized["Country"] = normalize_country(country_raw)
     
     # Strip redundant city/state/country from Address Line 1 when in separate fields (avoids display duplication)
     normalized["Address Line 1"] = strip_redundant_address_parts(

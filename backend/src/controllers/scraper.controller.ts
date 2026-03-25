@@ -4,7 +4,6 @@ import uploadService from '../services/upload.service';
 import { storeService } from '../services/store.service';
 import fs from 'fs';
 import path from 'path';
-import Papa from 'papaparse';
 import { BRAND_CONFIGS_PATH, ENDPOINT_DISCOVERER_PATH, PYTHON_CMD } from '../utils/paths';
 import prisma from '../lib/prisma';
 
@@ -478,66 +477,25 @@ export const scraperController = {
     }
   },
 
-  // GET /api/scraper/jobs/:id/records - Get records for a completed job.
-  // Prefers a batch DB query (Location WHERE uploadId) over reading the CSV file.
+  // GET /api/scraper/jobs/:id/records - Get records for a completed job (see scraperService.getJobRecordsPayload).
   async getJobRecords(req: Request, res: Response) {
     try {
       const { id } = req.params;
-
-      const job = await prisma.scraperJob.findUnique({
-        where: { id },
-        include: { upload: true }
-      });
-
-      if (!job) {
-        return res.status(404).json({ error: 'Job not found' });
-      }
-
-      if (job.status !== 'completed') {
-        return res.status(400).json({ error: 'Only completed jobs have viewable records' });
-      }
-
-      if (!job.uploadId || !job.upload) {
-        return res.status(404).json({ error: 'No upload linked to this job' });
-      }
-
-      // Try DB first — fast indexed lookup by uploadId
-      const dbRows = await storeService.getLocationsByUploadId(job.uploadId);
-      if (dbRows.length > 0) {
-        return res.json({
-          jobId: job.id,
-          brandName: job.brandName,
-          source: 'db',
-          columns: Object.keys(dbRows[0]),
-          records: dbRows
-        });
-      }
-
-      // Fallback: read from job CSV (older jobs or pre-sync state)
-      const filePath = await uploadService.getFilePath(job.upload.filename);
-      if (!filePath || !fs.existsSync(filePath)) {
-        return res.status(404).json({ error: 'Job CSV file not found' });
-      }
-
-      const fileContent = fs.readFileSync(filePath, 'utf-8');
-      const parseResult = Papa.parse(fileContent, {
-        header: true,
-        skipEmptyLines: true,
-        transformHeader: (h: string) => h.trim()
-      });
-
-      const rows = parseResult.data as Record<string, string>[];
-
-      res.json({
-        jobId: job.id,
-        brandName: job.brandName,
-        source: 'csv',
-        columns: rows.length > 0 ? Object.keys(rows[0]) : [],
-        records: rows
-      });
+      const payload = await scraperService.getJobRecordsPayload(id);
+      res.json(payload);
     } catch (error: any) {
+      const msg = error.message || 'Error fetching job records';
+      if (msg === 'Job not found') {
+        return res.status(404).json({ error: msg });
+      }
+      if (msg === 'Only completed jobs have viewable records') {
+        return res.status(400).json({ error: msg });
+      }
+      if (msg === 'No upload linked to this job' || msg === 'Job CSV file not found') {
+        return res.status(404).json({ error: msg });
+      }
       console.error('Error fetching job records:', error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: msg });
     }
   },
 

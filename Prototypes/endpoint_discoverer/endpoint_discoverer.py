@@ -2,11 +2,12 @@
 """Discovers API endpoints from store locator pages via Selenium network monitoring."""
 
 import argparse
+import concurrent.futures
 import json
 import re
 import time
 from typing import Dict, List, Optional, Any
-from urllib.parse import urlparse, parse_qs, urljoin, urlencode
+from urllib.parse import urlparse, parse_qs, urlencode
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -227,7 +228,7 @@ class EndpointDiscoverer:
         
         # Wait for page to fully load and JavaScript to execute
         print(f"  ⏳ Waiting for page to initialize...")
-        time.sleep(5)  # Increased wait time for JS-heavy pages
+        time.sleep(3)
         
         # Try to wait for common store locator elements
         try:
@@ -242,7 +243,6 @@ class EndpointDiscoverer:
         
         # Try common interactions that might trigger API calls
         interactions = [
-            ("Search", self._try_search),
             ("Map Interaction", self._try_map_interaction),
             ("Filter Dropdown", self._try_filter_dropdown),
             ("Load More", self._try_load_more),
@@ -255,13 +255,13 @@ class EndpointDiscoverer:
                 if interaction():
                     successful_interactions += 1
                     print(f"  ✓ {name} triggered")
-                    time.sleep(2)
+                    time.sleep(1)
                     captured = _capture_current_url()
                     if captured:
                         print(f"  ✓ Captured URL after {name}: {captured[:80]}...")
                 else:
                     print(f"  ⊘ {name} not available")
-                time.sleep(3)  # Increased wait time for requests to complete
+                time.sleep(2)
             except Exception as e:
                 print(f"  ⊘ {name} failed: {str(e)[:100]}")
                 continue
@@ -274,77 +274,9 @@ class EndpointDiscoverer:
         
         # Final wait to capture any delayed requests
         print(f"  ⏳ Final wait for delayed requests...")
-        time.sleep(3)
+        time.sleep(2)
         
         return seen_urls
-    
-    def _try_search(self):
-        """Try to trigger a search"""
-        try:
-            # Look for search input with multiple strategies
-            search_selectors = [
-                "input[type='search']",
-                "input[type='text'][placeholder*='search' i]",
-                "input[type='text'][placeholder*='location' i]",
-                "input[type='text'][placeholder*='city' i]",
-                "input[type='text'][placeholder*='zip' i]",
-                "input[type='text'][placeholder*='address' i]",
-                "#search",
-                ".search-input",
-                "[data-search]",
-                "input[name*='search' i]",
-                "input[id*='search' i]"
-            ]
-            
-            for selector in search_selectors:
-                try:
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for search_input in elements:
-                        try:
-                            if search_input.is_displayed() and search_input.is_enabled():
-                                # Clear any existing text
-                                search_input.clear()
-                                # Type search term
-                                search_input.send_keys("New York")
-                                time.sleep(0.5)
-                                
-                                # Try to submit
-                                try:
-                                    search_input.submit()
-                                    return True
-                                except:
-                                    # Try to find submit button
-                                    try:
-                                        submit_selectors = [
-                                            "button[type='submit']",
-                                            ".search-button",
-                                            "[data-search-submit]",
-                                            "button:contains('Search')",
-                                            "input[type='submit']"
-                                        ]
-                                        for sub_sel in submit_selectors:
-                                            try:
-                                                submit_btn = self.driver.find_element(By.CSS_SELECTOR, sub_sel)
-                                                if submit_btn.is_displayed():
-                                                    submit_btn.click()
-                                                    return True
-                                            except:
-                                                continue
-                                    except:
-                                        pass
-                                
-                                # Try pressing Enter
-                                from selenium.webdriver.common.keys import Keys
-                                search_input.send_keys(Keys.RETURN)
-                                return True
-                        except:
-                            continue
-                except:
-                    continue
-        except Exception as e:
-            pass
-        
-        return False
     
     def _try_map_interaction(self):
         """Try to interact with map (pan, zoom)"""
@@ -791,6 +723,7 @@ class EndpointDiscoverer:
 
         This handles cases like Rolex where the store locator lives on
         www.rolex.com but the actual API is on retailers.rolex.com.
+        Probes all (domain, path) combinations concurrently.
         """
         if not self.driver:
             return []
@@ -833,42 +766,54 @@ class EndpointDiscoverer:
         print(f"  🔎 Probing {len(related_domains)} related brand domain(s): {', '.join(related_domains)}")
 
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        results: List[Dict] = []
 
-        for domain in related_domains:
-            for path in _STORE_API_PROBE_PATHS:
-                probe_url = f"{domain}{path}"
-                try:
-                    resp = requests.get(
-                        probe_url,
-                        params=_VIEWPORT_PROBE_PARAMS,
-                        headers=headers,
-                        timeout=8,
-                    )
-                    if resp.status_code != 200:
-                        continue
-                    ct = resp.headers.get('content-type', '').lower()
-                    if 'json' not in ct:
-                        continue
-                    data = resp.json()
-                    # Accept a non-empty list or a dict that contains store data
-                    is_store_list = isinstance(data, list) and len(data) > 0
-                    is_store_dict = isinstance(data, dict) and self._has_store_data(data)
-                    if is_store_list or is_store_dict:
-                        actual_url = resp.url   # includes the params as sent
-                        results.append({
-                            'url': actual_url,
-                            'method': 'GET',
-                            'status': 200,
-                            'mimeType': ct,
-                            'headers': {},
-                        })
-                        print(f"  ✓ Found store API on related domain: {actual_url[:80]}")
-                        break   # one hit per domain is enough
-                except Exception:
-                    continue
+        # Track first successful hit per domain so we only return one result per domain
+        domain_hits: Dict[str, Dict] = {}
 
-        return results
+        def _probe(domain: str, path: str) -> Optional[Dict]:
+            probe_url = f"{domain}{path}"
+            try:
+                resp = requests.get(
+                    probe_url,
+                    params=_VIEWPORT_PROBE_PARAMS,
+                    headers=headers,
+                    timeout=8,
+                )
+                if resp.status_code != 200:
+                    return None
+                ct = resp.headers.get('content-type', '').lower()
+                if 'json' not in ct:
+                    return None
+                data = resp.json()
+                is_store_list = isinstance(data, list) and len(data) > 0
+                is_store_dict = isinstance(data, dict) and self._has_store_data(data)
+                if is_store_list or is_store_dict:
+                    return {
+                        'domain': domain,
+                        'url': resp.url,
+                        'method': 'GET',
+                        'status': 200,
+                        'mimeType': ct,
+                        'headers': {},
+                    }
+            except Exception:
+                pass
+            return None
+
+        # Build all (domain, path) tasks; _STORE_API_PROBE_PATHS is ordered most→least specific
+        tasks = [(domain, path) for domain in related_domains for path in _STORE_API_PROBE_PATHS]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(tasks), 16)) as executor:
+            futures = {executor.submit(_probe, domain, path): (domain, path) for domain, path in tasks}
+            for future in concurrent.futures.as_completed(futures):
+                hit = future.result()
+                if hit:
+                    domain = hit.pop('domain')
+                    if domain not in domain_hits:
+                        domain_hits[domain] = hit
+                        print(f"  ✓ Found store API on related domain: {hit['url'][:80]}")
+
+        return list(domain_hits.values())
 
     def _has_store_data(self, data: Any, depth: int = 0) -> bool:
         """
