@@ -130,46 +130,19 @@
 
   </header>
 
- <!-- Constant visible attribution location -->
-  <button id="mapInfoBtn" class="map-info-btn">ⓘ</button>
-
   <div id="map"></div>
 
   <script>
     // --- Map bootstrap ---
     // NEW MAP THEME CODE
-    const map = L.map('map', {maxZoom: 19, attributionControl: false}).setView([20, 0], 2); // Using the longitude, latitude, and zoom level from original map
+    const map = L.map('map', {maxZoom: 19}).setView([20, 0], 2); // Using the longitude, latitude, and zoom level from original map
     L.maplibreGL({
       style: 'https://tiles.openfreemap.org/styles/bright',
     }).addTo(map);
 
-    // Custom attribution text for the popup
-    const attributionText = 
-    '© <a href="https://openfreemap.org">OpenFreeMap</a> | ' + 
-    '© <a href="https://openmaptiles.org">OpenMapTiles</a> | ' + 
-    'Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-
-    // Attribution popup logic
-    function showAttributionPopup() {
-      const popup = L.popup({
-        closeButton: false,
-        autoClose: false,
-        closeOnClick: false
-      })
-        .setLatLng(map.getCenter())
-        .setContent(attributionText)
-        .openOn(map);
-
-      // The timeout makes it so that it closes automatically after 5 seconds on initial map load 
-      setTimeout(() => {
-        map.closePopup(popup);
-      }, 5000);
-    }
-    map.whenReady(showAttributionPopup);
-
-    document.getElementById("mapInfoBtn").addEventListener("click", () => {
-      L.popup().setLatLng(map.getCenter()).setContent(attributionText).openOn(map);
-    });
+    // Removes 'Leaflet' from the attribution; it's not necessary to include it because the requirements of the MIT License
+    // are already fulfilled within the Leaflet source code we are using
+    map.attributionControl.setPrefix('');
 
     // Default zoom out logic. Will be used if user did not use Near Me features
     const originalCenter = map.getCenter();
