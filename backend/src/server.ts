@@ -11,6 +11,9 @@ dotenv.config();
 import { config, validateConfig } from './config';
 import { logger } from './utils/logger';
 
+//Import services
+import { storeService } from './services/store.service';
+
 // Validate configuration on startup
 validateConfig();
 
@@ -41,7 +44,7 @@ const corsOptions = {
     }
 
     // Check if origin is in allowed list
-    if (config.cors.allowedOrigins.includes(origin)) {
+    if (config.cors.allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
       callback(null, true);
     } else {
       callback(new Error(`Origin ${origin} not allowed by CORS policy`));
@@ -65,9 +68,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Ensure upload directory exists
-const uploadDir = path.join(__dirname, '..', config.upload.dir);
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+const uploadsDir = path.join(__dirname, '..', config.upload.dir);
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
 // Health check routes (no rate limiting)
@@ -86,18 +89,44 @@ app.use('/api/scraper', scraperRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/premium', premiumRoutes);
 
-// Serve user-frontend static files
-const userFrontendDir = path.join(__dirname, '..', '..', 'user-frontend');
-const uploadsDir = path.join(__dirname, '..', 'uploads');
-app.use(express.static(userFrontendDir));
+//API endpoints for stores
+
+app.get('/api/stores', async (req: Request, res: Response) => {
+  try {
+    const stores = await storeService.getMasterRecords();
+    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=300');
+    res.json(stores);
+  } catch (err) {
+    logger.error('Failed to fetch stores:', err);
+    res.status(500).json({ error: 'Failed to fetch stores' });
+  }
+});
+
+// Dynamic CSV Route
+
+app.get('/backend/uploads/master_stores.csv', async (req: Request, res: Response) => {
+  try {
+    const csv = await storeService.generateDownloadCSV();
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="master_stores.csv"');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+
+    res.send(csv);
+  } catch (err) {
+    logger.error('CSV generation failed:', err);
+    res.status(500).send('Failed to generate CSV');
+  }
+});
+
+
+// // Serve user-frontend static files
+// const userFrontendDir = path.join(__dirname, '..', '..', 'user-frontend');
+// const uploadsDir = path.join(__dirname, '..', 'uploads');
+// app.use(express.static(userFrontendDir));
 
 // expose backend/uploads so prototype.html can fetch store data
 app.use('/backend/uploads', express.static(uploadsDir));
-
-// Redirect root to prototype.html
-app.get('/', (req: Request, res: Response) => {
-  res.sendFile(path.join(userFrontendDir, 'prototype.html'));
-});
 
 // 404 handler for API routes only
 app.use('/api/*', (req: Request, res: Response) => {
