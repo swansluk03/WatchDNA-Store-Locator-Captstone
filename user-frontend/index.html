@@ -927,7 +927,7 @@
 
     let radiusCircle = null;
 
-    function meters(mi) { return mi * 1609.344; }
+    function meters(mi) { return km * 1000; }
 
     function applyRadiusToCurrent(centerLL, radiusMeters) {
       if (radiusCircle) { map.removeLayer(radiusCircle); radiusCircle = null; }
@@ -945,7 +945,7 @@
         if (d <= radiusMeters) { clusterGroup.addLayer(m); kept++; }
       });
 
-      setNearMeStatus(`Showing ${kept} location(s) within ${(radiusMeters / 1609.344).toFixed(0)} mi`);
+      setNearMeStatus(`Showing ${kept} location(s) within ${(radiusMeters / 1000).toFixed(0)} km`);
       if (kept > 0) map.fitBounds(radiusCircle.getBounds().pad(0.2));
 
       renderStoreListingsFromLayers(getVisibleMarkers());
@@ -958,8 +958,8 @@
         (ll) => {
           // getUserLatLng returns the users coordinates, so we can just immediately use it
           showUserMarker(ll);
-          const mi = parseFloat(document.getElementById('nearMeRadius').value || '10');
-              applyRadiusToCurrent(ll, meters(mi));
+          const km = parseFloat(document.getElementById('nearMeRadius').value || '16');
+              applyRadiusToCurrent(ll, meters(km));
         },
         (err) => {
           // Error handling to see what went wrong
@@ -1006,13 +1006,11 @@
       nearestLine = L.polyline([userLL, nearestMarker.getLatLng()], { weight: 3, dashArray: '6,6' }).addTo(map);
 
       const dist = map.distance(userLL, nearestMarker.getLatLng());
-      const miles = (best.dist / 1609.344).toFixed(2);
       const km = (best.dist / 1000).toFixed(2);
       const b = L.latLngBounds([userLL, best.marker.getLatLng()]).pad(0.4);
       map.fitBounds(b);
 
-      setNearMeStatus(`Closest: ${(row['Name'] || 'Location')} — ${miles} mi / ${km} km`);
-      //nearestMarker.openPopup();
+      setNearMeStatus(`Closest: ${(row['Name'] || 'Location')} — ${km} km`);
       nearestMarker.fire("click"); // Now also opens the sidebar card, not just the marker popup when using Near Me
     }
 
@@ -1437,11 +1435,11 @@
             select.style.border = '1px solid #ccc';
             select.style.cursor = 'pointer';
 
-            [5, 10, 25, 50].forEach(mi => {
+            [5, 10, 25, 50].forEach(km => {
               const opt = document.createElement('option');
-              opt.value = mi;
-              opt.textContent = `${mi} mi`;
-              if (mi === 10) opt.selected = true;
+              opt.value = km;
+              opt.textContent = `${km} km`;
+              if (km === 10) opt.selected = true;
               select.appendChild(opt);
             });
 
@@ -1456,8 +1454,8 @@
 
             // Click handler
             button.addEventListener('click', () => {
-              const mi = parseFloat(select.value || '10');
-              const radiusMeters = mi * 1609.344;
+              const km = parseFloat(select.value || '10');
+              const radiusMeters = km * 1000;
 
               if (!navigator.geolocation) {
                 setNearMeStatus('Geolocation not supported.');
