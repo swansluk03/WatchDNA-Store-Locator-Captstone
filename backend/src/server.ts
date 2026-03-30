@@ -87,7 +87,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/scraper', scraperRoutes);
 app.use('/api/locations', locationRoutes);
-app.use('/api/premium', premiumRoutes);
+app.use('/api/premium-stores', premiumRoutes);
 
 //API endpoints for stores
 
@@ -120,10 +120,15 @@ app.get('/backend/uploads/master_stores.csv', async (req: Request, res: Response
 });
 
 
-// // Serve user-frontend static files
-// const userFrontendDir = path.join(__dirname, '..', '..', 'user-frontend');
-// const uploadsDir = path.join(__dirname, '..', 'uploads');
-// app.use(express.static(userFrontendDir));
+// Serve user-frontend static files
+const userFrontendDir = path.join(__dirname, '..', '..', 'user-frontend');
+
+// Serve prototype.html as the default page (index.html is an outdated copy)
+app.get('/', (req: Request, res: Response) => {
+  res.sendFile(path.join(userFrontendDir, 'prototype.html'));
+});
+
+app.use(express.static(userFrontendDir));
 
 // expose backend/uploads so prototype.html can fetch store data
 app.use('/backend/uploads', express.static(uploadsDir));

@@ -4,10 +4,12 @@ import { premiumController } from '../controllers/premium.controller';
 
 const router = Router();
 
-router.use(authenticate);
+// Public — the map frontend needs this without auth
+router.get('/names', premiumController.getNames);
 
-router.get('/stores', premiumController.getStores);
-router.post('/stores', premiumController.markPremium);
-router.delete('/stores', premiumController.removePremium);
+// Admin-only routes
+router.get('/stores', authenticate, premiumController.getStores);
+router.post('/stores', authenticate, premiumController.markPremium);
+router.delete('/stores', authenticate, premiumController.removePremium);
 
 export default router;

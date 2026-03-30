@@ -215,6 +215,9 @@
     };
     console.log('[proto] initial filters:', INITIAL);
 
+    // Premium store names fetched from the admin API
+    let PREMIUM_NAMES = new Set();
+
     // --- CSV loader (with cache-busting to avoid stale results) ---
     function loadCSV(path) {
       const url = `${path}?v=${Date.now()}`;
@@ -1230,8 +1233,17 @@
       return hasPlus ? `tel:+${digitsOnly}` : `tel:${digitsOnly}`;
     }
 
-    // --- Load data & render (with helpful logs) ---
-    loadCSV('/backend/uploads/master_stores.csv')
+    // --- Fetch premium store names from API, then load CSV ---
+    fetch('/api/premium-stores/names')
+      .then(res => res.ok ? res.json() : { names: [] })
+      .then(data => {
+        PREMIUM_NAMES = new Set((data.names || []).map(n => n.trim().toLowerCase()));
+        console.log('[proto] Premium names loaded:', PREMIUM_NAMES.size);
+      })
+      .catch(err => {
+        console.warn('[proto] Could not fetch premium names, falling back to empty set:', err);
+      })
+      .then(() => loadCSV('/backend/uploads/master_stores.csv'))
       .then(rows => {
         console.log('CSV rows (raw):', rows.length);
         const brandSet = new Set();
@@ -1265,7 +1277,7 @@
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-          row._isPremium = isValidEmail(row['Email']);
+          row._isPremium = PREMIUM_NAMES.has((row['Name'] || '').trim().toLowerCase());
           row._isServiceCenter = isServiceCenterRow(row);
           row._isPremiumBrandOnly = isPremiumBrandOnlyRow(row);
 

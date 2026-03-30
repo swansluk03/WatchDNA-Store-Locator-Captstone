@@ -15,16 +15,16 @@ export interface StoreRecord {
 }
 
 export async function fetchAllStores(): Promise<StoreRecord[]> {
-  const res = await api.get<{ stores: StoreRecord[]; totalCount: number }>('/premium/stores');
+  const res = await api.get<{ stores: StoreRecord[]; totalCount: number }>('/premium-stores/stores');
   return res.data.stores;
 }
 
 export async function markStoresPremium(handles: string[]): Promise<{ marked: number }> {
-  const res = await api.post<{ marked: number }>('/premium/stores', { handles });
+  const res = await api.post<{ marked: number }>('/premium-stores/stores', { handles });
   return res.data;
 }
 
 export async function removeStoresPremium(handles: string[]): Promise<{ removed: number }> {
-  const res = await api.delete<{ removed: number }>('/premium/stores', { data: { handles } });
+  const res = await api.delete<{ removed: number }>('/premium-stores/stores', { data: { handles } });
   return res.data;
 }
