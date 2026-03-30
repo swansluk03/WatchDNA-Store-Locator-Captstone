@@ -690,19 +690,23 @@
       }
     }
 
-    // Connect: prefer email; otherwise disable
-    const email = (row['Email'] || '').trim();
+    // Connect: premium stores go to retailer website
+    const website = normalizeWebsiteUrl(row['Website']);
     if (connectBtn) {
-      if (isValidEmail(email)) {
-        connectBtn.href = `mailto:${email}`;
+      if (isVerified && website) {
+        connectBtn.href = website;
+        connectBtn.target = '_blank';
+        connectBtn.rel = 'noopener noreferrer';
         connectBtn.textContent = 'Connect';
         connectBtn.style.opacity = '1';
         connectBtn.style.pointerEvents = 'auto';
+        connectBtn.removeAttribute('aria-disabled');
       } else {
         connectBtn.href = '#';
         connectBtn.textContent = 'Connect';
         connectBtn.style.opacity = '0.5';
         connectBtn.style.pointerEvents = 'none';
+        connectBtn.setAttribute('aria-disabled', 'true');
       }
     }
     
@@ -1187,6 +1191,25 @@
       div.className = 'banner';
       div.textContent = msg;
       document.body.appendChild(div);
+    }
+
+    function normalizeWebsiteUrl(val) {
+      if (!val) return '';
+
+      const raw = String(val).trim();
+      const cleaned = raw
+        .replace(/\\\//g, '/')
+        .replace(/^"+|"+$/g, '');
+      
+      const lowered = cleaned.toLowerCase();
+      const bad = new Set([
+        '', '#', '/', 'n/a', 'na', 'none', 'null', 'not provided', 'not available'
+    ]);
+
+    if (bad.has(lowered)) return '';
+
+    if (/^https?:\/\//i.test(cleaned)) return cleaned;
+    if (cleaned.startsWith('www.')) return `https://${cleaned}`;
     }
 
     function isValidEmail(val) {
