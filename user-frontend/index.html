@@ -289,7 +289,27 @@
     const clusterGroup = L.markerClusterGroup({
       spiderfyOnMaxZoom: false,
       zoomToBoundsOnClick: true,
-      showCoverageOnHover: false
+      showCoverageOnHover: false,
+      iconCreateFunction: function (cluster) {
+        const count = cluster.getChildCount();
+        let size = 30;
+
+        if (count < 10) {
+          size = 30; 
+        } else if (count < 100) {
+          size = 40;
+        } else {
+          size = 50;
+        }
+        return L.divIcon({
+          html: `
+          <div class="cluster-outer">
+            <div class="cluster-inner">${count}</div>
+          </div>`,
+          className: 'custom-cluster',
+          iconSize: L.point(size, size)
+        });
+      }
     });
     const bounds = L.latLngBounds();
     let allRows = [];
