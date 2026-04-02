@@ -898,9 +898,6 @@
               row['Address Line 2'] || '',
               row['Country'] || '',
               row['Zip/Postal Code'] || '',
-              row['Phone'] || '',
-              row['Brands'] || '',
-              row['Custom Brands'] ? row['Custom Brands'].replace(/<[^>]*>/g, '') : '', // strip HTML tags
             ].map(f => String(f).toLowerCase());
             passes = searchFields.some(field => field.includes(storeInput));
           }
