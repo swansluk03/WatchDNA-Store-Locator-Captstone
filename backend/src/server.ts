@@ -125,9 +125,6 @@ app.get('/backend/uploads/master_stores.csv', async (req: Request, res: Response
 // const uploadsDir = path.join(__dirname, '..', 'uploads');
 // app.use(express.static(userFrontendDir));
 
-// expose backend/uploads so prototype.html can fetch store data
-app.use('/backend/uploads', express.static(uploadsDir));
-
 // 404 handler for API routes only
 app.use('/api/*', (req: Request, res: Response) => {
   res.status(404).json({ error: 'API route not found' });
