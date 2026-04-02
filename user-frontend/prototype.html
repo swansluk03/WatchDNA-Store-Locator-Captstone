@@ -42,7 +42,7 @@
       <div id="inner">
         <h2>WatchDNA's Network | Find jewellers in your area</h2>
         <p>As your trusted directory for brands and authorized dealers, we make it easy to find and reach out to
-          Authorized Dealers. (Please note that only select authorized dealers will be featured under our brand
+          Authorized Dealers. (Please note that only select verified (authorized) dealers will be featured under our brand
           filters.)
         </p>
       </div>
@@ -215,6 +215,9 @@
     };
     console.log('[proto] initial filters:', INITIAL);
 
+    // Premium store names fetched from the admin API
+    let PREMIUM_NAMES = new Set();
+
     // --- CSV loader (with cache-busting to avoid stale results) ---
     function loadCSV(path) {
       const url = `${path}?v=${Date.now()}`;
@@ -289,7 +292,27 @@
     const clusterGroup = L.markerClusterGroup({
       spiderfyOnMaxZoom: false,
       zoomToBoundsOnClick: true,
-      showCoverageOnHover: false
+      showCoverageOnHover: false,
+      iconCreateFunction: function (cluster) {
+        const count = cluster.getChildCount();
+        let size = 30;
+
+        if (count < 10) {
+          size = 30; 
+        } else if (count < 100) {
+          size = 40;
+        } else {
+          size = 50;
+        }
+        return L.divIcon({
+          html: `
+          <div class="cluster-outer">
+            <div class="cluster-inner">${count}</div>
+          </div>`,
+          className: 'custom-cluster',
+          iconSize: L.point(size, size)
+        });
+      }
     });
     const bounds = L.latLngBounds();
     let allRows = [];
@@ -1230,8 +1253,17 @@
       return hasPlus ? `tel:+${digitsOnly}` : `tel:${digitsOnly}`;
     }
 
-    // --- Load data & render (with helpful logs) ---
-    loadCSV('/backend/uploads/master_stores.csv')
+    // --- Fetch premium store names from API, then load CSV ---
+    fetch('/api/premium-stores/names')
+      .then(res => res.ok ? res.json() : { names: [] })
+      .then(data => {
+        PREMIUM_NAMES = new Set((data.names || []).map(n => n.trim().toLowerCase()));
+        console.log('[proto] Premium names loaded:', PREMIUM_NAMES.size);
+      })
+      .catch(err => {
+        console.warn('[proto] Could not fetch premium names, falling back to empty set:', err);
+      })
+      .then(() => loadCSV('/backend/uploads/master_stores.csv'))
       .then(rows => {
         console.log('CSV rows (raw):', rows.length);
         const brandSet = new Set();
@@ -1265,7 +1297,7 @@
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-          row._isPremium = isValidEmail(row['Email']);
+          row._isPremium = PREMIUM_NAMES.has((row['Name'] || '').trim().toLowerCase());
           row._isServiceCenter = isServiceCenterRow(row);
           row._isPremiumBrandOnly = isPremiumBrandOnlyRow(row);
 

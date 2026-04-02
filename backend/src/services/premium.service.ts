@@ -71,6 +71,15 @@ export const premiumService = {
    * Remove premium status from a batch of stores.
    * Deletes each handle from PremiumStore and sets Location.isPremium = false.
    */
+  /** Get names of all premium locations (public — used by the map) */
+  async getPremiumNames(): Promise<string[]> {
+    const locations = await prisma.location.findMany({
+      where: { isPremium: true },
+      select: { name: true },
+    });
+    return locations.map((l) => l.name).filter(Boolean);
+  },
+
   async batchRemovePremium(handles: string[]): Promise<{ removed: number }> {
     if (handles.length === 0) return { removed: 0 };
 

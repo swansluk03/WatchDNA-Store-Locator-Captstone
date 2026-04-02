@@ -42,7 +42,7 @@
       <div id="inner">
         <h2>WatchDNA's Network | Find jewellers in your area</h2>
         <p>As your trusted directory for brands and authorized dealers, we make it easy to find and reach out to
-          Authorized Dealers. (Please note that only select authorized dealers will be featured under our brand
+          Authorized Dealers. (Please note that only select verified authorized dealers will be featured under our brand
           filters.)
         </p>
       </div>
@@ -289,7 +289,27 @@
     const clusterGroup = L.markerClusterGroup({
       spiderfyOnMaxZoom: false,
       zoomToBoundsOnClick: true,
-      showCoverageOnHover: false
+      showCoverageOnHover: false,
+      iconCreateFunction: function (cluster) {
+        const count = cluster.getChildCount();
+        let size = 30;
+
+        if (count < 10) {
+          size = 30; 
+        } else if (count < 100) {
+          size = 40;
+        } else {
+          size = 50;
+        }
+        return L.divIcon({
+          html: `
+          <div class="cluster-outer">
+            <div class="cluster-inner">${count}</div>
+          </div>`,
+          className: 'custom-cluster',
+          iconSize: L.point(size, size)
+        });
+      }
     });
     const bounds = L.latLngBounds();
     let allRows = [];
@@ -690,19 +710,23 @@
       }
     }
 
-    // Connect: prefer email; otherwise disable
-    const email = (row['Email'] || '').trim();
+    // Connect: premium stores go to retailer website
+    const website = normalizeWebsiteUrl(row['Website']);
     if (connectBtn) {
-      if (isValidEmail(email)) {
-        connectBtn.href = `mailto:${email}`;
+      if (isVerified && website) {
+        connectBtn.href = website;
+        connectBtn.target = '_blank';
+        connectBtn.rel = 'noopener noreferrer';
         connectBtn.textContent = 'Connect';
         connectBtn.style.opacity = '1';
         connectBtn.style.pointerEvents = 'auto';
+        connectBtn.removeAttribute('aria-disabled');
       } else {
         connectBtn.href = '#';
         connectBtn.textContent = 'Connect';
         connectBtn.style.opacity = '0.5';
         connectBtn.style.pointerEvents = 'none';
+        connectBtn.setAttribute('aria-disabled', 'true');
       }
     }
     
@@ -923,7 +947,7 @@
 
     let radiusCircle = null;
 
-    function meters(mi) { return mi * 1609.344; }
+    function meters(mi) { return km * 1000; }
 
     function applyRadiusToCurrent(centerLL, radiusMeters) {
       if (radiusCircle) { map.removeLayer(radiusCircle); radiusCircle = null; }
@@ -941,7 +965,7 @@
         if (d <= radiusMeters) { clusterGroup.addLayer(m); kept++; }
       });
 
-      setNearMeStatus(`Showing ${kept} location(s) within ${(radiusMeters / 1609.344).toFixed(0)} mi`);
+      setNearMeStatus(`Showing ${kept} location(s) within ${(radiusMeters / 1000).toFixed(0)} km`);
       if (kept > 0) map.fitBounds(radiusCircle.getBounds().pad(0.2));
 
       renderStoreListingsFromLayers(getVisibleMarkers());
@@ -954,8 +978,8 @@
         (ll) => {
           // getUserLatLng returns the users coordinates, so we can just immediately use it
           showUserMarker(ll);
-          const mi = parseFloat(document.getElementById('nearMeRadius').value || '10');
-              applyRadiusToCurrent(ll, meters(mi));
+          const km = parseFloat(document.getElementById('nearMeRadius').value || '16');
+              applyRadiusToCurrent(ll, meters(km));
         },
         (err) => {
           // Error handling to see what went wrong
@@ -1002,13 +1026,11 @@
       nearestLine = L.polyline([userLL, nearestMarker.getLatLng()], { weight: 3, dashArray: '6,6' }).addTo(map);
 
       const dist = map.distance(userLL, nearestMarker.getLatLng());
-      const miles = (best.dist / 1609.344).toFixed(2);
       const km = (best.dist / 1000).toFixed(2);
       const b = L.latLngBounds([userLL, best.marker.getLatLng()]).pad(0.4);
       map.fitBounds(b);
 
-      setNearMeStatus(`Closest: ${(row['Name'] || 'Location')} — ${miles} mi / ${km} km`);
-      //nearestMarker.openPopup();
+      setNearMeStatus(`Closest: ${(row['Name'] || 'Location')} — ${km} km`);
       nearestMarker.fire("click"); // Now also opens the sidebar card, not just the marker popup when using Near Me
     }
 
@@ -1187,6 +1209,25 @@
       div.className = 'banner';
       div.textContent = msg;
       document.body.appendChild(div);
+    }
+
+    function normalizeWebsiteUrl(val) {
+      if (!val) return '';
+
+      const raw = String(val).trim();
+      const cleaned = raw
+        .replace(/\\\//g, '/')
+        .replace(/^"+|"+$/g, '');
+      
+      const lowered = cleaned.toLowerCase();
+      const bad = new Set([
+        '', '#', '/', 'n/a', 'na', 'none', 'null', 'not provided', 'not available'
+    ]);
+
+    if (bad.has(lowered)) return '';
+
+    if (/^https?:\/\//i.test(cleaned)) return cleaned;
+    if (cleaned.startsWith('www.')) return `https://${cleaned}`;
     }
 
     function isValidEmail(val) {
@@ -1414,11 +1455,11 @@
             select.style.border = '1px solid #ccc';
             select.style.cursor = 'pointer';
 
-            [5, 10, 25, 50].forEach(mi => {
+            [5, 10, 25, 50].forEach(km => {
               const opt = document.createElement('option');
-              opt.value = mi;
-              opt.textContent = `${mi} mi`;
-              if (mi === 10) opt.selected = true;
+              opt.value = km;
+              opt.textContent = `${km} km`;
+              if (km === 10) opt.selected = true;
               select.appendChild(opt);
             });
 
@@ -1433,8 +1474,8 @@
 
             // Click handler
             button.addEventListener('click', () => {
-              const mi = parseFloat(select.value || '10');
-              const radiusMeters = mi * 1609.344;
+              const km = parseFloat(select.value || '10');
+              const radiusMeters = km * 1000;
 
               if (!navigator.geolocation) {
                 setNearMeStatus('Geolocation not supported.');

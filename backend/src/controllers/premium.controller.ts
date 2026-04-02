@@ -3,6 +3,17 @@ import { premiumService } from '../services/premium.service';
 import { logger } from '../utils/logger';
 
 export const premiumController = {
+  /** GET /api/premium-stores/names — public, returns names for the map */
+  async getNames(req: Request, res: Response): Promise<void> {
+    try {
+      const names = await premiumService.getPremiumNames();
+      res.json({ names });
+    } catch (err) {
+      logger.error('premiumController.getNames error:', err);
+      res.status(500).json({ error: 'Failed to fetch premium names' });
+    }
+  },
+
   async getStores(req: Request, res: Response): Promise<void> {
     try {
       const stores = await premiumService.getStores();
