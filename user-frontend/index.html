@@ -7,8 +7,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  
-   
+
+
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
@@ -54,7 +54,13 @@
     <span id="nearMeStatus" style="font-size:.9rem; opacity:.8;"></span>
     <div id="filtersPanel" class="filters-panel" hidden>
       <label for="storeFilter"><strong>Filter by store:</strong></label>
-      <input id="storeFilter" type="search" placeholder="Search By Store Name" />
+      <div style="position:relative; display:flex; align-items:center;">
+        <input id="storeFilter" type="search" placeholder="Search by store, city, brand, zip, etc."
+          style="width:100%; padding-right:28px;" />
+        <button id="clearSearch" title="Clear search" style="position:absolute; right:6px; background:none; border:none; 
+           cursor:pointer; font-size:1rem; opacity:0.5; display:none;">✕</button>
+      </div>
+      <div id="searchResultCount" style="font-size:0.8rem; opacity:0.7; margin-top:4px; min-height:1em;"></div>
       <div id="storeCheckboxes">
         <!-- Store name checkboxes (hidden until user searches) -->
       </div>
@@ -80,7 +86,7 @@
     </div>
 
     <!-- Store detail panel (hidden by default)-->
-     <div id="storeDetailPanel" class="store-detail hidden" aria-hidden="true">
+    <div id="storeDetailPanel" class="store-detail hidden" aria-hidden="true">
       <div class="store-detail__top">
         <div class="store-detail__title" id="detailName">Store Name</div>
         <button class="store-detail__close" id="detailCloseBtn" aria-label="Close">×</button>
@@ -116,14 +122,14 @@
         <div class="store-detail__value" id="detailBrands"></div>
       </div>
 
-      </div>
+    </div>
 
     <div id="storeListContainer">
       <div id="storeListings"></div>
     </div>
 
     <!-- Commented out, not deleted because the specific page on the WatchDNA site may or may not be updated or removed. -->
-     <!-- Until we know what the plan is, the code will not be deleted. -->
+    <!-- Until we know what the plan is, the code will not be deleted. -->
     <!-- <div id="footer">
       <a href="https://watchdna.com/tools/storelocator/directory">Store Directory</a>
     </div> -->
@@ -135,7 +141,7 @@
   <script>
     // --- Map bootstrap ---
     // NEW MAP THEME CODE
-    const map = L.map('map', {maxZoom: 19}).setView([20, 0], 2); // Using the longitude, latitude, and zoom level from original map
+    const map = L.map('map', { maxZoom: 19 }).setView([20, 0], 2); // Using the longitude, latitude, and zoom level from original map
     L.maplibreGL({
       style: 'https://tiles.openfreemap.org/styles/bright',
     }).addTo(map);
@@ -164,12 +170,12 @@
     function getUserLatLng(success, failure) {
       const rightNow = Date.now();
       //Going to reuse the location we've stored already if it's less than 5 minutes old
-      if(cachedLatLng && (rightNow - lastLocationTime < 300000)) {
+      if (cachedLatLng && (rightNow - lastLocationTime < 300000)) {
         success(cachedLatLng);
         return;
       }
       // User did not allow browser/application to use their location
-      if(!navigator.geolocation) {
+      if (!navigator.geolocation) {
         failure({ code: 0 });
         return;
       }
@@ -295,7 +301,7 @@
         let size = 30;
 
         if (count < 10) {
-          size = 30; 
+          size = 30;
         } else if (count < 100) {
           size = 40;
         } else {
@@ -343,7 +349,7 @@
       const addr = [row['Address Line 1'], row['City'], row['State/Province/Region'], row['Country']]
         .filter(Boolean).join(', ');
       const phone = row['Phone'] ? `<br>${row['Phone']}` : '';
-      
+
       // Get brands from Brands column first, fallback to Custom Brands if empty
       let brands = (row['Brands'] || '').trim();
       if (!brands && row['Custom Brands']) {
@@ -352,14 +358,14 @@
         const brandMatches = customBrandsHtml.match(/>([^<]+)<\/A>/gi) || [];
         brands = brandMatches.map(m => m.replace(/>|<\/A>/gi, '').trim()).filter(Boolean).join(', ');
       }
-      
+
       const displayBrandsHTML = getDisplayBrandsHTMLForRow(row);
       const brandsDisplay = displayBrandsHTML
-      ? `<br><br><strong>Brands:</strong> ${displayBrandsHTML}`
-      : '';
+        ? `<br><br><strong>Brands:</strong> ${displayBrandsHTML}`
+        : '';
       return `<div class="popup"><b>${row['Name'] || ''}</b><br>${addr}${phone}${brandsDisplay}</div>`;
     }
-    
+
     function buildFullAddress(row) {
       const line1 = (row['Address Line 1'] || '').trim();
       const line2 = (row['Address Line 2'] || '').trim();
@@ -367,21 +373,21 @@
       const state = (row['State/Province/Region'] || '').trim();
       const zip = (row['Zip/Postal Code'] || '').trim();
       const country = (row['Country'] || '').trim();
-      
+
       const parts = [];
       if (line1) parts.push(line1);
       if (line2) parts.push(line2);
-      
+
       const cityLine = [city, state, zip].filter(Boolean).join(', ');
       if (cityLine) parts.push(cityLine);
       if (country) parts.push(country);
-      
+
       return parts.join('\n');
     }
 
     // Brand level paid visibility (demo)
     // A brand can approve up to 'maxApproved' locations to show that brand even if the location isnt verified
-     const BRAND_VISIBILITY_CONFIG = {
+    const BRAND_VISIBILITY_CONFIG = {
       "OMEGA": {
         maxApproved: 5,
         approvedHandles: ["7426", "6416", "3229", "6917170001", "O1825152"]
@@ -395,11 +401,11 @@
 
     function escapeHtml(s) {
       return String(s ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
     }
 
     // Returns array of visible brand names for a row
@@ -409,7 +415,7 @@
         .split(",")
         .map(s => s.trim())
         .filter(Boolean);
-      
+
       if (row._isPremium) return list;
 
       // Unverified: only show brands that approved this location
@@ -489,7 +495,7 @@
       const maxApproved = Number(cfg.maxApproved || 0);
       const approvedCount =
         (cfg.approvedHandles?.length || 0) + (cfg.approvedNames?.length || 0);
-      
+
       if (maxApproved > 0 && approvedCount > maxApproved) {
       }
 
@@ -510,9 +516,9 @@
     function getDisplayBrandsForRow(row) {
       const fullBrands = extractBrandsText(row);
       const list = fullBrands
-      .split(",")
-      .map(s => s.trim())
-      .filter(Boolean);
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean);
 
       if (row._isPremium) return list.join(", ");
 
@@ -521,37 +527,37 @@
       return allowed.join(", ");
     }
 
-    
+
     function extractBrandsText(row) {
       let brands = (row['Brands'] || '').trim();
-      
+
       if (!brands && row['Custom Brands']) {
         const customBrandsHtml = row['Custom Brands'];
         const brandMatches = customBrandsHtml.match(/>([^<]+)<\/A>/gi) || [];
         brands = brandMatches
-        .map(m => m.replace(/>|<\/A>/gi, '').trim())
-        .filter(Boolean)
-        .join(', ');
+          .map(m => m.replace(/>|<\/A>/gi, '').trim())
+          .filter(Boolean)
+          .join(', ');
       }
-      
+
       return brands;
     }
 
     function extractBrandLinksMap(row) {
-    const map = new Map();
-    const html = String(row['Custom Brands'] || '');
+      const map = new Map();
+      const html = String(row['Custom Brands'] || '');
 
-    if (!html) return map;
+      if (!html) return map;
 
-    const regex = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([^<]+)<\/a>/gi;
-    let match;
+      const regex = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([^<]+)<\/a>/gi;
+      let match;
 
-    while ((match = regex.exec(html)) !== null) {
-      const href = String(match[1] || '').trim();
-      const label = String(match[2] || '').trim();
+      while ((match = regex.exec(html)) !== null) {
+        const href = String(match[1] || '').trim();
+        const label = String(match[2] || '').trim();
 
-      if (label && href && !map.has(label.toUpperCase())) {
-        map.set(label.toUpperCase(), href);
+        if (label && href && !map.has(label.toUpperCase())) {
+          map.set(label.toUpperCase(), href);
         }
       }
 
@@ -564,11 +570,11 @@
       const cleaned = String(href).trim().toLowerCase();
       const bad = new Set([
         '', '#', '/', 'n/a', 'na', 'none', 'null', 'not available'
-    ]);
+      ]);
 
-    if (bad.has(cleaned)) return false;
+      if (bad.has(cleaned)) return false;
 
-    return /^https?:\/\//i.test(href) || href.startsWith('/');
+      return /^https?:\/\//i.test(href) || href.startsWith('/');
     }
 
     function buildBrandHref(href) {
@@ -588,192 +594,192 @@
       if (!sidebar || !panel || !listContainer) return;
 
       if (visible) {
-      sidebar.classList.add('store-focused');
-      panel.classList.remove('hidden');
-      panel.setAttribute('aria-hidden', 'false');
-      //listContainer.classList.add('hidden');
-      //listContainer.style.display = 'none';
-    } else {
-      sidebar.classList.remove('store-focused');
-      panel.classList.add('hidden');
-      panel.setAttribute('aria-hidden', 'true');
-      //listContainer.classList.remove('hidden');
-      //listContainer.style.display = '';
-    }
-  }
-
-  function openStoreDetail(row, marker) {
-    const nameEl = document.getElementById('detailName');
-    const addressEl = document.getElementById('detailAddress');
-    const phoneEl = document.getElementById('detailPhone');
-    const brandsEl = document.getElementById('detailBrands');
-    const brandsSectionEl = document.getElementById('detailBrandsSection');
-    const imageEl = document.getElementById('detailImage');
-    const directionsBtn = document.getElementById('detailDirectionsBtn');
-    const phoneBtn = document.getElementById('detailPhoneBtn');
-    const connectBtn = document.getElementById('detailConnectBtn');
-    const aboutSectionEl = document.getElementById('detailAboutSection');
-    const aboutEl = document.getElementById('detailAbout');
-
-    const name = (row['Name'] || 'Unnamed').trim();
-    const address = buildFullAddress(row);
-    const phone = (row['Phone'] || '').trim();
-    const brandsText = getDisplayBrandsForRow(row);
-    const brandsHTML = getDisplayBrandsHTMLForRow(row);
-    const hasVisibleBrands = !!brandsText;
-
-
-    if (nameEl) nameEl.textContent = name;
-
-    if (addressEl) {
-      addressEl.textContent = address || 'Not provided';
-      addressEl.style.whiteSpace = 'pre-line';
-    }
-
-    if (phoneEl) {
-      if (isValidPhone(phone)) {
-        phoneEl.innerHTML = `<a href="${formatPhoneHref(phone)}">${phone}</a>`;
+        sidebar.classList.add('store-focused');
+        panel.classList.remove('hidden');
+        panel.setAttribute('aria-hidden', 'false');
+        //listContainer.classList.add('hidden');
+        //listContainer.style.display = 'none';
       } else {
-        phoneEl.textContent = 'Not provided';
+        sidebar.classList.remove('store-focused');
+        panel.classList.add('hidden');
+        panel.setAttribute('aria-hidden', 'true');
+        //listContainer.classList.remove('hidden');
+        //listContainer.style.display = '';
       }
     }
-    const isVerified = !!row._isPremium;
 
-    const aboutText =
-      "We are building a vibrant community where watch enthusiasts can discover new brands and connect with passionate jewellers who value both timepieces and the stories behind them. As your trusted directory for brands and authorized dealers, we make it easy to find and reach out to reputable retailers. Feel free to contact your authorized dealer for any questions regarding the brands they carry.";
+    function openStoreDetail(row, marker) {
+      const nameEl = document.getElementById('detailName');
+      const addressEl = document.getElementById('detailAddress');
+      const phoneEl = document.getElementById('detailPhone');
+      const brandsEl = document.getElementById('detailBrands');
+      const brandsSectionEl = document.getElementById('detailBrandsSection');
+      const imageEl = document.getElementById('detailImage');
+      const directionsBtn = document.getElementById('detailDirectionsBtn');
+      const phoneBtn = document.getElementById('detailPhoneBtn');
+      const connectBtn = document.getElementById('detailConnectBtn');
+      const aboutSectionEl = document.getElementById('detailAboutSection');
+      const aboutEl = document.getElementById('detailAbout');
 
-    if (aboutSectionEl) {
-      aboutSectionEl.style.display = isVerified ? "" : "none";
-    }
+      const name = (row['Name'] || 'Unnamed').trim();
+      const address = buildFullAddress(row);
+      const phone = (row['Phone'] || '').trim();
+      const brandsText = getDisplayBrandsForRow(row);
+      const brandsHTML = getDisplayBrandsHTMLForRow(row);
+      const hasVisibleBrands = !!brandsText;
 
-    if (aboutEl) {
-      aboutEl.textContent = isVerified ? aboutText : "";
-    }
 
-    // Image: show only for premium/verified
-    if (imageEl) {
-      if (isVerified) {
-        imageEl.style.display = '';
-        const imageUrl = (row['Image URL'] || '').trim();
+      if (nameEl) nameEl.textContent = name;
 
-        if (imageUrl) {
-          imageEl.style.backgroundImage = `url('${imageUrl}')`;
-          imageEl.style.backgroundSize = 'cover';
-          imageEl.style.backgroundPosition = 'center';
+      if (addressEl) {
+        addressEl.textContent = address || 'Not provided';
+        addressEl.style.whiteSpace = 'pre-line';
+      }
 
-          const imageText = imageEl.querySelector('.store-detail__imageText');
-          if (imageText) imageText.style.display = 'none';
+      if (phoneEl) {
+        if (isValidPhone(phone)) {
+          phoneEl.innerHTML = `<a href="${formatPhoneHref(phone)}">${phone}</a>`;
+        } else {
+          phoneEl.textContent = 'Not provided';
+        }
+      }
+      const isVerified = !!row._isPremium;
+
+      const aboutText =
+        "We are building a vibrant community where watch enthusiasts can discover new brands and connect with passionate jewellers who value both timepieces and the stories behind them. As your trusted directory for brands and authorized dealers, we make it easy to find and reach out to reputable retailers. Feel free to contact your authorized dealer for any questions regarding the brands they carry.";
+
+      if (aboutSectionEl) {
+        aboutSectionEl.style.display = isVerified ? "" : "none";
+      }
+
+      if (aboutEl) {
+        aboutEl.textContent = isVerified ? aboutText : "";
+      }
+
+      // Image: show only for premium/verified
+      if (imageEl) {
+        if (isVerified) {
+          imageEl.style.display = '';
+          const imageUrl = (row['Image URL'] || '').trim();
+
+          if (imageUrl) {
+            imageEl.style.backgroundImage = `url('${imageUrl}')`;
+            imageEl.style.backgroundSize = 'cover';
+            imageEl.style.backgroundPosition = 'center';
+
+            const imageText = imageEl.querySelector('.store-detail__imageText');
+            if (imageText) imageText.style.display = 'none';
+          } else {
+            imageEl.style.backgroundImage = '';
+            const imageText = imageEl.querySelector('.store-detail__imageText');
+            if (imageText) imageText.style.display = '';
+          }
         } else {
           imageEl.style.backgroundImage = '';
-          const imageText = imageEl.querySelector('.store-detail__imageText');
-          if (imageText) imageText.style.display = '';
+          imageEl.style.display = 'none';
         }
-      } else {
-        imageEl.style.backgroundImage = '';
-        imageEl.style.display = 'none';
+      }
+
+      if (brandsSectionEl) {
+        // Verified: show; Unverified: only show if a brand approved visibility
+        brandsSectionEl.style.display = (isVerified || hasVisibleBrands) ? '' : 'none';
+      }
+
+      if (brandsEl) {
+        if (isVerified) brandsEl.innerHTML = brandsHTML || 'Not provided';
+        else brandsEl.innerHTML = hasVisibleBrands ? brandsHTML : '';
+      }
+
+
+
+      // Directions: use lat/lng if available, otherwise fall back to address
+      const lat = parseFloat(String(row.Latitude || '').trim());
+      const lon = parseFloat(String(row.Longitude || '').trim());
+      const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
+
+      if (directionsBtn) {
+        const q = hasCoords ? `${lat},${lon}` : encodeURIComponent(address.replace(/\n/g, ', '));
+        directionsBtn.href = hasCoords
+          ? `https://www.google.com/maps/search/?api=1&query=${q}`
+          : `https://www.google.com/maps/search/?api=1&query=${q}`;
+      }
+
+      if (phoneBtn) {
+        if (isValidPhone(phone)) {
+          phoneBtn.href = formatPhoneHref(phone);
+          phoneBtn.textContent = 'Call';
+          phoneBtn.removeAttribute('aria-disabled');
+        } else {
+          phoneBtn.href = '#';
+          phoneBtn.textContent = 'Call';
+          phoneBtn.setAttribute('aria-disabled', 'true');
+        }
+      }
+
+      // Connect: premium stores go to retailer website
+      const website = normalizeWebsiteUrl(row['Website']);
+      if (connectBtn) {
+        if (isVerified && website) {
+          connectBtn.href = website;
+          connectBtn.target = '_blank';
+          connectBtn.rel = 'noopener noreferrer';
+          connectBtn.textContent = 'Connect';
+          connectBtn.style.opacity = '1';
+          connectBtn.style.pointerEvents = 'auto';
+          connectBtn.removeAttribute('aria-disabled');
+        } else {
+          connectBtn.href = '#';
+          connectBtn.textContent = 'Connect';
+          connectBtn.style.opacity = '0.5';
+          connectBtn.style.pointerEvents = 'none';
+          connectBtn.setAttribute('aria-disabled', 'true');
+        }
+      }
+
+      setDetailPanelVisible(true);
+
+      // Optional: keep the map movement consistent
+      if (marker && hasCoords) {
+        map.flyTo([lat, lon], 14, { animate: true, duration: 2.5 });
       }
     }
 
-    if (brandsSectionEl) {
-      // Verified: show; Unverified: only show if a brand approved visibility
-      brandsSectionEl.style.display = (isVerified || hasVisibleBrands) ? '' : 'none';
-    }
-
-    if (brandsEl) {
-      if (isVerified) brandsEl.innerHTML = brandsHTML || 'Not provided';
-      else brandsEl.innerHTML = hasVisibleBrands ? brandsHTML : '';
-    }
-
-    
-
-    // Directions: use lat/lng if available, otherwise fall back to address
-    const lat = parseFloat(String(row.Latitude || '').trim());
-    const lon = parseFloat(String(row.Longitude || '').trim());
-    const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
-
-    if (directionsBtn) {
-    const q = hasCoords ? `${lat},${lon}` : encodeURIComponent(address.replace(/\n/g, ', '));
-    directionsBtn.href = hasCoords
-      ? `https://www.google.com/maps/search/?api=1&query=${q}`
-      : `https://www.google.com/maps/search/?api=1&query=${q}`;
-    }
-
-    if (phoneBtn) {
-      if (isValidPhone(phone)) {
-        phoneBtn.href = formatPhoneHref(phone);
-        phoneBtn.textContent = 'Call';
-        phoneBtn.removeAttribute('aria-disabled');
-      } else {
-        phoneBtn.href = '#';
-        phoneBtn.textContent = 'Call';
-        phoneBtn.setAttribute('aria-disabled', 'true');
-      }
-    }
-
-    // Connect: premium stores go to retailer website
-    const website = normalizeWebsiteUrl(row['Website']);
-    if (connectBtn) {
-      if (isVerified && website) {
-        connectBtn.href = website;
-        connectBtn.target = '_blank';
-        connectBtn.rel = 'noopener noreferrer';
-        connectBtn.textContent = 'Connect';
-        connectBtn.style.opacity = '1';
-        connectBtn.style.pointerEvents = 'auto';
-        connectBtn.removeAttribute('aria-disabled');
-      } else {
-        connectBtn.href = '#';
-        connectBtn.textContent = 'Connect';
-        connectBtn.style.opacity = '0.5';
-        connectBtn.style.pointerEvents = 'none';
-        connectBtn.setAttribute('aria-disabled', 'true');
-      }
-    }
-    
-    setDetailPanelVisible(true);
-
-    // Optional: keep the map movement consistent
-    if (marker && hasCoords) {
-      map.flyTo([lat, lon], 14, { animate: true, duration: 2.5 });
-    }
-  }
-
-  //Zooms the map out to full view
-  function resetFocusedStore() {
-    setDetailPanelVisible(false);
-
-    // Zoom back out to the original field of view
-    if(!radiusCircle && originalCenter && originalZoom !== undefined) {
-      map.flyTo(originalCenter, originalZoom, {
-        animate: true,
-        duration: 2.5
-      });
-    }
-  }
-
-  // When the close store detail button is clicked, it will close itself, the popup, and zoom the map back out to full view
-  const closeBtn = document.getElementById('detailCloseBtn');
-  if(closeBtn) {
-    closeBtn.addEventListener('click', () => {
-      // Hide the store detail panel (mainly for if radiusCircle is true)
+    //Zooms the map out to full view
+    function resetFocusedStore() {
       setDetailPanelVisible(false);
 
-      // Close the popup on the associated map marker
-      if (focusedMarker) {
-        focusedMarker.closePopup();
-        focusedMarker = null; 
+      // Zoom back out to the original field of view
+      if (!radiusCircle && originalCenter && originalZoom !== undefined) {
+        map.flyTo(originalCenter, originalZoom, {
+          animate: true,
+          duration: 2.5
+        });
       }
+    }
 
-      // Zoom out to the appropriate level
-      if (radiusCircle) {
-        // Near Me/Within Radius has been used
-        map.fitBounds(radiusCircle.getBounds().pad(0.2));
-      } else {
-        // Default zoom
-        resetFocusedStore();
-      }
-    });
-  }
+    // When the close store detail button is clicked, it will close itself, the popup, and zoom the map back out to full view
+    const closeBtn = document.getElementById('detailCloseBtn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        // Hide the store detail panel (mainly for if radiusCircle is true)
+        setDetailPanelVisible(false);
+
+        // Close the popup on the associated map marker
+        if (focusedMarker) {
+          focusedMarker.closePopup();
+          focusedMarker = null;
+        }
+
+        // Zoom out to the appropriate level
+        if (radiusCircle) {
+          // Near Me/Within Radius has been used
+          map.fitBounds(radiusCircle.getBounds().pad(0.2));
+        } else {
+          // Default zoom
+          resetFocusedStore();
+        }
+      });
+    }
 
     function rebuildStoreCheckboxes(rowsForList) {
       // rowsForList should be the rows after applying non-checkbox filters
@@ -891,7 +897,10 @@
               row['Address Line 1'] || '',
               row['Address Line 2'] || '',
               row['Country'] || '',
-              row['Postal/ZIP Code'] || ''
+              row['Zip/Postal Code'] || '',
+              row['Phone'] || '',
+              row['Brands'] || '',
+              row['Custom Brands'] ? row['Custom Brands'].replace(/<[^>]*>/g, '') : '', // strip HTML tags
             ].map(f => String(f).toLowerCase());
             passes = searchFields.some(field => field.includes(storeInput));
           }
@@ -941,6 +950,16 @@
       });
 
       renderStoreListingsFromLayers(getVisibleMarkers());
+
+      // Add result count feedback
+      const countEl = document.getElementById('searchResultCount');
+      if (countEl) {
+        const visible = clusterGroup.getLayers().length;
+        const storeInputVal = (document.getElementById('storeFilter').value || '').trim();
+        const filtersActive = storeInputVal || brandFilterActive ||
+          document.querySelectorAll('#typeCheckboxes input:checked').length > 0;
+        countEl.textContent = filtersActive ? `${visible} location${visible !== 1 ? 's' : ''} found` : '';
+      }
     }
 
     // --- Near Me radius filter ---
@@ -979,7 +998,7 @@
           // getUserLatLng returns the users coordinates, so we can just immediately use it
           showUserMarker(ll);
           const km = parseFloat(document.getElementById('nearMeRadius').value || '16');
-              applyRadiusToCurrent(ll, meters(km));
+          applyRadiusToCurrent(ll, meters(km));
         },
         (err) => {
           // Error handling to see what went wrong
@@ -1089,31 +1108,31 @@
           row['City'],
           row['State/Province/Region'],
           row['Country']
-      ].filter(Boolean);
+        ].filter(Boolean);
 
-      const locationLine = locationParts.join(', ');
+        const locationLine = locationParts.join(', ');
 
-      item.innerHTML = `
+        item.innerHTML = `
         <strong>${row['Name'] || 'Unnamed'}</strong><br>
         ${addressLine}<br>
         ${locationLine}
       `;
 
-      item.addEventListener('click', () => {
-        const latitude = parseFloat(row.Latitude);
-        const longitude = parseFloat(row.Longitude);
+        item.addEventListener('click', () => {
+          const latitude = parseFloat(row.Latitude);
+          const longitude = parseFloat(row.Longitude);
 
-        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-          map.flyTo([latitude, longitude], 14, { animate: true, duration: 0.8 });
-        }
+          if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+            map.flyTo([latitude, longitude], 14, { animate: true, duration: 0.8 });
+          }
 
-        focusedMarker = marker;
-        openStoreDetail(row, marker);
+          focusedMarker = marker;
+          openStoreDetail(row, marker);
+        });
+
+        storeList.appendChild(item);
       });
-
-      storeList.appendChild(item);
-    });
-  }
+    }
 
     // Find the nearest marker among a given set (visible layers)
     function findNearestAmong(targetLatLng, layers) {
@@ -1179,8 +1198,6 @@
       });
     }
 
-
-
     // wire store filter input (debounced)
     const storeInput = document.getElementById('storeFilter');
     let debounce;
@@ -1193,7 +1210,6 @@
         storeCheckboxesDiv.style.display = query ? 'block' : 'none';
       }
 
-      // When searchbar is empty, clear all store checkbox selections
       if (!query) {
         userCheckedStores.clear();
         document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => {
@@ -1201,8 +1217,21 @@
         });
       }
 
+      if (clearBtn) clearBtn.style.display = query ? 'block' : 'none';
+
       debounce = setTimeout(() => applyFilter(), 250);
     });
+
+    const clearBtn = document.getElementById('clearSearch');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        storeInput.value = '';
+        clearBtn.style.display = 'none';
+        userCheckedStores.clear();
+        applyFilter();
+        storeInput.focus();
+      });
+    }
 
     function showBanner(msg) {
       const div = document.createElement('div');
@@ -1218,16 +1247,16 @@
       const cleaned = raw
         .replace(/\\\//g, '/')
         .replace(/^"+|"+$/g, '');
-      
+
       const lowered = cleaned.toLowerCase();
       const bad = new Set([
         '', '#', '/', 'n/a', 'na', 'none', 'null', 'not provided', 'not available'
-    ]);
+      ]);
 
-    if (bad.has(lowered)) return '';
+      if (bad.has(lowered)) return '';
 
-    if (/^https?:\/\//i.test(cleaned)) return cleaned;
-    if (cleaned.startsWith('www.')) return `https://${cleaned}`;
+      if (/^https?:\/\//i.test(cleaned)) return cleaned;
+      if (cleaned.startsWith('www.')) return `https://${cleaned}`;
     }
 
     function isValidEmail(val) {
@@ -1236,12 +1265,12 @@
       const bad = new Set([
         '', ' ', '-', '--', '---', '.', 'n/a', 'na', 'none', 'null',
         'not provided', 'not available', 'no email', '0'
-    ]);
+      ]);
 
-    const cleaned = val.trim().toLowerCase();
-    if (bad.has(cleaned)) return false;
+      const cleaned = val.trim().toLowerCase();
+      if (bad.has(cleaned)) return false;
 
-    return cleaned.includes('@') && cleaned.includes('.');
+      return cleaned.includes('@') && cleaned.includes('.');
     }
 
     function isValidPhone(val) {
@@ -1314,10 +1343,10 @@
 
           const marker = L.marker([lat, lon], { icon: iconToUse })
             .bindPopup(buildPopup(row));
-            marker.on('click', () => {
-              focusedMarker = marker;
-              openStoreDetail(row, marker);
-              });
+          marker.on('click', () => {
+            focusedMarker = marker;
+            openStoreDetail(row, marker);
+          });
           allMarkers.push({ row, marker });
           clusterGroup.addLayer(marker);
           bounds.extend([lat, lon]);
@@ -1373,7 +1402,7 @@
                   map.setView(best.marker.getLatLng(), 11);
                 },
                 (err) => {
-                  const m = {1: 'Permission Denied.', 2: 'Position Unavailable.', 3: 'Request Timed Out.'};
+                  const m = { 1: 'Permission Denied.', 2: 'Position Unavailable.', 3: 'Request Timed Out.' };
                   setNearMeStatus(m[err.code] || 'Unable to get location.');
                 }
               );
@@ -1496,7 +1525,7 @@
                     3: 'Request Timed Out.'
                   };
                   setNearMeStatus(m[err.code] || 'Unable to get location.');
-                } 
+                }
               );
             });
 
