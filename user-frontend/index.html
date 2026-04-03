@@ -933,13 +933,14 @@
 
       const checkedStores = Array.from(document.querySelectorAll('#storeCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value.toLowerCase());
 
-      const baseNameSet = new Set(baseRows.map(r => (r['Name'] || '').trim().toLowerCase()));
+      // Use a Set of the actual row objects that passed the filter, not names
+      const baseRowSet = new Set(baseRows);
 
       allMarkers.forEach(({ row, marker }) => {
-        const nameLower = (row['Name'] || '').trim().toLowerCase();
-        let show = baseNameSet.has(nameLower); // only show if it matched non-checkbox filters
+        let show = baseRowSet.has(row);
 
         if (show && checkedStores.length > 0) {
+          const nameLower = (row['Name'] || '').trim().toLowerCase();
           show = checkedStores.includes(nameLower);
         }
 
