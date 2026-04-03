@@ -1174,25 +1174,53 @@
     function populateBrandSelect(brandSet) {
       const container = document.getElementById('brandCheckboxes');
       container.innerHTML = '';
-      [...brandSet].sort().forEach(b => {
-        const label = document.createElement('label');
-        label.style.display = 'inline-flex';
-        label.style.alignItems = 'center';
-        label.style.gap = '6px';
-        label.style.marginRight = '6px';
 
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.value = b;
-        cb.addEventListener('change', () => applyFilter());
+      const brands = [...brandSet].sort();
 
-        const span = document.createElement('span');
-        span.textContent = b;
-        span.style.userSelect = 'none';
+      // Group by first letter
+      const groups = {};
+      brands.forEach(b => {
+        const letter = b[0].toUpperCase();
+        if (!groups[letter]) groups[letter] = [];
+        groups[letter].push(b);
+      });
 
-        label.appendChild(cb);
-        label.appendChild(span);
-        container.appendChild(label);
+      Object.keys(groups).sort().forEach(letter => {
+        // Letter header (collapsible)
+        const header = document.createElement('div');
+        header.style.cssText = 'cursor:pointer; font-weight:600; padding:4px 0; user-select:none; display:flex; justify-content:space-between; align-items:center;';
+        header.innerHTML = `<span>${letter}</span><span class="az-arrow">▸</span>`;
+
+        // Group container
+        const group = document.createElement('div');
+        group.style.cssText = 'display:none; padding-left:8px;';
+
+        groups[letter].forEach(b => {
+          const label = document.createElement('label');
+          label.style.cssText = 'display:flex; align-items:center; gap:6px; padding:2px 0;';
+
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.value = b;
+          cb.addEventListener('change', () => applyFilter());
+
+          const span = document.createElement('span');
+          span.textContent = b;
+          span.style.userSelect = 'none';
+
+          label.appendChild(cb);
+          label.appendChild(span);
+          group.appendChild(label);
+        });
+
+        header.addEventListener('click', () => {
+          const isOpen = group.style.display !== 'none';
+          group.style.display = isOpen ? 'none' : 'block';
+          header.querySelector('.az-arrow').textContent = isOpen ? '▸' : '▾';
+        });
+
+        container.appendChild(header);
+        container.appendChild(group);
       });
     }
 
