@@ -125,7 +125,7 @@ const userFrontendDir = path.join(__dirname, '..', '..', 'user-frontend');
 
 // Serve prototype.html as the default page (index.html is an outdated copy)
 app.get('/', (req: Request, res: Response) => {
-  res.sendFile(path.join(userFrontendDir, 'prototype.html'));
+  res.sendFile(path.join(userFrontendDir, 'index.html'));
 });
 
 app.use(express.static(userFrontendDir));
