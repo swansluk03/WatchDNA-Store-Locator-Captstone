@@ -18,7 +18,7 @@ import { storeService } from './services/store.service';
 validateConfig();
 
 // Import middleware
-import { authLimiter, publicLimiter, uploadLimiter, scraperLimiter } from './middleware/rateLimiter';
+import { authLimiter, publicLimiter, uploadLimiter, scraperLimiter, analyticsLimiter } from './middleware/rateLimiter';
 import { securityHeaders } from './middleware/security';
 
 // Import routes
@@ -28,6 +28,7 @@ import scraperRoutes from './routes/scraper.routes';
 import locationRoutes from './routes/location.routes';
 import healthRoutes from './routes/health.routes';
 import premiumRoutes from './routes/premium.routes';
+import analyticsRoutes from './routes/analytics.routes';
 
 const app: Express = express();
 const PORT = config.port;
@@ -81,6 +82,7 @@ app.use('/health', healthRoutes);
 app.use('/api/auth/login', authLimiter); // Strict: 5 attempts per 15 min
 app.use('/api/uploads', uploadLimiter); // 10 uploads per hour
 app.use('/api/locations', publicLimiter); // Lenient: 300 requests per 15 min
+app.use('/api/analytics/events', analyticsLimiter); // 200 per 15 min (mobile app)
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -88,6 +90,7 @@ app.use('/api/uploads', uploadRoutes);
 app.use('/api/scraper', scraperRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/premium-stores', premiumRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 //API endpoints for stores
 

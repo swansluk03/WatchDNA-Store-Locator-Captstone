@@ -183,3 +183,17 @@ model PremiumStore {
   addedAt   DateTime @default(now())
   notes     String?
 }
+
+model AnalyticsEvent {
+  id         String   @id @default(uuid())
+  event      String   // e.g. "store_tapped", "brand_searched", "store_phone_tapped"
+  properties String?  // JSON: { storeId, storeName, brand, source, ... }
+  sessionId  String?  // anonymous session grouping (no PII)
+  deviceType String?  // "ios" | "android"
+  createdAt  DateTime @default(now())
+
+  @@index([event])
+  @@index([createdAt])
+  @@index([event, createdAt])
+  @@index([sessionId])
+}

@@ -24,6 +24,7 @@ const Layout: React.FC = () => {
           <Link to="/uploads">Uploads</Link>
           <Link to="/scraper">Scraper</Link>
           <Link to="/premium-stores">Premium Stores</Link>
+          <Link to="/app-analytics">App Analytics</Link>
           <Link to="/health">Health</Link>
         </div>
 

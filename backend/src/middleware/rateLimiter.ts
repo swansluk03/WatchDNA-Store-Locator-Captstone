@@ -79,6 +79,23 @@ export const uploadLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for analytics event ingestion
+ * From mobile app — generous but bounded
+ *
+ * 200 requests per 15 minutes per IP
+ */
+export const analyticsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200,
+  message: {
+    error: 'Analytics rate limit exceeded. Please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => config.isDevelopment,
+});
+
+/**
  * Rate limiter for scraper job creation
  * Prevents excessive scraper jobs
  *
