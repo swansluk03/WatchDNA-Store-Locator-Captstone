@@ -185,7 +185,7 @@ export class UploadController {
   async downloadMasterCSV(req: Request, res: Response) {
     try {
       const { brand } = req.query;
-      const { storeService } = await import('../services/store.service');
+      const { storeService } = await import('../services/store.service.js');
       const csvContent = await storeService.generateDownloadCSV(brand as string | undefined);
 
       const contentLength = Buffer.byteLength(csvContent, 'utf-8');
