@@ -53,7 +53,9 @@
         "phone1",
         "phone"
       ],
-      "Email": ["email"],
+      "Email": [
+        "email"
+      ],
       "Website": [
         "urlRolexV7",
         "website"
@@ -210,7 +212,9 @@
         "postal_code"
       ],
       "Phone": "phone",
-      "Email": ["email"],
+      "Email": [
+        "email"
+      ],
       "Latitude": [
         "lat",
         "latitude"
@@ -340,7 +344,9 @@
     "method": "GET",
     "description": "Radius-based search API with offset pagination, returns 50 stores per page. Uses radius=2000km from Paris center point. Scraper follows all pages (offset 0, 50, 100…) and uses multiple center points worldwide to get all stores ✅",
     "display_name": "BELL & ROSS",
-    "custom_headers": { "Accept": "application/json" },
+    "custom_headers": {
+      "Accept": "application/json"
+    },
     "enabled": true,
     "data_path": "response.entities",
     "field_mapping": {
@@ -529,5 +535,33 @@
     "description": "HTML page with store data",
     "display_name": "ROLEX",
     "enabled": true
+  },
+  "breva_stores": {
+    "type": "html",
+    "url": "https://www.breva-watches.com/store",
+    "method": "GET",
+    "description": "HTML page with store data - Uses data attributes for coordinates",
+    "enabled": true
+  },
+  "accutron_stores": {
+    "type": "radius",
+    "url": "https://www.accutronwatch.com/on/demandware.store/Sites-accutron_us-Site/en_US/Stores-FindStores?showMap=true&radius=10000&long=-111.86701335&q=48.8566%2C2.3522&per=50&offset=0",
+    "method": "GET",
+    "description": "Radius-based search API with offset pagination, returns 50 stores per page. Uses radius=10000km from Paris center point. Scraper follows all pages (offset 0, 50, 100…) and uses multiple center points worldwide to get all stores ✅",
+    "enabled": true,
+    "data_path": "stores",
+    "field_mapping": {
+      "Latitude": "latitude",
+      "Longitude": "longitude",
+      "City": "city",
+      "Name": "name",
+      "Address Line 1": "address1",
+      "State/Province/Region": "stateCode",
+      "Country": "countryCode",
+      "Postal/ZIP Code": "postalCode",
+      "Phone": "phone",
+      "Handle": "ID"
+    },
+    "_note": "This endpoint uses radius search. When paginated (per=50&offset=0), the scraper automatically follows all pages to get every store; it also uses multiple center points worldwide when needed."
   }
 }

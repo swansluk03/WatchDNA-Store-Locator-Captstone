@@ -3,7 +3,11 @@
  * Keeps Location.isPremium and the PremiumStore registry in sync.
  */
 
+import type { Prisma } from '@prisma/client';
+
 import prisma from '../lib/prisma';
+import { normalizeCountry } from '../utils/country';
+import { normalizePhone } from '../utils/normalize-phone';
 
 export interface PremiumStoreRecord {
   handle: string;
@@ -17,6 +21,97 @@ export interface PremiumStoreRecord {
   phone: string | null;
   brands: string | null;
   isPremium: boolean;
+  website: string | null;
+  imageUrl: string | null;
+  pageDescription: string | null;
+  monday: string | null;
+  tuesday: string | null;
+  wednesday: string | null;
+  thursday: string | null;
+  friday: string | null;
+  saturday: string | null;
+  sunday: string | null;
+}
+
+const premiumStoreSelect = {
+  handle: true,
+  name: true,
+  addressLine1: true,
+  addressLine2: true,
+  city: true,
+  stateProvinceRegion: true,
+  country: true,
+  postalCode: true,
+  phone: true,
+  brands: true,
+  isPremium: true,
+  website: true,
+  imageUrl: true,
+  pageDescription: true,
+  monday: true,
+  tuesday: true,
+  wednesday: true,
+  thursday: true,
+  friday: true,
+  saturday: true,
+  sunday: true,
+} as const;
+
+function toPremiumRecord(loc: {
+  handle: string;
+  name: string;
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string;
+  stateProvinceRegion: string | null;
+  country: string;
+  postalCode: string | null;
+  phone: string | null;
+  brands: string | null;
+  isPremium: boolean;
+  website: string | null;
+  imageUrl: string | null;
+  pageDescription: string | null;
+  monday: string | null;
+  tuesday: string | null;
+  wednesday: string | null;
+  thursday: string | null;
+  friday: string | null;
+  saturday: string | null;
+  sunday: string | null;
+}): PremiumStoreRecord {
+  return {
+    ...loc,
+    country: normalizeCountry(loc.country ?? '') || '',
+  };
+}
+
+/** PATCH body: only these keys may update Location (plus optional isPremium for registry sync). */
+export type PremiumStoreUpdateInput = Partial<{
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string;
+  stateProvinceRegion: string | null;
+  postalCode: string | null;
+  country: string;
+  phone: string | null;
+  website: string | null;
+  imageUrl: string | null;
+  pageDescription: string | null;
+  monday: string | null;
+  tuesday: string | null;
+  wednesday: string | null;
+  thursday: string | null;
+  friday: string | null;
+  saturday: string | null;
+  sunday: string | null;
+  isPremium: boolean;
+}>;
+
+function emptyToNull(s: string | null | undefined): string | null {
+  if (s === undefined || s === null) return null;
+  const t = s.trim();
+  return t === '' ? null : t;
 }
 
 export const premiumService = {
@@ -25,22 +120,107 @@ export const premiumService = {
    * for the premium management UI. One batch request — filtering is done client-side.
    */
   async getStores(): Promise<PremiumStoreRecord[]> {
-    return prisma.location.findMany({
-      select: {
-        handle: true,
-        name: true,
-        addressLine1: true,
-        addressLine2: true,
-        city: true,
-        stateProvinceRegion: true,
-        country: true,
-        postalCode: true,
-        phone: true,
-        brands: true,
-        isPremium: true,
-      },
+    const rows = await prisma.location.findMany({
+      select: premiumStoreSelect,
       orderBy: { name: 'asc' },
     });
+    return rows.map(toPremiumRecord);
+  },
+
+  /**
+   * Update one store by handle. Unknown body keys are ignored.
+   * Returns null if the handle does not exist.
+   */
+  async updateStoreByHandle(
+    handle: string,
+    body: PremiumStoreUpdateInput
+  ): Promise<PremiumStoreRecord | null> {
+    const h = handle.trim();
+    if (!h) return null;
+
+    const existing = await prisma.location.findUnique({
+      where: { handle: h },
+      select: premiumStoreSelect,
+    });
+    if (!existing) return null;
+
+    const data: Prisma.LocationUpdateInput = {};
+    let nextCountry = normalizeCountry(existing.country ?? '') || existing.country;
+
+    if (body.addressLine1 !== undefined) {
+      data.addressLine1 = (body.addressLine1 ?? '').trim() || existing.addressLine1;
+    }
+    if (body.addressLine2 !== undefined) {
+      data.addressLine2 = emptyToNull(body.addressLine2);
+    }
+    if (body.city !== undefined) {
+      data.city = (body.city ?? '').trim() || existing.city;
+    }
+    if (body.stateProvinceRegion !== undefined) {
+      data.stateProvinceRegion = emptyToNull(body.stateProvinceRegion);
+    }
+    if (body.postalCode !== undefined) {
+      data.postalCode = emptyToNull(body.postalCode);
+    }
+    if (body.country !== undefined) {
+      const norm = normalizeCountry((body.country ?? '').trim()) || (body.country ?? '').trim();
+      data.country = norm || existing.country;
+      nextCountry = norm || existing.country;
+    }
+    if (body.website !== undefined) {
+      data.website = emptyToNull(body.website);
+    }
+    if (body.imageUrl !== undefined) {
+      data.imageUrl = emptyToNull(body.imageUrl);
+    }
+    if (body.pageDescription !== undefined) {
+      data.pageDescription = emptyToNull(body.pageDescription);
+    }
+    if (body.monday !== undefined) data.monday = emptyToNull(body.monday);
+    if (body.tuesday !== undefined) data.tuesday = emptyToNull(body.tuesday);
+    if (body.wednesday !== undefined) data.wednesday = emptyToNull(body.wednesday);
+    if (body.thursday !== undefined) data.thursday = emptyToNull(body.thursday);
+    if (body.friday !== undefined) data.friday = emptyToNull(body.friday);
+    if (body.saturday !== undefined) data.saturday = emptyToNull(body.saturday);
+    if (body.sunday !== undefined) data.sunday = emptyToNull(body.sunday);
+    if (body.phone !== undefined) {
+      const raw = body.phone === null ? '' : String(body.phone);
+      data.phone = normalizePhone(raw, nextCountry);
+    }
+
+    const premiumOp =
+      body.isPremium === undefined
+        ? null
+        : body.isPremium
+          ? ('mark' as const)
+          : ('unmark' as const);
+
+    await prisma.$transaction(async (tx) => {
+      if (premiumOp === 'mark') {
+        await tx.premiumStore.upsert({
+          where: { handle: h },
+          update: { addedAt: new Date() },
+          create: { handle: h },
+        });
+        data.isPremium = true;
+      } else if (premiumOp === 'unmark') {
+        await tx.premiumStore.deleteMany({ where: { handle: h } });
+        data.isPremium = false;
+      }
+
+      if (Object.keys(data).length > 0) {
+        await tx.location.update({
+          where: { handle: h },
+          data,
+        });
+      }
+    });
+
+    const updated = await prisma.location.findUnique({
+      where: { handle: h },
+      select: premiumStoreSelect,
+    });
+    return updated ? toPremiumRecord(updated) : null;
   },
 
   /**

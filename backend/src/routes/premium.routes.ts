@@ -9,6 +9,7 @@ router.get('/names', premiumController.getNames);
 
 // Admin-only routes
 router.get('/stores', authenticate, premiumController.getStores);
+router.patch('/stores/:handle', authenticate, premiumController.updateStore);
 router.post('/stores', authenticate, premiumController.markPremium);
 router.delete('/stores', authenticate, premiumController.removePremium);
 

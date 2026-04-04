@@ -17,8 +17,10 @@
     "normalize-countries": "ts-node src/scripts/normalize-db-countries.ts",
     "verify-countries": "ts-node src/scripts/verify-country-normalization.ts",
     "verify-countries-db": "ts-node src/scripts/verify-country-normalization.ts --db",
+    "audit:location-countries": "ts-node src/scripts/audit-location-countries.ts",
     "analyze-duplicates": "ts-node src/scripts/analyze-duplicate-locations.ts",
     "cleanup-locations": "ts-node src/scripts/cleanup-locations-db.ts",
+    "normalize-phones": "ts-node src/scripts/normalize-db-phones.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
@@ -45,6 +47,7 @@
     "express-rate-limit": "^8.2.1",
     "i18n-iso-countries": "^7.14.0",
     "jsonwebtoken": "^9.0.2",
+    "libphonenumber-js": "^1.12.41",
     "multer": "^1.4.5-lts.1",
     "papaparse": "^5.5.3",
     "uuid": "^9.0.1"

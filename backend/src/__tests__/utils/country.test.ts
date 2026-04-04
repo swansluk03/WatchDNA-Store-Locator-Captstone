@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeCountry } from '../../utils/country';
+import { normalizeCountry, isRecognizedCountryOrTerritory } from '../../utils/country';
 
 describe('normalizeCountry', () => {
   describe('empty / whitespace', () => {
@@ -96,6 +96,22 @@ describe('normalizeCountry', () => {
     it('resolves Taiwan, Province of China → Taiwan', () => {
       expect(normalizeCountry('Taiwan, Province of China')).toBe('Taiwan');
     });
+
+    it('resolves Hong Kong SAR variants → Hong Kong', () => {
+      expect(normalizeCountry('Hong Kong SAR')).toBe('Hong Kong');
+      expect(normalizeCountry('Hong Kong SAR, China')).toBe('Hong Kong');
+      expect(normalizeCountry('Hong Kong SAR. China')).toBe('Hong Kong');
+    });
+
+    it('resolves Macau SAR variants → Macau', () => {
+      expect(normalizeCountry('Macau SAR')).toBe('Macau');
+      expect(normalizeCountry('Macao SAR, China')).toBe('Macau');
+    });
+
+    it("resolves People's Republic of China → China", () => {
+      expect(normalizeCountry("People's Republic of China")).toBe('China');
+      expect(normalizeCountry('PRC')).toBe('China');
+    });
   });
 
   describe('full names — canonical casing', () => {
@@ -113,6 +129,27 @@ describe('normalizeCountry', () => {
 
     it('lowercased "south korea" → South Korea', () => {
       expect(normalizeCountry('south korea')).toBe('South Korea');
+    });
+  });
+
+  describe('isRecognizedCountryOrTerritory', () => {
+    it('accepts ISO countries and territories (HK, Macau)', () => {
+      expect(isRecognizedCountryOrTerritory('Hong Kong')).toBe(true);
+      expect(isRecognizedCountryOrTerritory('Hong Kong SAR')).toBe(true);
+      expect(isRecognizedCountryOrTerritory('Macau')).toBe(true);
+      expect(isRecognizedCountryOrTerritory('Macao')).toBe(true);
+    });
+
+    it('rejects typical city names in the country column', () => {
+      expect(isRecognizedCountryOrTerritory('Paris')).toBe(false);
+      expect(isRecognizedCountryOrTerritory('London')).toBe(false);
+      expect(isRecognizedCountryOrTerritory('New York')).toBe(false);
+    });
+
+    it('accepts supplier variants after alias normalization', () => {
+      expect(normalizeCountry('Macedonia')).toBe('North Macedonia');
+      expect(normalizeCountry('Suisse')).toBe('Switzerland');
+      expect(isRecognizedCountryOrTerritory('Kingdom of Saudi Arabia')).toBe(true);
     });
   });
 

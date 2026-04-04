@@ -11,6 +11,7 @@ import {
 } from '../config/validation-policy';
 import { SCRAPER_PATH, PYTHON_CMD } from '../utils/paths';
 import { normalizeScraperRowsForCsv } from '../utils/stable-handle';
+import { brandConfigIdToDisplayName, normalizeBrandsCsvField } from '../utils/brand-display-name';
 import { isRowCompleteForDb } from '../utils/row-completeness';
 import { logger } from '../utils/logger';
 import prisma from '../lib/prisma';
@@ -192,7 +193,11 @@ class ScraperService {
               }
             });
 
-            const displayName: string = config.display_name || brandName;
+            const displayName: string = (
+              config.display_name && String(config.display_name).trim()
+                ? brandConfigIdToDisplayName(String(config.display_name).trim())
+                : brandConfigIdToDisplayName(brandName)
+            );
 
             // ── STABLE HANDLES + JOB CSV (keeps incomplete rows for editor) ───
             postProcessLogs += '\n\n=== SCRAPER CSV NORMALIZATION ===\n';
@@ -206,13 +211,13 @@ class ScraperService {
               const csvRecords = parsed.data as Record<string, string>[];
               const withBrands = csvRecords.map((r) => ({
                 ...r,
-                Brands: r.Brands || displayName,
+                Brands: normalizeBrandsCsvField(r.Brands) ?? displayName,
               }));
               const normalizedRows = normalizeScraperRowsForCsv(withBrands);
               fs.writeFileSync(individualCsvFile, Papa.unparse(normalizedRows), 'utf-8');
               const completeN = normalizedRows.filter((r) => isRowCompleteForDb(r)).length;
               postProcessLogs += `Rows: ${normalizedRows.length} | Complete for DB: ${completeN} | Incomplete (CSV only): ${normalizedRows.length - completeN}\n`;
-              postProcessLogs += `Stable loc_* handles assigned to complete rows.\n`;
+              postProcessLogs += `Country/Phone canonicalized (same rules as DB import); stable loc_* handles assigned to complete rows.\n`;
               await prisma.upload.update({
                 where: { id: individualUpload.id },
                 data: {
@@ -262,12 +267,12 @@ class ScraperService {
               });
               const enrichedRecords = (csvRecords as Record<string, string>[]).map((r) => ({
                 ...r,
-                Brands: r.Brands || displayName,
+                Brands: normalizeBrandsCsvField(r.Brands) ?? displayName,
               }));
               const upsertResult = await storeService.batchUpsertLocations(
                 enrichedRecords,
                 individualUpload.id,
-                { failFast: true, requireCompleteForDb: true }
+                { failFast: true, requireCompleteForDb: true, mergeOnUpdate: true }
               );
               postProcessLogs += formatDbSyncLog(upsertResult);
               const rowsInDb = await this.countLocationsForUpload(individualUpload.id);
@@ -515,6 +520,7 @@ class ScraperService {
         lastUpsert = await storeService.batchUpsertLocations(fixedRecords, job.uploadId, {
           failFast: true,
           requireCompleteForDb: true,
+          mergeOnUpdate: true,
         });
         dbUpserted = lastUpsert.upserted;
         editLogSection += `\n\n=== DB SYNC ===\n${formatDbSyncLog(lastUpsert)}`;
@@ -620,23 +626,25 @@ class ScraperService {
         transformHeader: (h: string) => h.trim(),
       });
       const rows = parseResult.data as Record<string, string>[];
+      const normalized = normalizeScraperRowsForCsv(rows);
       return {
         jobId: job.id,
         brandName: job.brandName,
         source: 'csv',
-        columns: rows.length > 0 ? Object.keys(rows[0]) : [],
-        records: rows,
+        columns: normalized.length > 0 ? Object.keys(normalized[0]) : [],
+        records: normalized,
       };
     }
 
     const dbRows = await storeService.getLocationsByUploadId(job.uploadId);
     if (dbRows.length > 0) {
+      const normalized = normalizeScraperRowsForCsv(dbRows);
       return {
         jobId: job.id,
         brandName: job.brandName,
         source: 'db',
-        columns: Object.keys(dbRows[0]),
-        records: dbRows,
+        columns: Object.keys(normalized[0]),
+        records: normalized,
       };
     }
 
@@ -651,12 +659,13 @@ class ScraperService {
       transformHeader: (h: string) => h.trim(),
     });
     const rows = parseResult.data as Record<string, string>[];
+    const normalized = normalizeScraperRowsForCsv(rows);
     return {
       jobId: job.id,
       brandName: job.brandName,
       source: 'csv',
-      columns: rows.length > 0 ? Object.keys(rows[0]) : [],
-      records: rows,
+      columns: normalized.length > 0 ? Object.keys(normalized[0]) : [],
+      records: normalized,
     };
   }
 
