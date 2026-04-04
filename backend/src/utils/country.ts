@@ -49,10 +49,26 @@ const ALIASES: Record<string, string> = {
   'republic of korea': 'South Korea',
   // Czech Republic
   'czechia': 'Czech Republic',
-  // Hong Kong
+  // Hong Kong (SAR / postal / map variants that scrapers emit as separate strings)
   'hk': 'Hong Kong',
-  // Macau
+  'hong kong sar': 'Hong Kong',
+  'hong kong sar, china': 'Hong Kong',
+  'hong kong sar. china': 'Hong Kong',
+  'hong kong, china': 'Hong Kong',
+  // Macau / Macao SAR variants
   'macao': 'Macau',
+  'macau sar': 'Macau',
+  'macau sar, china': 'Macau',
+  'macau sar. china': 'Macau',
+  'macao sar': 'Macau',
+  'macao sar, china': 'Macau',
+  'macao sar. china': 'Macau',
+  // China (long-form English names vs short "China")
+  "people's republic of china": 'China',
+  'peoples republic of china': 'China',
+  "the people's republic of china": 'China',
+  'prc': 'China',
+  'mainland china': 'China',
   // Taiwan
   'taiwan, province of china': 'Taiwan',
   'chinese taipei': 'Taiwan',
@@ -68,6 +84,18 @@ const ALIASES: Record<string, string> = {
   'rsa': 'South Africa',
   // United States of America (returned by i18n-iso-countries for US)
   'brasil': 'Brazil',
+  // Scrapers / suppliers (not matched by i18n English name)
+  'kingdom of saudi arabia': 'Saudi Arabia',
+  'macedonia': 'North Macedonia',
+  'suisse': 'Switzerland',
+  'taiwan region': 'Taiwan',
+  'taiwan region. china': 'Taiwan',
+  'taiwan region, china': 'Taiwan',
+  'united states virgin islands': 'Virgin Islands, U.S.',
+  'u.s. virgin islands': 'Virgin Islands, U.S.',
+  'saint-barthelemy': 'Saint Barthélemy',
+  'saint martin': 'Saint Martin (French part)',
+  'caribbean netherlands': 'Bonaire, Sint Eustatius and Saba',
 };
 
 /**
@@ -111,4 +139,35 @@ export function normalizeCountry(value: string): string {
 
   // 4. No match — return trimmed original
   return stripped;
+}
+
+/** Preferred English names from project JSON (subset of ISO world; used as a fallback for i18n spelling gaps). */
+const CANONICAL_COUNTRY_NAMES = new Set(Object.values(JSON_CODES));
+
+/**
+ * True if the value normalizes to a jurisdiction treated as ISO 3166-1 (country or territory), e.g. Hong Kong, Puerto Rico.
+ * False for typical mistakes such as putting a city in the country column ("Paris", "London").
+ *
+ * Note: Hong Kong is ISO 3166-1 alpha-2 HK; using Country = Hong Kong and City = district (e.g. Central) is normal.
+ */
+export function isRecognizedCountryOrTerritory(value: string): boolean {
+  const n = normalizeCountry(value).trim();
+  if (!n) return false;
+
+  if (/^[A-Za-z]{2}$/.test(n)) {
+    const code = n.toUpperCase();
+    if (JSON_CODES[code]) return true;
+    return Boolean(isoCountries.getName(code, 'en'));
+  }
+
+  if (isoCountries.getAlpha2Code(n, 'en')) return true;
+
+  // i18n English uses "Macao" (MO); we normalize scraper data to "Macau"
+  if (n.toLowerCase() === 'macau') {
+    return Boolean(isoCountries.getName('MO', 'en'));
+  }
+
+  if (CANONICAL_COUNTRY_NAMES.has(n)) return true;
+
+  return false;
 }

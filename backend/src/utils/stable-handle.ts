@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { normalizeCountry } from './country';
+import { normalizedCountryAndPhoneFromCsvRow } from './csv-to-location';
 import { isRowCompleteForDb } from './row-completeness';
 
 function norm(s: string | undefined | null): string {
@@ -27,15 +28,32 @@ export function computeStableHandleFromRow(row: Record<string, string>): string 
 }
 
 /**
- * For scraper job CSV + DB: assign stable Handle to rows that are complete for DB.
+ * Canonical Country + Phone on CSV-shaped rows via {@link normalizedCountryAndPhoneFromCsvRow}
+ * (same code path as parseRowToLocationData / DB upsert).
+ */
+export function normalizeScraperFieldsForCsv(row: Record<string, string>): Record<string, string> {
+  const { country, phone } = normalizedCountryAndPhoneFromCsvRow(row);
+  const out = { ...row };
+  if (Object.prototype.hasOwnProperty.call(row, 'Country')) {
+    out.Country = country;
+  }
+  if (Object.prototype.hasOwnProperty.call(row, 'Phone')) {
+    out.Phone = phone ?? '';
+  }
+  return out;
+}
+
+/**
+ * For scraper job CSV + DB: normalize Country/Phone, then assign stable Handle when complete for DB.
  * Incomplete rows keep the source handle so editors can still see and fix them.
  */
 export function normalizeScraperRowForCsv(row: Record<string, string>): Record<string, string> {
-  if (!isRowCompleteForDb(row)) return row;
+  const fields = normalizeScraperFieldsForCsv(row);
+  if (!isRowCompleteForDb(fields)) return fields;
   try {
-    return { ...row, Handle: computeStableHandleFromRow(row) };
+    return { ...fields, Handle: computeStableHandleFromRow(fields) };
   } catch {
-    return row;
+    return fields;
   }
 }
 

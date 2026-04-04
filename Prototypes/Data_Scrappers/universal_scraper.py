@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import re
 import sys
 import os
 import time
@@ -23,6 +24,143 @@ from typing import Dict, List, Any, Optional, Tuple
 from urllib.parse import urlparse
 
 from scraper_utils import log_debug
+
+
+# ---------------------------------------------------------------------------
+# Country-name normalisation (built once at module load from Babel + pycountry)
+# ---------------------------------------------------------------------------
+
+def _build_country_name_map() -> dict:
+    """
+    Return a dict mapping any known country-name variant (lower-case) to the
+    ISO 3166 canonical English name.  Covers ~3 500+ variants across all major
+    languages by combining:
+      • pycountry  – alpha_2, alpha_3, English name, official_name, common_name
+      • Babel      – localised territory names for every locale in the CLDR data
+    Falls back gracefully if either library is unavailable.
+    """
+    mapping: dict = {}
+    try:
+        import pycountry
+        for c in pycountry.countries:
+            eng = c.name
+            for key in (c.alpha_2, c.alpha_3, eng,
+                        getattr(c, 'common_name', None),
+                        getattr(c, 'official_name', None)):
+                if key:
+                    mapping[key.lower()] = eng
+    except Exception:
+        pass
+
+    try:
+        from babel import Locale
+        import pycountry as _pc
+        for locale_code in [
+            'af', 'ar', 'az', 'be', 'bg', 'bn', 'bs', 'ca', 'cs', 'cy',
+            'da', 'de', 'el', 'en', 'es', 'et', 'eu', 'fa', 'fi', 'fr',
+            'ga', 'gl', 'gu', 'he', 'hi', 'hr', 'hu', 'hy', 'id', 'is',
+            'it', 'ja', 'ka', 'kk', 'km', 'kn', 'ko', 'ky', 'lo', 'lt',
+            'lv', 'mk', 'ml', 'mn', 'mr', 'ms', 'my', 'nb', 'ne', 'nl',
+            'or', 'pa', 'pl', 'pt', 'ro', 'ru', 'si', 'sk', 'sl', 'sq',
+            'sr', 'sv', 'sw', 'ta', 'te', 'th', 'tl', 'tr', 'uk', 'ur',
+            'uz', 'vi', 'zh', 'zu',
+        ]:
+            try:
+                loc = Locale.parse(locale_code)
+                for alpha2, local_name in loc.territories.items():
+                    c = _pc.countries.get(alpha_2=alpha2)
+                    if c and local_name:
+                        mapping[local_name.lower()] = c.name
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Manual overrides for common abbreviations / colloquial names not in CLDR
+    mapping.update({
+        'uk': 'United Kingdom',
+        'usa': 'United States',
+        'u.s.a.': 'United States',
+        'u.s.': 'United States',
+        'uae': 'United Arab Emirates',
+        'u.a.e.': 'United Arab Emirates',
+        'south korea': 'South Korea',
+        'north korea': 'North Korea',
+        'taiwan': 'Taiwan',
+        'hong kong': 'Hong Kong',
+        'macau': 'Macao',
+        'macao': 'Macao',
+        'czech republic': 'Czechia',
+        'slovak republic': 'Slovakia',
+        'ivory coast': "Côte d'Ivoire",
+        'congo': 'Congo',
+        'dr congo': 'Congo, The Democratic Republic of the',
+        'drc': 'Congo, The Democratic Republic of the',
+        'trinidad': 'Trinidad and Tobago',
+    })
+    return mapping
+
+
+_COUNTRY_NAME_MAP: dict = _build_country_name_map()
+
+
+def _normalize_country(name: str) -> str:
+    """Return the canonical English country name, or the original string if unknown."""
+    return _COUNTRY_NAME_MAP.get(name.lower().strip(), name.strip())
+
+
+# ---------------------------------------------------------------------------
+# Worldwide postal-code helpers
+# ---------------------------------------------------------------------------
+
+# Ordered list of (pattern_str, description) used to detect postal codes.
+# More-specific formats come first to avoid partial matches by the catch-all.
+_POSTAL_PATTERNS = [
+    # UK  e.g. SW1A 1AA, EC1A 1BB, W1A 0AX
+    r'[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}',
+    # Canada  e.g. M5V 3A8, T2P 3C3
+    r'[A-Z]\d[A-Z]\s*\d[A-Z]\d',
+    # Netherlands  e.g. 3421 AG, 1017 RZ  (4 digits + 2 uppercase letters)
+    r'\d{4}\s+[A-Z]{2}',
+    # Sweden / Czech / Slovakia  e.g. 113 47, 160 00  (3 digits + 2 digits)
+    r'\d{3}\s+\d{2}',
+    # US ZIP+4  e.g. 12345-6789
+    r'\d{5}-\d{4}',
+    # Brazil / Japan / Poland  e.g. 01310-100, 141-0021, 00-001
+    r'\d{2,5}-\d{3,4}',
+    # Generic 4–6 digit  (AU, AT, BE, CH, DE, DK, ES, FI, FR, HU, IT, NO, …)
+    r'\d{4,6}',
+]
+
+# Single compiled regex that matches any postal-code token (anchored as full token)
+_POSTAL_TOKEN_RE = re.compile(
+    r'^(?:' + '|'.join(_POSTAL_PATTERNS) + r')$', re.IGNORECASE
+)
+
+
+def _split_postal_prefix(text: str):
+    """
+    If *text* starts with a postal code followed by at least one space and
+    more content (e.g. '3421 AG Oudewater', '1204 Geneva'), return
+    ``(postal, rest)``.  Otherwise return ``(None, text)``.
+    """
+    for pat in _POSTAL_PATTERNS:
+        m = re.match(r'^(' + pat + r')\s+(.+)$', text, re.IGNORECASE)
+        if m:
+            return m.group(1).strip(), m.group(2).strip()
+    return None, text
+
+
+def _split_postal_suffix(text: str):
+    """
+    If *text* ends with a postal code (e.g. 'Tokyo 141-0021', 'Riyadh 12329'),
+    return ``(city, postal)``.  Otherwise return ``(text, None)``.
+    """
+    for pat in _POSTAL_PATTERNS:
+        m = re.match(r'^(.+?)\s+(' + pat + r')$', text, re.IGNORECASE)
+        if m:
+            return m.group(1).strip(), m.group(2).strip()
+    return text, None
 
 
 def _get_custom_headers(brand_config: Optional[Dict]) -> Optional[Dict]:
@@ -460,13 +598,226 @@ def extract_stores_from_html_js(html_content: str) -> List[Dict]:
                 except (json.JSONDecodeError, AttributeError, KeyError) as e:
                     continue
             
-            # Method 3: Generic HTML fallback - parse store/retailer cards from any page structure
+            # Method 3: data-lat / data-lng attribute elements (Drupal Geolocation module and similar)
+            # Elements carry coordinates as HTML attributes alongside structured address markup.
+            # Cross-reference with sibling card elements (by name) to pick up phone/email/website.
+            if not stores:
+                geo_elements = soup.find_all(attrs={'data-lat': True, 'data-lng': True})
+                if geo_elements:
+                    # Build a name → card lookup from visible store cards for enrichment
+                    card_by_name = {}
+                    for card in soup.find_all(class_=re.compile(r'store-wrapper|store-card|retailer-card|location-card', re.I)):
+                        heading = card.find(['h2', 'h3', 'h4'])
+                        if heading:
+                            card_by_name[heading.get_text(strip=True).lower()] = card
+
+                    # Drupal region-continent suffixes that are not real country names
+                    _REGION_SUFFIX = re.compile(
+                        r',?\s*(Asia|Europe|Americas|Africa|Oceania|Middle\s+East|APAC)\s*$',
+                        re.I,
+                    )
+
+                    def _clean_para(text: str) -> str:
+                        """Normalise non-breaking spaces and strip trailing commas/whitespace."""
+                        text = re.sub(r'[\u00a0\xa0]+', ' ', text)
+                        return text.strip().rstrip(',').strip()
+
+                    def _parse_last_para(text: str) -> dict:
+                        """
+                        Parse the final address paragraph into structured fields.
+
+                        Handles any combination of:
+                          postal-code prefix  (any world format via _split_postal_prefix)
+                          dash/em-dash separator before the country
+                          comma-separated city, country
+                          state + postal code (e.g. "WA 6017")
+                          plain country name in any language (_normalize_country)
+
+                        Examples:
+                          "Japan"                           → {Country: Japan}
+                          "Malaysia, Asia"                  → {Country: Malaysia}
+                          "Suisse"                          → {Country: Switzerland}
+                          "WA 6017 – Australia"             → {State: WA, Postal: 6017, Country: Australia}
+                          "10310 Thailand"                  → {Postal: 10310, Country: Thailand}
+                          "1204 Geneva, Suisse"             → {Postal: 1204, City: Geneva, Country: Switzerland}
+                          "1017 RZ Amsterdam - Netherlands" → {Postal: 1017 RZ, City: Amsterdam, Country: Netherlands}
+                          "3421 AG Oudewater"               → {Postal: 3421 AG, City: Oudewater}
+                          "Ras Al Khaimah - United Arab Emirates" → {City: Ras Al Khaimah, Country: UAE}
+                        """
+                        out: dict = {}
+                        text = _REGION_SUFFIX.sub('', text).strip()
+
+                        # ── dash/em-dash separator: "left – Country" ────────────────
+                        dash_m = re.match(r'^(.+?)\s*[–\-]\s*(.+)$', text)
+                        if dash_m:
+                            left    = dash_m.group(1).strip()
+                            country = dash_m.group(2).strip()
+                            out['Country'] = _normalize_country(country)
+                            # left may be "WA 6017" (state + postal) or "1017 RZ Amsterdam" or plain city
+                            state_postal = re.match(r'^([A-Z]{1,3})\s+(\d{3,6})$', left)
+                            postal, rest = _split_postal_prefix(left)
+                            if state_postal:
+                                out['State/Province/Region'] = state_postal.group(1)
+                                out['Postal/ZIP Code']       = state_postal.group(2)
+                            elif postal:
+                                out['Postal/ZIP Code'] = postal
+                                out['City']            = rest
+                            else:
+                                out['City'] = left
+                            return out
+
+                        # ── starts with a postal code ───────────────────────────────
+                        postal, rest = _split_postal_prefix(text)
+                        if postal:
+                            # rest may be "City, Country", "Country", or just "City"
+                            if ',' in rest:
+                                city_part, country_part = rest.rsplit(',', 1)
+                                out['Postal/ZIP Code'] = postal
+                                out['City']    = city_part.strip()
+                                out['Country'] = _normalize_country(country_part)
+                            else:
+                                # Decide if rest is a known country or a city name.
+                                # If it resolves to a known country we treat it as country-only.
+                                normalised = _normalize_country(rest)
+                                if normalised != rest or rest.lower() in _COUNTRY_NAME_MAP:
+                                    out['Postal/ZIP Code'] = postal
+                                    out['Country']         = normalised
+                                else:
+                                    # Unrecognised as country → treat as city (no country known)
+                                    out['Postal/ZIP Code'] = postal
+                                    out['City']            = rest
+                            return out
+
+                        # ── plain "City, Country" or plain country ──────────────────
+                        if ',' in text:
+                            city_part, country_part = text.rsplit(',', 1)
+                            out['City']    = city_part.strip()
+                            out['Country'] = _normalize_country(country_part)
+                        else:
+                            out['Country'] = _normalize_country(text)
+                        return out
+
+                    def _parse_penultimate_para(text: str, store: dict) -> None:
+                        """
+                        Fill City / Postal from the second-to-last address paragraph when
+                        _parse_last_para didn't set them.
+
+                        Handles any world postal-code format via the module-level
+                        _split_postal_suffix / _split_postal_prefix helpers, plus
+                        comma-separated district/city patterns.
+
+                        Examples:
+                          "Tokyo 141-0021"              → City: Tokyo,      Postal: 141-0021
+                          "Riyadh 12329"                → City: Riyadh,     Postal: 12329
+                          "59200 Kuala Lumpur"          → City: Kuala Lumpur, Postal: 59200
+                          "KL Gateway, 59200 Kuala Lumpur" → City: Kuala Lumpur, Postal: 59200
+                          "Songpa-gu, Seoul"            → City: Seoul
+                        """
+                        if store.get('City') and store.get('Postal/ZIP Code'):
+                            return
+
+                        # Try postal at end: "Tokyo 141-0021"
+                        if not (store.get('City') and store.get('Postal/ZIP Code')):
+                            city, postal = _split_postal_suffix(text)
+                            if postal and city:
+                                if not store.get('City'):
+                                    store['City'] = city
+                                if not store.get('Postal/ZIP Code'):
+                                    store['Postal/ZIP Code'] = postal
+                                return
+
+                        # Try postal at start: "59200 Kuala Lumpur"
+                        if not store.get('City'):
+                            postal, city = _split_postal_prefix(text)
+                            if postal and city:
+                                if not store.get('Postal/ZIP Code'):
+                                    store['Postal/ZIP Code'] = postal
+                                store['City'] = city
+                                return
+
+                        # Comma-separated: take the last segment as the city candidate
+                        # e.g. "KL Gateway, 59200 Kuala Lumpur" or "Songpa-gu, Seoul"
+                        if ',' in text and not store.get('City'):
+                            candidate = text.rsplit(',', 1)[-1].strip()
+                            # candidate may still start with a postal code
+                            postal2, city2 = _split_postal_prefix(candidate)
+                            if postal2 and city2:
+                                if not store.get('Postal/ZIP Code'):
+                                    store['Postal/ZIP Code'] = postal2
+                                store['City'] = city2
+                            else:
+                                store['City'] = candidate
+
+                    for el in geo_elements:
+                        lat = el.get('data-lat', '').strip()
+                        lng = el.get('data-lng', '').strip()
+                        if not lat or not lng:
+                            continue
+
+                        # Name: prefer a dedicated title field, fall back to first heading
+                        title_el = el.find(class_=re.compile(r'views-field-title|location-title|store-name', re.I))
+                        name = title_el.get_text(strip=True) if title_el else ''
+                        if not name:
+                            h = el.find(['h2', 'h3', 'h4'])
+                            name = h.get_text(strip=True) if h else ''
+                        if not name:
+                            continue
+
+                        store = {'Name': name, 'Latitude': lat, 'Longitude': lng}
+
+                        # Address: collect cleaned <p> lines from the address field block
+                        addr_block = el.find(class_=re.compile(r'views-field-field-address|address|location-address', re.I))
+                        if addr_block:
+                            paras = [_clean_para(p.get_text()) for p in addr_block.find_all('p')]
+                            paras = [p for p in paras if p]
+
+                            if paras:
+                                parsed_last = _parse_last_para(paras[-1])
+                                store.update(parsed_last)
+
+                                # Remaining lines before the last
+                                body = paras[:-1]
+                                if body:
+                                    store['Address Line 1'] = body[0]
+                                if len(body) >= 2:
+                                    store['Address Line 2'] = body[1]
+                                # Try to extract City/Postal from the second-to-last body line
+                                if len(body) >= 2:
+                                    _parse_penultimate_para(body[-1], store)
+
+                        # Enrich from matching visible card (phone, email, website)
+                        card = card_by_name.get(name.lower())
+                        if card:
+                            phone_el = card.find(class_=re.compile(r'phone', re.I))
+                            if phone_el:
+                                store['Phone'] = phone_el.get_text(strip=True)
+                            email_el = card.find(class_=re.compile(r'email', re.I))
+                            if email_el:
+                                a = email_el.find('a')
+                                if a:
+                                    href = a.get('href', '')
+                                    # Drupal contact links: /contact?recipient=email@addr
+                                    m = re.search(r'recipient=([^&]+)', href)
+                                    store['Email'] = m.group(1) if m else a.get_text(strip=True)
+                                else:
+                                    store['Email'] = email_el.get_text(strip=True)
+                            website_el = card.find(class_=re.compile(r'website', re.I))
+                            if website_el:
+                                a = website_el.find('a')
+                                store['Website'] = a.get('href') if a else website_el.get_text(strip=True)
+
+                        stores.append(store)
+
+                    if stores:
+                        log_debug(f"Extracted {len(stores)} stores from data-lat/data-lng elements", "SUCCESS")
+
+            # Method 4: Generic HTML fallback - parse store/retailer cards from any page structure
             if not stores:
                 stores = _extract_stores_from_html_cards(soup)
                 if stores:
                     log_debug(f"Extracted {len(stores)} stores from HTML cards (generic fallback)", "SUCCESS")
 
-            # Method 4: Look for headings with boutique/store names (Blancpain-style)
+            # Method 5: Look for headings with boutique/store names (Blancpain-style)
             if not stores:
                 headings = soup.find_all(['h2', 'h3'], string=re.compile(r'Boutique|Store|Retailer', re.I))
                 
@@ -608,6 +959,22 @@ def scrape_single_call(
     return stores, None
 
 
+def _radius_page_fingerprint(entities: List[Any]) -> Tuple[str, ...]:
+    """Stable fingerprint for one API page — detects repeated pages when offset is ignored."""
+    keys: List[str] = []
+    for e in entities:
+        if not isinstance(e, dict):
+            continue
+        pid = e.get("ID") or e.get("id")
+        prof = e.get("profile")
+        if pid is None and isinstance(prof, dict):
+            meta = prof.get("meta")
+            if isinstance(meta, dict):
+                pid = meta.get("id")
+        keys.append(str(pid) if pid is not None else "")
+    return tuple(sorted(keys))
+
+
 def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", custom_headers: Optional[Dict] = None) -> List[Dict]:
     """Expand radius-based API using multiple center points worldwide"""
     import requests
@@ -694,133 +1061,207 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
     elif region == "asia":
         major_cities = [c for c in major_cities if c[0] in ["Tokyo", "Shanghai", "Hong Kong", "Singapore", "Bangkok", "Mumbai", "Dubai", "Seoul", "Taipei"]]
     
-    # Extract radius and other params
-    radius = url_params.get('r', '2000')  # Default 2000km
-    per = url_params.get('per', '50')  # API supports max 50 per page
-    lang = url_params.get('l', 'en')
-    
-    # Remove center point params (q, lat, long) and pagination params (offset) - we'll add our own
-    base_params = {k: v for k, v in url_params.items() 
-                   if k not in ['q', 'offset', 'qp', 'lat', 'long', 'latitude', 'longitude']}
-    
+    # Detect center-point format from input URL (Yext: q=lat,lng vs SFCC: lat/long)
+    if 'lat' in url_params and ('long' in url_params or 'lng' in url_params):
+        center_format = 'lat_long'
+        lat_key = 'lat'
+        lng_key = 'long' if 'long' in url_params else 'lng'
+    elif 'latitude' in url_params and ('longitude' in url_params or 'lng' in url_params):
+        center_format = 'lat_long'
+        lat_key = 'latitude'
+        lng_key = 'longitude' if 'longitude' in url_params else 'lng'
+    else:
+        center_format = 'q'
+
+    # Detect radius key and value from input URL
+    radius_key = 'r'
+    radius = '2000'
+    for _rk in ('radius', 'r', 'distance'):
+        if _rk in url_params:
+            radius_key = _rk
+            _rv = url_params[_rk]
+            radius = _rv[0] if isinstance(_rv, list) else _rv
+            break
+
+    # Pagination: Yext-style (q=lat,lng) APIs typically need per/offset on every request,
+    # even when the captured URL omitted them. SFCC / lat+long endpoints usually return one
+    # full page per call — do not send synthetic per/offset there (can break or confuse the API).
+    if center_format == 'q':
+        per_key = next((k for k in ('per', 'limit', 'per_page') if k in url_params), 'per')
+        _per_raw = url_params.get(per_key, '50')
+        per = _per_raw[0] if isinstance(_per_raw, list) else _per_raw
+        offset_key = 'offset'
+    else:
+        per_key = next((k for k in ('per', 'limit', 'per_page') if k in url_params), None)
+        offset_key = 'offset' if (per_key or 'offset' in url_params) else None
+        per = url_params.get(per_key, '50') if per_key else None
+        if isinstance(per, list):
+            per = per[0]
+
+    lang = url_params.get('l') or url_params.get('lang')
+    if center_format == 'q' and not lang:
+        lang = 'en'
+
+    # Strip location, radius, and pagination keys so we can add our own
+    _strip = {
+        'q', 'qp', 'lat', 'long', 'lng', 'latitude', 'longitude',
+        'r', 'radius', 'distance',
+    }
+    if offset_key:
+        _strip.add(offset_key)
+    if per_key:
+        _strip.add(per_key)
+    base_params = {k: v for k, v in url_params.items() if k not in _strip}
+
     all_stores = []
     seen_ids = set()
-    
-    print(f"   Using {len(major_cities)} center points with radius={radius}km")
+
+    print(f"   Using {len(major_cities)} center points with {radius_key}={radius}")
     print(f"   Starting multi-point radius expansion...")
-    
-    for i, (city_name, lat, lng) in enumerate(major_cities, 1):
+
+    for i, (city_name, city_lat, city_lng) in enumerate(major_cities, 1):
         print(f"   [{i}/{len(major_cities)}] {city_name}...", end=" ", flush=True)
-        
-        # Fetch all pages from this center point
+
         offset = 0
         page = 1
         stores_from_city = []
-        
+        prev_page_fp: Optional[Tuple[str, ...]] = None
+        empty_full_pages = 0
+
         while True:
             params = base_params.copy()
-            params['q'] = f"{lat},{lng}"
-            params['r'] = radius
-            params['per'] = per
-            params['offset'] = str(offset)
+            if center_format == 'lat_long':
+                params[lat_key] = str(city_lat)
+                params[lng_key] = str(city_lng)
+            else:
+                params['q'] = f"{city_lat},{city_lng}"
+            params[radius_key] = radius
+            if per_key:
+                params[per_key] = per
+                params[offset_key] = str(offset)
             if lang:
                 params['l'] = lang
-            
+
             try:
                 response = requests.get(url.split('?')[0], params=params, timeout=15, headers=custom_headers or {})
                 response.raise_for_status()
                 data = response.json()
-                
-                # Extract stores (support nested paths like response.entities)
-                entities = []
-                if isinstance(data, dict):
-                    response_data = data.get('response', data)
-                    entities = response_data.get('entities', []) or response_data.get('data', []) or response_data.get('results', [])
-                elif isinstance(data, list):
+
+                if isinstance(data, list):
                     entities = data
-                
+                elif isinstance(data, dict):
+                    response_data = data.get('response', data)
+                    entities = next(
+                        (
+                            response_data[k]
+                            for k in (
+                                'entities', 'data', 'results', 'stores',
+                                'locations', 'dealers', 'retailers', 'items', 'points',
+                            )
+                            if isinstance(response_data.get(k), list) and response_data[k]
+                        ),
+                        [],
+                    )
+                else:
+                    entities = []
+
                 if not entities:
                     break
-                
-                # Deduplicate using multiple strategies to ensure no duplicates
+
                 new_stores = []
                 for store in entities:
                     if not isinstance(store, dict):
                         continue
-                    
-                    # Strategy 1: Use profile.meta.id (most reliable)
-                    store_id = None
-                    profile = store.get('profile', {})
-                    if isinstance(profile, dict):
+
+                    profile = store.get('profile', {}) if isinstance(store.get('profile'), dict) else {}
+
+                    store_id = store.get('ID') or store.get('id')
+                    if not store_id and profile:
                         meta = profile.get('meta', {})
                         if isinstance(meta, dict):
                             store_id = meta.get('id')
-                    
-                    # Strategy 2: Use top-level id
+
                     if not store_id:
-                        store_id = store.get('id')
-                    
-                    # Strategy 3: Use name + address + city (most comprehensive fallback)
-                    if not store_id:
-                        name = store.get('name') or (profile.get('name') if isinstance(profile, dict) else '')
+                        name = store.get('name') or (profile.get('name') if profile else '')
                         addr = ''
-                        city = ''
-                        if isinstance(profile, dict):
+                        city_val = ''
+                        if profile:
                             addr_obj = profile.get('address', {})
                             if isinstance(addr_obj, dict):
                                 addr = addr_obj.get('line1', '')
-                                city = addr_obj.get('city', '')
-                        # Normalize for comparison (lowercase, strip whitespace)
-                        name = str(name).lower().strip() if name else ''
-                        addr = str(addr).lower().strip() if addr else ''
-                        city = str(city).lower().strip() if city else ''
-                        if name and addr:
-                            store_id = f"{name}|{addr}|{city}"
-                    
-                    # Strategy 4: Use name + coordinates as last resort
+                                city_val = addr_obj.get('city', '')
+                        if not addr:
+                            addr = store.get('address1', '') or store.get('address', '')
+                        if not city_val:
+                            city_val = store.get('city', city_val)
+                        name_n = str(name).lower().strip() if name else ''
+                        addr_n = str(addr).lower().strip() if addr else ''
+                        city_n = str(city_val).lower().strip() if city_val else ''
+                        if name_n and addr_n:
+                            store_id = f"{name_n}|{addr_n}|{city_n}"
+
                     if not store_id:
-                        name = store.get('name') or (profile.get('name') if isinstance(profile, dict) else '')
-                        lat = None
-                        lng = None
-                        if isinstance(profile, dict):
+                        name = store.get('name') or (profile.get('name') if profile else '')
+                        geo_lat = store.get('latitude')
+                        geo_lng = store.get('longitude')
+                        if geo_lat is None and profile:
                             geo = profile.get('geocodedCoordinate', {})
                             if isinstance(geo, dict):
-                                lat = geo.get('lat')
-                                lng = geo.get('long')
-                        if name and lat and lng:
-                            store_id = f"{str(name).lower().strip()}|{lat}|{lng}"
-                    
-                    # Add store if unique
+                                geo_lat = geo.get('lat')
+                                geo_lng = geo.get('long')
+                        if name and geo_lat is not None and geo_lng is not None:
+                            store_id = f"{str(name).lower().strip()}|{geo_lat}|{geo_lng}"
+
                     if store_id:
                         if store_id not in seen_ids:
                             seen_ids.add(store_id)
                             new_stores.append(store)
-                        # else: duplicate detected and skipped
                     else:
-                        # No ID found - still add it but log warning
                         log_debug(f"Store without ID found: {store.get('name', 'Unknown')}", "WARN")
                         new_stores.append(store)
-                
-                stores_from_city.extend(new_stores)
-                
-                # Check if more pages
-                count = data.get('response', {}).get('count', len(entities)) if isinstance(data, dict) else len(entities)
-                # Continue if we got fewer stores than expected (might be more pages)
-                if len(entities) < int(per):
-                    # Last page if we got fewer than per-page limit
+
+                page_fp = _radius_page_fingerprint(entities)
+                if prev_page_fp is not None and page_fp and page_fp == prev_page_fp:
+                    log_debug(
+                        f"Pagination stuck (same page repeated) for {city_name} — "
+                        "server likely ignores offset; stopping this center",
+                        "WARN",
+                    )
                     break
-                
-                # Check if we've reached the total count
+                prev_page_fp = page_fp
+
+                full_page = per is not None and len(entities) >= int(per)
+                if not new_stores:
+                    if full_page:
+                        empty_full_pages += 1
+                        if empty_full_pages >= 2:
+                            log_debug(
+                                f"No new stores in {empty_full_pages} full pages for {city_name} — "
+                                "offset may be unsupported or this center adds nothing; stopping",
+                                "WARN",
+                            )
+                            break
+                    else:
+                        stores_from_city.extend(new_stores)
+                        break
+                else:
+                    empty_full_pages = 0
+
+                stores_from_city.extend(new_stores)
+
+                count = data.get('response', {}).get('count', len(entities)) if isinstance(data, dict) else len(entities)
+                if per is None or len(entities) < int(per):
+                    break
                 if count and len(stores_from_city) >= int(count):
                     break
-                
+
                 offset += int(per)
                 page += 1
-                
-                if page > 100:  # Increased safety limit (was 50) to ensure we get all stores
+
+                if page > 100:
                     log_debug(f"Reached page limit (100) for {city_name}, stopping", "WARN")
                     break
-                
+
                 time.sleep(0.3)
             except Exception as e:
                 log_debug(f"Error fetching from {city_name}: {e}", "WARN")

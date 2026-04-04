@@ -8,6 +8,14 @@ import {
   VALIDATION_MANUAL_UPLOAD,
   VALIDATION_REVALIDATE_DEFAULT,
 } from '../config/validation-policy';
+import type { Prisma } from '@prisma/client';
+
+/** Bootstrap / legacy rows — master data lives in DB; hide from lists and stats. */
+const EXCLUDE_FROM_LISTING: Prisma.UploadWhereInput = {
+  NOT: {
+    originalFilename: { equals: 'master_stores.csv', mode: 'insensitive' },
+  },
+};
 
 export class UploadService {
 
@@ -91,7 +99,7 @@ export class UploadService {
     const limit = params.limit || 20;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Prisma.UploadWhereInput = { ...EXCLUDE_FROM_LISTING };
     if (params.status) where.status = params.status;
 
     const [uploads, total] = await Promise.all([
@@ -150,9 +158,9 @@ export class UploadService {
 
   async getStats() {
     const [totalUploads, validUploads, invalidUploads, totalLocations] = await Promise.all([
-      prisma.upload.count(),
-      prisma.upload.count({ where: { status: 'valid' } }),
-      prisma.upload.count({ where: { status: 'invalid' } }),
+      prisma.upload.count({ where: EXCLUDE_FROM_LISTING }),
+      prisma.upload.count({ where: { ...EXCLUDE_FROM_LISTING, status: 'valid' } }),
+      prisma.upload.count({ where: { ...EXCLUDE_FROM_LISTING, status: 'invalid' } }),
       prisma.location.count()
     ]);
     return { totalUploads, validUploads, invalidUploads, totalLocations };

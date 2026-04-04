@@ -6,6 +6,37 @@
  * Prisma model fields use camelCase (e.g. addressLine1).
  */
 import { normalizeCountry } from './country';
+import { normalizePhone } from './normalize-phone';
+import { normalizeBrandsCsvField, normalizeTagsCsvField } from './brand-display-name';
+
+/**
+ * Single source of truth for Country + Phone on master-CSV-shaped rows (DB import, scraper job CSV, job editor).
+ * Normalizes country first; phone uses that as the regional hint (same as libphonenumber-js path in normalize-phone).
+ */
+export function normalizedCountryAndPhoneFromCsvRow(row: Record<string, any>): {
+  country: string;
+  phone: string | null;
+} {
+  const country = normalizeCountry(String(row.Country ?? ''));
+  const phone = normalizePhone(row.Phone, country || undefined);
+  return { country, phone };
+}
+
+/**
+ * When upstream data repeats the locality in City and State/Province (common for UAE emirates, etc.),
+ * drop the redundant state so we do not store or export "Dubai" twice.
+ */
+export function dedupeStateWhenSameAsCity(
+  cityRaw: string | null | undefined,
+  stateRaw: string | null | undefined
+): string | null {
+  const city = String(cityRaw ?? '').trim();
+  const st = String(stateRaw ?? '').trim();
+  if (!st) return null;
+  if (city && st.toLowerCase() === city.toLowerCase()) return null;
+  return st;
+}
+
 export interface LocationData {
   handle: string;
   name: string;
@@ -80,6 +111,8 @@ export function parseRowToLocationData(row: Record<string, any>): LocationData |
     return null;
   }
 
+  const { country, phone } = normalizedCountryAndPhoneFromCsvRow(row);
+
   return {
     handle: String(row.Handle).trim(),
     name: String(row.Name).trim(),
@@ -88,9 +121,9 @@ export function parseRowToLocationData(row: Record<string, any>): LocationData |
     addressLine2: row['Address Line 2'] || null,
     postalCode: row['Postal/ZIP Code'] || null,
     city: row.City || '',
-    stateProvinceRegion: row['State/Province/Region'] || null,
-    country: normalizeCountry(String(row.Country || '')),
-    phone: row.Phone || null,
+    stateProvinceRegion: dedupeStateWhenSameAsCity(row.City, row['State/Province/Region']),
+    country,
+    phone,
     email: row.Email || null,
     website: row.Website || null,
     imageUrl: row['Image URL'] || null,
@@ -109,8 +142,8 @@ export function parseRowToLocationData(row: Record<string, any>): LocationData |
     metaDescription: row['Meta Description'] || null,
     priority: row.Priority ? parseInt(row.Priority) : null,
     // Support both " Tags" (legacy leading space) and "Tags"
-    tags: row[' Tags'] || row.Tags || null,
-    brands: row.Brands || null,
+    tags: normalizeTagsCsvField(row[' Tags'] || row.Tags || null),
+    brands: normalizeBrandsCsvField(row.Brands || null),
     customBrands: row['Custom Brands'] || null,
     isPremium: false,
     nameFr: row['Name - FR'] || null,

@@ -31,9 +31,16 @@ describe('stable-handle', () => {
     expect(a).not.toBe(b);
   });
 
-  it('normalizeScraperRowForCsv leaves incomplete rows unchanged', () => {
+  it('normalizeScraperRowForCsv does not replace handle when incomplete', () => {
     const incomplete = { ...base, Phone: '' };
     expect(normalizeScraperRowForCsv(incomplete).Handle).toBe('upstream-999');
+  });
+
+  it('normalizeScraperRowForCsv normalizes Country even when incomplete', () => {
+    const incomplete = { ...base, Phone: '', Country: 'Hong Kong SAR' };
+    const out = normalizeScraperRowForCsv(incomplete);
+    expect(out.Country).toBe('Hong Kong');
+    expect(out.Handle).toBe('upstream-999');
   });
 
   it('normalizeScraperRowForCsv replaces handle when complete', () => {

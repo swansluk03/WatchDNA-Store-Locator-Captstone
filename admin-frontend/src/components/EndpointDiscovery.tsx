@@ -273,7 +273,14 @@ const EndpointDiscovery: React.FC<EndpointDiscoveryProps> = ({ onConfigSaved }) 
                       </div>
                     </div>
 
-                    {endpoint.verified && endpoint.verified_store_count !== undefined && (
+                    {endpoint.verified && endpoint.type === 'html' && (
+                      <div className="verification-badge verified">
+                        ✓ HTML page with store data detected
+                        {endpoint.verified_store_count ? ` (~${endpoint.verified_store_count} stores)` : ''}
+                      </div>
+                    )}
+
+                    {endpoint.verified && endpoint.type !== 'html' && endpoint.verified_store_count !== undefined && (
                       <div className="verification-badge verified">
                         ✓ Verified: {endpoint.verified_store_count} stores found
                         {endpoint.verified_type && ` (Type: ${endpoint.verified_type})`}

@@ -154,7 +154,7 @@ class NetworkAnalyzer:
         # Location-specific parameters to remove (country-region, per, offset are filters - kept)
         location_params = [
             'keyword', 'query', 'q', 'search', 'location', 'city', 'zip', 'zipcode',
-            'postal', 'address', 'state', 'region', 'country', 'lat', 'lng', 
+            'postal', 'address', 'state', 'region', 'country', 'lat', 'lng', 'long',
             'latitude', 'longitude', 'coord', 'coordinates'
         ]
         
@@ -337,32 +337,45 @@ class NetworkAnalyzer:
         """Detect the type of endpoint"""
         url_lower = url.lower()
         param_keys_lower = [k.lower() for k in params.keys()]
-        
-        # Check for viewport-based (highest priority)
+
+        # If the server explicitly returned HTML, treat it as an HTML endpoint before
+        # inspecting URL params — a confirmed text/html response is never a JSON API.
+        if 'text/html' in mime_type:
+            return 'html'
+
+        # Check for viewport-based (highest priority among param-based types)
         viewport_params = ['viewport', 'bounds', 'bbox', 'ne_lat', 'sw_lat', 'northeast', 'southwest',
                           'northeastlat', 'northeastlng', 'southwestlat', 'southwestlng',
                           'ne_lat', 'ne_lng', 'sw_lat', 'sw_lng', 'by_viewport']
         if any(param.lower() in param_keys_lower for param in viewport_params) or 'by_viewport' in url_lower:
             return 'viewport'
-        
-        # Check for radius-based
-        if any(param.lower() in param_keys_lower for param in ['radius', 'distance', 'r']) or 'r=' in url_lower:
-            return 'radius'
-        
-        # Check for country-based (including hyphenated variants like country-region)
-        country_params = ['country', 'countrycode', 'region', 'state', 'country-region', 'country_region']
+
+        # Check for country-based before radius — country params are a stronger, more
+        # specific signal than a bare 'r' param.
+        country_params = ['country', 'countrycode', 'country-region', 'country_region']
         if any(param.lower() in param_keys_lower for param in country_params):
             return 'country_filter'
-        
+
+        # Check for radius-based.
+        # Only match explicit radius param keys — do NOT use 'r=' as a URL substring because
+        # that incorrectly matches params like 'country-region=US' (contains 'r=').
+        if any(param.lower() in param_keys_lower for param in ['radius', 'distance', 'r']):
+            return 'radius'
+
+        # Looser region/state filter check (after radius so an explicit 'r' param wins)
+        region_params = ['region', 'state']
+        if any(param.lower() in param_keys_lower for param in region_params):
+            return 'country_filter'
+
         # Check for paginated
         pagination_params = ['page', 'offset', 'limit', 'per_page', 'skip', 'take', 'pagetoken']
         if any(param.lower() in param_keys_lower for param in pagination_params):
             return 'paginated'
-        
-        # Check for HTML
-        if 'text/html' in mime_type or url.endswith('.html') or (not url.endswith('.json') and 'json' not in url_lower and '/api/' not in url_lower):
+
+        # Check for HTML by URL shape (no confirmed mime_type yet)
+        if url.endswith('.html') or (not url.endswith('.json') and 'json' not in url_lower and '/api/' not in url_lower):
             return 'html'
-        
+
         # Default to JSON
         return 'json'
     

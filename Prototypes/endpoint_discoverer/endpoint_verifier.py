@@ -531,11 +531,11 @@ class EndpointVerifier:
             # re-downloading them here to avoid fetching multi-MB pages.
             if endpoint.get('type') == 'html':
                 endpoint.update({
-                    'verified': False,
-                    'verified_store_count': 0,
+                    'verified': True,
+                    'verified_store_count': endpoint.get('store_count') or 0,
                     'verified_type': 'html',
                     'verified_is_region_specific': False,
-                    'verification_error': 'HTML endpoints verified via html_analysis',
+                    'verification_error': None,
                     'verification_time': 0,
                     'sample_stores': [],
                     'data_path': '',

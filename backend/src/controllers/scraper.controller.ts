@@ -69,6 +69,16 @@ function normalizeUrlForComparison(url: string): string {
   }
 }
 
+/** Strip generic suffixes before name similarity comparison to avoid false positives
+ * (e.g. breva_stores vs omega_stores both becoming *stores after non-alphanum removal). */
+function stripGenericBrandSuffixes(brandId: string): string {
+  return brandId
+    .replace(/_stores$/i, '')
+    .replace(/_retailers$/i, '')
+    .replace(/_dealers$/i, '')
+    .replace(/_watches$/i, '');
+}
+
 type SimilarBrandConfig = { brandId: string; config: any; similarity: number; reason: string };
 
 function findSimilarBrandConfigs(
@@ -78,6 +88,7 @@ function findSimilarBrandConfigs(
 ): SimilarBrandConfig[] {
   const similar: SimilarBrandConfig[] = [];
   const normalizedNewUrl = normalizeUrlForComparison(endpointUrl);
+  const strippedBrandId = stripGenericBrandSuffixes(brandId);
   
   for (const [existingBrandId, existingConfig] of Object.entries(configs)) {
     // Skip exact match (handled separately)
@@ -86,8 +97,10 @@ function findSimilarBrandConfigs(
     let similarity = 0;
     let reason = '';
     
-    // Check name similarity
-    const nameSimilarity = calculateSimilarity(brandId, existingBrandId);
+    // Compare names after stripping generic suffixes so e.g. breva_stores vs omega_stores
+    // don't get a false 73% match purely because they share the "_stores" suffix.
+    const strippedExistingId = stripGenericBrandSuffixes(existingBrandId);
+    const nameSimilarity = calculateSimilarity(strippedBrandId, strippedExistingId);
     if (nameSimilarity >= 0.7) {
       similarity = nameSimilarity;
       reason = `Similar brand name (${(nameSimilarity * 100).toFixed(0)}% match)`;

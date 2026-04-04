@@ -342,9 +342,20 @@
       }
     };
 
+    /** Avoid "Dubai, Dubai" when city and state/emirate repeat the same label (common in UAE data). */
+    function pushCityStateDeduped(arr, cityRaw, stateRaw) {
+      const city = (cityRaw || '').trim();
+      const state = (stateRaw || '').trim();
+      if (city) arr.push(city);
+      if (state && (!city || state.toLowerCase() !== city.toLowerCase())) arr.push(state);
+    }
+
     function buildPopup(row) {
-      const addr = [row['Address Line 1'], row['City'], row['State/Province/Region'], row['Country']]
-        .filter(Boolean).join(', ');
+      const addrParts = [];
+      if (row['Address Line 1']) addrParts.push(row['Address Line 1']);
+      pushCityStateDeduped(addrParts, row['City'], row['State/Province/Region']);
+      if (row['Country']) addrParts.push(row['Country']);
+      const addr = addrParts.join(', ');
       const phone = row['Phone'] ? `<br>${row['Phone']}` : '';
       
       // Get brands from Brands column first, fallback to Custom Brands if empty
@@ -375,7 +386,10 @@
       if (line1) parts.push(line1);
       if (line2) parts.push(line2);
       
-      const cityLine = [city, state, zip].filter(Boolean).join(', ');
+      const cityLineParts = [];
+      pushCityStateDeduped(cityLineParts, city, state);
+      if (zip) cityLineParts.push(zip);
+      const cityLine = cityLineParts.join(', ');
       if (cityLine) parts.push(cityLine);
       if (country) parts.push(country);
       
@@ -1086,13 +1100,10 @@
 
         const addressLine = row['Address Line 1'] || '';
 
-        const locationParts = [
-          row['City'],
-          row['State/Province/Region'],
-          row['Country']
-      ].filter(Boolean);
-
-      const locationLine = locationParts.join(', ');
+        const locationParts = [];
+        pushCityStateDeduped(locationParts, row['City'], row['State/Province/Region']);
+        if (row['Country']) locationParts.push(row['Country']);
+        const locationLine = locationParts.join(', ');
 
       item.innerHTML = `
         <strong>${row['Name'] || 'Unnamed'}</strong><br>
@@ -1388,13 +1399,9 @@
 
           const addressLine = row['Address Line 1'] || '';
 
-          const locationParts = [
-            row['City'],
-            row['State/Province/Region'],
-            row['Country']
-          ].filter(Boolean); // Will remove undefined or empty strings (mainly for locations that don't have a State/Province/Region)
-
-          // Join the pieces of the address with commas
+          const locationParts = [];
+          pushCityStateDeduped(locationParts, row['City'], row['State/Province/Region']);
+          if (row['Country']) locationParts.push(row['Country']);
           const locationLine = locationParts.join(', ');
 
           item.innerHTML = `

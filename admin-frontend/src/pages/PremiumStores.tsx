@@ -3,31 +3,125 @@ import {
   fetchAllStores,
   markStoresPremium,
   removeStoresPremium,
+  updateStore,
   type StoreRecord,
+  type StoreUpdatePayload,
 } from '../services/premium.service';
 import '../styles/PremiumStores.css';
+import { parseBrandsForDisplay, storeMatchesBrandFilter } from '../utils/brandDisplay';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/** One street line: line 1 if present, otherwise line 2 (never both). */
+function primaryAddressLine(store: StoreRecord): string {
+  const a1 = (store.addressLine1 ?? '').trim();
+  if (a1) return a1;
+  return (store.addressLine2 ?? '').trim();
+}
+
 function formatAddress(store: StoreRecord): string {
+  const street = primaryAddressLine(store);
+  const city = (store.city ?? '').trim();
+  const stateRaw = (store.stateProvinceRegion ?? '').trim();
+  // Same text in city + state (e.g. "Dubai" as emirate and city) — show once.
+  const state =
+    stateRaw && (!city || stateRaw.toLowerCase() !== city.toLowerCase())
+      ? stateRaw
+      : undefined;
   const parts = [
-    store.addressLine1,
-    store.addressLine2,
-    store.city,
-    store.stateProvinceRegion,
+    street || undefined,
+    city || undefined,
+    state,
     store.postalCode,
     store.country,
   ].filter(Boolean);
   return parts.join(', ');
 }
 
-function parseBrands(raw: string | null): string[] {
-  if (!raw) return [];
-  return raw
-    .split(',')
-    .map((b) => b.trim())
-    .filter(Boolean);
+function n2s(v: string | null | undefined): string {
+  return v ?? '';
 }
+
+function draftToPayload(d: StoreEditDraft, baseline: StoreRecord): StoreUpdatePayload {
+  const empty = (s: string) => (s.trim() === '' ? null : s.trim());
+  const out: StoreUpdatePayload = {
+    addressLine1: d.addressLine1.trim(),
+    addressLine2: empty(d.addressLine2),
+    city: d.city.trim(),
+    stateProvinceRegion: empty(d.stateProvinceRegion),
+    postalCode: empty(d.postalCode),
+    country: d.country.trim(),
+    phone: empty(d.phone),
+    website: empty(d.website),
+    imageUrl: empty(d.imageUrl),
+    pageDescription: empty(d.pageDescription),
+    monday: empty(d.monday),
+    tuesday: empty(d.tuesday),
+    wednesday: empty(d.wednesday),
+    thursday: empty(d.thursday),
+    friday: empty(d.friday),
+    saturday: empty(d.saturday),
+    sunday: empty(d.sunday),
+  };
+  if (d.isPremium !== baseline.isPremium) {
+    out.isPremium = d.isPremium;
+  }
+  return out;
+}
+
+function storeToDraft(s: StoreRecord): StoreEditDraft {
+  return {
+    addressLine1: s.addressLine1,
+    addressLine2: n2s(s.addressLine2),
+    city: s.city,
+    stateProvinceRegion: n2s(s.stateProvinceRegion),
+    postalCode: n2s(s.postalCode),
+    country: s.country,
+    phone: n2s(s.phone),
+    website: n2s(s.website),
+    imageUrl: n2s(s.imageUrl),
+    pageDescription: n2s(s.pageDescription),
+    monday: n2s(s.monday),
+    tuesday: n2s(s.tuesday),
+    wednesday: n2s(s.wednesday),
+    thursday: n2s(s.thursday),
+    friday: n2s(s.friday),
+    saturday: n2s(s.saturday),
+    sunday: n2s(s.sunday),
+    isPremium: s.isPremium,
+  };
+}
+
+interface StoreEditDraft {
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  stateProvinceRegion: string;
+  postalCode: string;
+  country: string;
+  phone: string;
+  website: string;
+  imageUrl: string;
+  pageDescription: string;
+  monday: string;
+  tuesday: string;
+  wednesday: string;
+  thursday: string;
+  friday: string;
+  saturday: string;
+  sunday: string;
+  isPremium: boolean;
+}
+
+const DAY_LABELS: { key: keyof Pick<StoreEditDraft, 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'>; label: string }[] = [
+  { key: 'monday', label: 'Monday' },
+  { key: 'tuesday', label: 'Tuesday' },
+  { key: 'wednesday', label: 'Wednesday' },
+  { key: 'thursday', label: 'Thursday' },
+  { key: 'friday', label: 'Friday' },
+  { key: 'saturday', label: 'Saturday' },
+  { key: 'sunday', label: 'Sunday' },
+];
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -35,10 +129,16 @@ interface StoreCardProps {
   store: StoreRecord;
   selected: boolean;
   onClick: () => void;
+  onEdit: () => void;
 }
 
-const StoreCard: React.FC<StoreCardProps> = ({ store, selected, onClick }) => {
-  const brands = parseBrands(store.brands);
+const StoreCard: React.FC<StoreCardProps> = ({
+  store,
+  selected,
+  onClick,
+  onEdit,
+}) => {
+  const brands = parseBrandsForDisplay(store.brands);
 
   return (
     <div
@@ -49,6 +149,17 @@ const StoreCard: React.FC<StoreCardProps> = ({ store, selected, onClick }) => {
       tabIndex={0}
       onKeyDown={(e) => e.key === ' ' && onClick()}
     >
+      <button
+        type="button"
+        className="store-card__edit"
+        onClick={(e) => {
+          e.stopPropagation();
+          onEdit();
+        }}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        Edit
+      </button>
       <div className="store-card__check">
         <svg className="store-card__check-icon" viewBox="0 0 12 12" fill="none">
           <polyline points="2,6 5,9 10,3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -111,6 +222,21 @@ const PremiumStores: React.FC = () => {
   const searchRef = useRef<HTMLInputElement>(null);
   const autocompleteRef = useRef<HTMLUListElement>(null);
 
+  const [editingStore, setEditingStore] = useState<StoreRecord | null>(null);
+  const [editDraft, setEditDraft] = useState<StoreEditDraft | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [imagePreviewBroken, setImagePreviewBroken] = useState(false);
+
+  useEffect(() => {
+    if (!editingStore) {
+      setEditDraft(null);
+      setImagePreviewBroken(false);
+      return;
+    }
+    setEditDraft(storeToDraft(editingStore));
+    setImagePreviewBroken(false);
+  }, [editingStore]);
+
   // Load all stores once on mount
   useEffect(() => {
     fetchAllStores()
@@ -146,7 +272,7 @@ const PremiumStores: React.FC = () => {
 
   const allBrands = useMemo(() => {
     const set = new Set<string>();
-    stores.forEach((s) => parseBrands(s.brands).forEach((b) => set.add(b)));
+    stores.forEach((s) => parseBrandsForDisplay(s.brands).forEach((b) => set.add(b)));
     return Array.from(set).sort();
   }, [stores]);
 
@@ -162,7 +288,7 @@ const PremiumStores: React.FC = () => {
     const query = searchText.trim().toLowerCase();
     return stores.filter((s) => {
       if (premiumOnly && !s.isPremium) return false;
-      if (selectedBrand && !parseBrands(s.brands).includes(selectedBrand)) return false;
+      if (selectedBrand && !storeMatchesBrandFilter(s.brands, selectedBrand)) return false;
       if (selectedCountry && s.country !== selectedCountry) return false;
       if (query) {
         const haystack = `${s.name} ${formatAddress(s)}`.toLowerCase();
@@ -274,6 +400,33 @@ const PremiumStores: React.FC = () => {
     setSelectedBrand('');
     setSelectedCountry('');
     setPremiumOnly(false);
+  };
+
+  const closeEditModal = useCallback(() => {
+    if (!editSaving) setEditingStore(null);
+  }, [editSaving]);
+
+  const updateDraft = useCallback((patch: Partial<StoreEditDraft>) => {
+    setEditDraft((prev) => (prev ? { ...prev, ...patch } : null));
+  }, []);
+
+  const handleSaveEdit = async () => {
+    if (!editingStore || !editDraft) return;
+    if (!editDraft.addressLine1.trim() || !editDraft.city.trim() || !editDraft.country.trim()) {
+      setToast({ message: 'Address line 1, city, and country are required.', type: 'error' });
+      return;
+    }
+    setEditSaving(true);
+    try {
+      const store = await updateStore(editingStore.handle, draftToPayload(editDraft, editingStore));
+      setStores((prev) => prev.map((s) => (s.handle === store.handle ? store : s)));
+      setEditingStore(null);
+      setToast({ message: 'Store updated.', type: 'success' });
+    } catch {
+      setToast({ message: 'Failed to save store. Please try again.', type: 'error' });
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -397,6 +550,7 @@ const PremiumStores: React.FC = () => {
               store={store}
               selected={selectedHandles.has(store.handle)}
               onClick={() => toggleHandle(store.handle)}
+              onEdit={() => setEditingStore(store)}
             />
           ))
         )}
@@ -406,6 +560,178 @@ const PremiumStores: React.FC = () => {
       {selectedHandles.size > 0 && <div className="review-panel-spacer" />}
 
       {/* Review panel */}
+      {editingStore && editDraft && (
+        <div className="store-edit-overlay" onClick={closeEditModal} role="presentation">
+          <div
+            className="store-edit-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="store-edit-title"
+          >
+            <div className="store-edit-modal__header">
+              <h2 id="store-edit-title">Edit store</h2>
+              <button
+                type="button"
+                className="store-edit-modal__close"
+                onClick={closeEditModal}
+                disabled={editSaving}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="store-edit-modal__body">
+              <p className="store-edit-modal__subtitle">{editingStore.name}</p>
+
+              <section className="store-edit-section">
+                <h3 className="store-edit-section__title">Address</h3>
+                <div className="store-edit-grid">
+                  <label className="store-edit-field store-edit-field--full">
+                    <span className="store-edit-label">Address line 1</span>
+                    <input
+                      value={editDraft.addressLine1}
+                      onChange={(e) => updateDraft({ addressLine1: e.target.value })}
+                    />
+                  </label>
+                  <label className="store-edit-field store-edit-field--full">
+                    <span className="store-edit-label">Address line 2</span>
+                    <input
+                      value={editDraft.addressLine2}
+                      onChange={(e) => updateDraft({ addressLine2: e.target.value })}
+                    />
+                  </label>
+                  <label className="store-edit-field">
+                    <span className="store-edit-label">City</span>
+                    <input value={editDraft.city} onChange={(e) => updateDraft({ city: e.target.value })} />
+                  </label>
+                  <label className="store-edit-field">
+                    <span className="store-edit-label">State / province</span>
+                    <input
+                      value={editDraft.stateProvinceRegion}
+                      onChange={(e) => updateDraft({ stateProvinceRegion: e.target.value })}
+                    />
+                  </label>
+                  <label className="store-edit-field">
+                    <span className="store-edit-label">Postal code</span>
+                    <input
+                      value={editDraft.postalCode}
+                      onChange={(e) => updateDraft({ postalCode: e.target.value })}
+                    />
+                  </label>
+                  <label className="store-edit-field">
+                    <span className="store-edit-label">Country</span>
+                    <input
+                      value={editDraft.country}
+                      onChange={(e) => updateDraft({ country: e.target.value })}
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section className="store-edit-section">
+                <h3 className="store-edit-section__title">Contact</h3>
+                <div className="store-edit-grid">
+                  <label className="store-edit-field">
+                    <span className="store-edit-label">Phone</span>
+                    <input value={editDraft.phone} onChange={(e) => updateDraft({ phone: e.target.value })} />
+                  </label>
+                  <label className="store-edit-field">
+                    <span className="store-edit-label">Website</span>
+                    <input
+                      type="url"
+                      placeholder="https://"
+                      value={editDraft.website}
+                      onChange={(e) => updateDraft({ website: e.target.value })}
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section className="store-edit-section">
+                <h3 className="store-edit-section__title">Image</h3>
+                <label className="store-edit-field store-edit-field--full">
+                  <span className="store-edit-label">Image URL</span>
+                  <input
+                    type="url"
+                    placeholder="https://"
+                    value={editDraft.imageUrl}
+                    onChange={(e) => {
+                      setImagePreviewBroken(false);
+                      updateDraft({ imageUrl: e.target.value });
+                    }}
+                  />
+                </label>
+                {editDraft.imageUrl.trim() !== '' && !imagePreviewBroken && (
+                  <div className="store-edit-image-preview">
+                    <img
+                      src={editDraft.imageUrl.trim()}
+                      alt=""
+                      onError={() => setImagePreviewBroken(true)}
+                    />
+                  </div>
+                )}
+              </section>
+
+              <section className="store-edit-section">
+                <h3 className="store-edit-section__title">Hours</h3>
+                <div className="store-edit-grid store-edit-grid--days">
+                  {DAY_LABELS.map(({ key, label }) => (
+                    <label key={key} className="store-edit-field">
+                      <span className="store-edit-label">{label}</span>
+                      <input
+                        value={editDraft[key]}
+                        onChange={(e) => updateDraft({ [key]: e.target.value } as Partial<StoreEditDraft>)}
+                        placeholder="e.g. 9:00–17:00"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </section>
+
+              <section className="store-edit-section">
+                <h3 className="store-edit-section__title">Description</h3>
+                <label className="store-edit-field store-edit-field--full">
+                  <span className="store-edit-label">Page description</span>
+                  <textarea
+                    rows={4}
+                    value={editDraft.pageDescription}
+                    onChange={(e) => updateDraft({ pageDescription: e.target.value })}
+                  />
+                </label>
+              </section>
+
+              <section className="store-edit-section store-edit-section--inline">
+                <h3 className="store-edit-section__title">Premium</h3>
+                <label className="store-edit-premium-toggle">
+                  <div
+                    className={`toggle-switch${editDraft.isPremium ? ' on' : ''}`}
+                    onClick={() => updateDraft({ isPremium: !editDraft.isPremium })}
+                    role="switch"
+                    aria-checked={editDraft.isPremium}
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === ' ' && updateDraft({ isPremium: !editDraft.isPremium })}
+                  >
+                    <div className="toggle-knob" />
+                  </div>
+                  <span>Premium store</span>
+                </label>
+              </section>
+            </div>
+
+            <div className="store-edit-modal__footer">
+              <button type="button" className="store-edit-btn store-edit-btn--secondary" onClick={closeEditModal} disabled={editSaving}>
+                Cancel
+              </button>
+              <button type="button" className="store-edit-btn store-edit-btn--primary" onClick={handleSaveEdit} disabled={editSaving}>
+                {editSaving ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className={`review-panel${selectedHandles.size > 0 ? ' visible' : ''}`}>
         <div className="review-panel__inner">
           <div>

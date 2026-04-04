@@ -8,9 +8,80 @@ import Papa from 'papaparse';
 import prisma from '../lib/prisma';
 import { parseRowToLocationData, locationToCSVRow, type LocationData } from '../utils/csv-to-location';
 import { isRowCompleteForDb } from '../utils/row-completeness';
+import { mergeLocationDataForUpdate } from '../utils/merge-location-update';
+import { computeStableHandleFromRow } from '../utils/stable-handle';
 import { logger } from '../utils/logger';
+import { brandConfigIdToDisplayName } from '../utils/brand-display-name';
 
 const BATCH_SIZE = 500;
+
+/** ~50 metres expressed as degrees of latitude — matches the tolerance in updateMasterRecords. */
+const COORD_TOLERANCE_DEG = 0.00045;
+
+/** CSV-shaped row for completeness check from parsed LocationData. */
+function csvRowFromLocationData(loc: LocationData): Record<string, string> {
+  return {
+    Name: loc.name,
+    Phone: loc.phone ?? '',
+    'Address Line 1': loc.addressLine1,
+    'Address Line 2': loc.addressLine2 ?? '',
+    City: loc.city,
+    Country: loc.country,
+    Latitude: String(loc.latitude),
+    Longitude: String(loc.longitude),
+  };
+}
+
+/**
+ * After parseRowToLocationData, country/phone are canonical. Replace Handle with the geography hash
+ * so two imports that only differ by country spelling or brand-supplied id still target one loc_* key
+ * (computeStableHandleFromRow also normalizes country internally — this uses already-normalized fields).
+ */
+function applyStableHandleToCompleteParsedRow(loc: LocationData): LocationData {
+  if (!isRowCompleteForDb(csvRowFromLocationData(loc))) return loc;
+  try {
+    const minimal: Record<string, string> = {
+      'Address Line 1': loc.addressLine1,
+      'Address Line 2': loc.addressLine2 ?? '',
+      City: loc.city,
+      Country: loc.country,
+      Latitude: String(loc.latitude),
+      Longitude: String(loc.longitude),
+    };
+    return { ...loc, handle: computeStableHandleFromRow(minimal) };
+  } catch {
+    return loc;
+  }
+}
+
+/**
+ * Find an existing Location within ~50 m of the given coordinates.
+ * Returns the minimal snapshot needed for merging, or null if none found.
+ */
+async function findNearbyLocation(lat: number, lon: number): Promise<ExistingLocationSnapshot | null> {
+  const lonTol = COORD_TOLERANCE_DEG / Math.cos((lat * Math.PI) / 180);
+  return prisma.location.findFirst({
+    where: {
+      latitude: { gte: lat - COORD_TOLERANCE_DEG, lte: lat + COORD_TOLERANCE_DEG },
+      longitude: { gte: lon - lonTol, lte: lon + lonTol },
+    },
+    select: {
+      handle: true,
+      name: true,
+      brands: true,
+      customBrands: true,
+      addressLine1: true,
+      addressLine2: true,
+      city: true,
+      stateProvinceRegion: true,
+      country: true,
+      postalCode: true,
+      phone: true,
+      website: true,
+      email: true,
+    },
+  });
+}
 
 export interface UpsertResult {
   upserted: number;
@@ -75,23 +146,21 @@ function classifyLocationChange(
   return { brandsChanged, addressChanged, infoChanged };
 }
 
-/** Normalize brand config ID (e.g. omega_stores) to display format used in Brands column (e.g. OMEGA) */
-function brandIdToDisplayName(brandId: string): string {
-  let name = brandId
-    .replace(/_stores$/, '')
-    .replace(/_retailers$/, '')
-    .replace(/_dealers$/, '')
-    .replace(/_watches$/, '')
-    .replace(/_/g, ' ')
-    .toUpperCase();
-  const mappings: Record<string, string> = {
-    'ALANGE SOEHNE': 'A. LANGE & SÖHNE',
-    'BAUME ET MERCIER': 'BAUME & MERCIER',
-    'BELL ROSS': 'BELL & ROSS',
-  };
-  return mappings[name] ?? name;
+function brandFilterWhere(brandFilter: string) {
+  const raw = brandFilter.trim();
+  const display = brandConfigIdToDisplayName(raw);
+  const or: Array<{ brands?: object; customBrands?: object }> = [
+    { brands: { contains: display, mode: 'insensitive' as const } },
+    { customBrands: { contains: display, mode: 'insensitive' as const } },
+  ];
+  if (raw.toLowerCase() !== display.toLowerCase()) {
+    or.push(
+      { brands: { contains: raw, mode: 'insensitive' as const } },
+      { customBrands: { contains: raw, mode: 'insensitive' as const } }
+    );
+  }
+  return { OR: or };
 }
-
 
 export interface MasterRecordsResult {
   columns: string[];
@@ -102,18 +171,7 @@ export interface MasterRecordsResult {
 export const storeService = {
   /** Get master store records from the DB, optionally filtered by brand */
   async getMasterRecords(brandFilter?: string): Promise<MasterRecordsResult> {
-    const displayFilter = brandFilter?.trim()
-      ? brandIdToDisplayName(brandFilter.trim())
-      : undefined;
-
-    const where = displayFilter
-      ? {
-          OR: [
-            { brands: { contains: displayFilter } },
-            { customBrands: { contains: displayFilter } },
-          ],
-        }
-      : {};
+    const where = brandFilter?.trim() ? brandFilterWhere(brandFilter) : {};
 
     const locations = await prisma.location.findMany({
       where,
@@ -147,14 +205,16 @@ export const storeService = {
    * - failFast: true (default) — one transaction per 500-row batch (scraper jobs).
    * - failFast: false — per-row upsert with try/catch (manual CSV upload parity).
    * - requireCompleteForDb — only rows passing isRowCompleteForDb are upserted (incomplete stay on CSV only).
+   * - mergeOnUpdate — scraper/job saves: union brands and keep DB phone on conflict; manual uploads omit this.
    */
   async batchUpsertLocations(
     records: Record<string, string>[],
     uploadId?: string,
-    options?: { failFast?: boolean; requireCompleteForDb?: boolean }
+    options?: { failFast?: boolean; requireCompleteForDb?: boolean; mergeOnUpdate?: boolean }
   ): Promise<UpsertResult> {
     const failFast = options?.failFast !== false;
     const requireComplete = options?.requireCompleteForDb === true;
+    const mergeOnUpdate = options?.mergeOnUpdate === true;
 
     let working = records;
     let skippedIncomplete = 0;
@@ -165,7 +225,8 @@ export const storeService = {
 
     const parsed = working
       .map(parseRowToLocationData)
-      .filter((r): r is NonNullable<typeof r> => r !== null);
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .map(applyStableHandleToCompleteParsedRow);
 
     const skipped = skippedIncomplete + (working.length - parsed.length);
     if (parsed.length === 0) {
@@ -184,10 +245,20 @@ export const storeService = {
     }
 
     if (failFast) {
-      const result = await storeService.batchUpsertLocationsFailFast(parsed, uploadId, skipped);
+      const result = await storeService.batchUpsertLocationsFailFast(
+        parsed,
+        uploadId,
+        skipped,
+        mergeOnUpdate
+      );
       return { ...result, skippedIncomplete: requireComplete ? skippedIncomplete : result.skippedIncomplete };
     }
-    const result = await storeService.batchUpsertLocationsResilient(parsed, uploadId, skipped);
+    const result = await storeService.batchUpsertLocationsResilient(
+      parsed,
+      uploadId,
+      skipped,
+      mergeOnUpdate
+    );
     return { ...result, skippedIncomplete: requireComplete ? skippedIncomplete : result.skippedIncomplete };
   },
 
@@ -195,7 +266,8 @@ export const storeService = {
   async batchUpsertLocationsFailFast(
     parsed: LocationData[],
     uploadId: string | undefined,
-    skipped: number
+    skipped: number,
+    mergeOnUpdate: boolean
   ): Promise<UpsertResult> {
     let upserted = 0;
     let created = 0;
@@ -230,8 +302,35 @@ export const storeService = {
       });
       const existingMap = new Map(existingRecords.map((r) => [r.handle, r]));
 
+      // For rows whose handle wasn't found, check if a nearby record exists (~50 m).
+      // If so, remap to the existing handle to prevent duplicates from minor address/GPS drift.
+      const handleRemap = new Map<string, ExistingLocationSnapshot>();
       for (const row of batch) {
-        const existing = existingMap.get(row.handle);
+        if (!existingMap.has(row.handle)) {
+          const nearby = await findNearbyLocation(row.latitude, row.longitude);
+          if (nearby) {
+            handleRemap.set(row.handle, nearby);
+            existingMap.set(row.handle, nearby);
+            logger.info(
+              `[storeService] Proximity merge: "${row.name}" (${row.handle}) → existing "${nearby.name}" (${nearby.handle})`
+            );
+          }
+        }
+      }
+
+      const mergedBatch = batch.map((row) => {
+        const ex = existingMap.get(row.handle);
+        const remapped = handleRemap.get(row.handle);
+        const baseRow = ex && mergeOnUpdate ? mergeLocationDataForUpdate(ex, row) : row;
+        return remapped ? { ...baseRow, handle: remapped.handle } : baseRow;
+      });
+
+      for (const row of mergedBatch) {
+        const originalHandle = batch.find((b) => {
+          const remap = handleRemap.get(b.handle);
+          return (remap ? remap.handle : b.handle) === row.handle;
+        })?.handle;
+        const existing = originalHandle ? existingMap.get(originalHandle) : existingMap.get(row.handle);
         if (!existing) {
           newStores.push(row.name);
           created++;
@@ -249,7 +348,7 @@ export const storeService = {
       }
 
       await prisma.$transaction(
-        batch.map((row) =>
+        mergedBatch.map((row) =>
           prisma.location.upsert({
             where: { handle: row.handle },
             update: {
@@ -277,7 +376,8 @@ export const storeService = {
   async batchUpsertLocationsResilient(
     parsed: LocationData[],
     uploadId: string | undefined,
-    skipped: number
+    skipped: number,
+    mergeOnUpdate: boolean
   ): Promise<UpsertResult> {
     let upserted = 0;
     let created = 0;
@@ -315,8 +415,34 @@ export const storeService = {
       });
       const existingMap = new Map(existingRecords.map((r) => [r.handle, r]));
 
+      // For rows whose handle wasn't found, check if a nearby record exists (~50 m).
+      const handleRemap = new Map<string, ExistingLocationSnapshot>();
       for (const row of batch) {
-        const snapshot = existingMap.get(row.handle);
+        if (!existingMap.has(row.handle)) {
+          const nearby = await findNearbyLocation(row.latitude, row.longitude);
+          if (nearby) {
+            handleRemap.set(row.handle, nearby);
+            existingMap.set(row.handle, nearby);
+            logger.info(
+              `[storeService] Proximity merge: "${row.name}" (${row.handle}) → existing "${nearby.name}" (${nearby.handle})`
+            );
+          }
+        }
+      }
+
+      const mergedBatch = batch.map((row) => {
+        const ex = existingMap.get(row.handle);
+        const remapped = handleRemap.get(row.handle);
+        const baseRow = ex && mergeOnUpdate ? mergeLocationDataForUpdate(ex, row) : row;
+        return remapped ? { ...baseRow, handle: remapped.handle } : baseRow;
+      });
+
+      for (const row of mergedBatch) {
+        const originalHandle = batch.find((b) => {
+          const remap = handleRemap.get(b.handle);
+          return (remap ? remap.handle : b.handle) === row.handle;
+        })?.handle;
+        const snapshot = originalHandle ? existingMap.get(originalHandle) : existingMap.get(row.handle);
         try {
           await prisma.location.upsert({
             where: { handle: row.handle },
@@ -398,8 +524,6 @@ export const storeService = {
     dbUpserted: number;
     dbSkipped: number;
   }> {
-    // ~50 metres expressed as degrees of latitude
-    const COORD_TOLERANCE_DEG = 0.00045;
     let updatedCount = 0;
     const changedRows: Record<string, string>[] = [];
 
@@ -478,18 +602,7 @@ export const storeService = {
    * The resulting CSV uses the same human-readable column headers as the original master CSV.
    */
   async generateDownloadCSV(brandFilter?: string): Promise<string> {
-    const displayFilter = brandFilter?.trim()
-      ? brandIdToDisplayName(brandFilter.trim())
-      : undefined;
-
-    const where = displayFilter
-      ? {
-          OR: [
-            { brands: { contains: displayFilter } },
-            { customBrands: { contains: displayFilter } },
-          ],
-        }
-      : {};
+    const where = brandFilter?.trim() ? brandFilterWhere(brandFilter) : {};
 
     const locations = await prisma.location.findMany({
       where,
