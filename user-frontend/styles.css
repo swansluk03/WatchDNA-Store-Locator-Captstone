@@ -503,13 +503,15 @@ header::-webkit-scrollbar-thumb {
 }
 
 #searchAreaBtn {
-  top: 0;
-  right: 58px;
+  top: -100px;
+  right: 45px;
 }
 
 #locateBtn {
-  top: 52px;
-  right: 0;
+  top: -5px;
+  right: -8.5px;
+  width: 44px;
+  height: 44px
 }
 
 .map-action-btn {
