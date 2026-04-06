@@ -121,6 +121,11 @@ class NetworkAnalyzer:
             r'\.svg$',
             r'\.woff',
             r'\.ttf',
+            # Salesforce CC Einstein / CQuotient beacons (not store locator APIs)
+            r'cquotient\.com',
+            r'commercecloudanalytics',
+            r'activitytype=viewpage',
+            r'activity_type=viewpage',
             r'analytics',
             r'tracking',
             r'ads',

@@ -90,7 +90,8 @@ def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]
         "estimated_time_min": 0
     }
     parsed = urlparse(url)
-    params = parse_qs(parsed.query)
+    # keep_blank_values=True preserves params like input= (required by some APIs e.g. Yext vertical search)
+    params = parse_qs(parsed.query, keep_blank_values=True)
     result["url_params"] = {k: v[0] if len(v) == 1 else v for k, v in params.items()}
     scores = {}
     

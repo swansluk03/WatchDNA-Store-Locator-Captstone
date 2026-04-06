@@ -13,9 +13,12 @@ import { computeStableHandleFromRow, addressFingerprintLine1 } from '../utils/st
 import {
   boundingBoxForRadiusMeters,
   countriesMatchForDedupe,
+  haversineDistanceMeters,
   isUnusableScraperCoordinate,
   pickNearestWithin,
   PROXIMITY_MERGE_MAX_METERS,
+  ADDRESS_FP_EXACT_MAX_METERS,
+  ADDRESS_FP_CONTAIN_MAX_METERS,
 } from '../utils/geo-dedupe';
 import { normalizeCountry } from '../utils/country';
 import {
@@ -234,9 +237,23 @@ async function findByAddressFingerprint(
     LIMIT 40
   `;
   if (rows.length === 0) return null;
-  if (rows.length === 1) return matchRowToSnapshot(rows[0]);
-  const nearest = pickNearestWithin(rows, lat, lon, 2500);
-  return matchRowToSnapshot(nearest ?? rows[0]);
+  if (rows.length === 1) {
+    // Guard: if both sides have valid coordinates, reject matches that are too far apart.
+    // Prevents "23 High St" in one district merging with "23 High St" across the same city.
+    const r = rows[0];
+    if (
+      !isUnusableScraperCoordinate(lat, lon) &&
+      !isUnusableScraperCoordinate(r.latitude, r.longitude) &&
+      haversineDistanceMeters(lat, lon, r.latitude, r.longitude) > ADDRESS_FP_EXACT_MAX_METERS
+    ) {
+      return null;
+    }
+    return matchRowToSnapshot(r);
+  }
+  // Multiple candidates with the same fingerprint: pick the nearest within the guard radius.
+  // Do NOT fall back to rows[0] — if nothing is close enough, it is safer to create a new record.
+  const nearest = pickNearestWithin(rows, lat, lon, ADDRESS_FP_EXACT_MAX_METERS);
+  return nearest ? matchRowToSnapshot(nearest) : null;
 }
 
 /**
@@ -302,9 +319,22 @@ async function findByContainedFingerprint(
     );
   });
   if (filtered.length === 0) return null;
-  if (filtered.length === 1) return matchRowToSnapshot(filtered[0]);
-  const nearest = pickNearestWithin(filtered, lat, lon, 3000);
-  return matchRowToSnapshot(nearest ?? filtered[0]);
+  if (filtered.length === 1) {
+    // Guard: contained fingerprints are a weaker signal than exact matches, so use a tighter radius.
+    const r = filtered[0];
+    if (
+      !isUnusableScraperCoordinate(lat, lon) &&
+      !isUnusableScraperCoordinate(r.latitude, r.longitude) &&
+      haversineDistanceMeters(lat, lon, r.latitude, r.longitude) > ADDRESS_FP_CONTAIN_MAX_METERS
+    ) {
+      return null;
+    }
+    return matchRowToSnapshot(r);
+  }
+  // Multiple containment candidates: pick nearest within the contain radius.
+  // Do NOT fall back to filtered[0] — if nothing is close enough, create a new record.
+  const nearest = pickNearestWithin(filtered, lat, lon, ADDRESS_FP_CONTAIN_MAX_METERS);
+  return nearest ? matchRowToSnapshot(nearest) : null;
 }
 
 async function resolveExistingMatchForRow(

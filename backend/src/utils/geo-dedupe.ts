@@ -1,7 +1,24 @@
 import { normalizeCountry } from './country';
 
-/** Max distance (m) for merging an incoming scrape row to an existing Location when stable handles differ. */
-export const PROXIMITY_MERGE_MAX_METERS = 400;
+/**
+ * Last-resort pure-proximity merge radius (m). Intentionally tight — only meant to absorb geocoding
+ * drift between data sources for the exact same building. 75 m is enough for any real drift while
+ * preventing neighbouring stores in a shopping centre from collapsing into one record.
+ */
+export const PROXIMITY_MERGE_MAX_METERS = 75;
+
+/**
+ * Max distance (m) allowed when an address fingerprint exactly matches (same normalised line1 + city +
+ * country). Accepts slight geocoding provider disagreement but rejects "23 High St" in different parts
+ * of the same city.
+ */
+export const ADDRESS_FP_EXACT_MAX_METERS = 300;
+
+/**
+ * Max distance (m) allowed when one address fingerprint contains the other (e.g. "marinamall" inside
+ * "marinamall unit 4"). Tighter than the exact match because containment is a weaker signal.
+ */
+export const ADDRESS_FP_CONTAIN_MAX_METERS = 150;
 
 const EARTH_RADIUS_M = 6371000;
 

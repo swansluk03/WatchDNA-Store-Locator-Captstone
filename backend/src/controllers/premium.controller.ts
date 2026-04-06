@@ -24,6 +24,7 @@ const PATCH_KEYS: (keyof PremiumStoreUpdateInput)[] = [
   'saturday',
   'sunday',
   'isPremium',
+  'storeType',
 ];
 
 function pickPremiumUpdate(body: unknown): PremiumStoreUpdateInput {
@@ -46,6 +47,10 @@ function pickPremiumUpdate(body: unknown): PremiumStoreUpdateInput {
     if (typeof v === 'string') {
       (out as Record<string, unknown>)[key] = v;
     }
+  }
+  // storeType: allow empty string to mean null
+  if ('storeType' in out && out.storeType === '') {
+    out.storeType = null;
   }
   return out;
 }

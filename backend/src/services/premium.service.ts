@@ -31,6 +31,7 @@ export interface PremiumStoreRecord {
   friday: string | null;
   saturday: string | null;
   sunday: string | null;
+  storeType: string | null;
 }
 
 const premiumStoreSelect = {
@@ -83,6 +84,7 @@ function toPremiumRecord(loc: {
   return {
     ...loc,
     country: normalizeCountry(loc.country ?? '') || '',
+    storeType: null,
   };
 }
 
@@ -106,6 +108,7 @@ export type PremiumStoreUpdateInput = Partial<{
   saturday: string | null;
   sunday: string | null;
   isPremium: boolean;
+  storeType: string | null;
 }>;
 
 function emptyToNull(s: string | null | undefined): string | null {
@@ -117,14 +120,23 @@ function emptyToNull(s: string | null | undefined): string | null {
 export const premiumService = {
   /**
    * Fetch all stores from the Location table with only the fields needed
-   * for the premium management UI. One batch request — filtering is done client-side.
+   * for the premium management UI. Merges storeType from PremiumStore registry.
    */
   async getStores(): Promise<PremiumStoreRecord[]> {
-    const rows = await prisma.location.findMany({
-      select: premiumStoreSelect,
-      orderBy: { name: 'asc' },
-    });
-    return rows.map(toPremiumRecord);
+    const [rows, premiumRows] = await Promise.all([
+      prisma.location.findMany({
+        select: premiumStoreSelect,
+        orderBy: { name: 'asc' },
+      }),
+      prisma.premiumStore.findMany({
+        select: { handle: true, storeType: true },
+      }),
+    ]);
+    const storeTypeMap = new Map(premiumRows.map((p) => [p.handle, p.storeType]));
+    return rows.map((loc) => ({
+      ...toPremiumRecord(loc),
+      storeType: storeTypeMap.get(loc.handle) ?? null,
+    }));
   },
 
   /**
@@ -195,17 +207,26 @@ export const premiumService = {
           ? ('mark' as const)
           : ('unmark' as const);
 
+    const storeTypeUpdate =
+      body.storeType !== undefined ? { storeType: body.storeType } : {};
+
     await prisma.$transaction(async (tx) => {
       if (premiumOp === 'mark') {
         await tx.premiumStore.upsert({
           where: { handle: h },
-          update: { addedAt: new Date() },
-          create: { handle: h },
+          update: { addedAt: new Date(), ...storeTypeUpdate },
+          create: { handle: h, ...storeTypeUpdate },
         });
         data.isPremium = true;
       } else if (premiumOp === 'unmark') {
         await tx.premiumStore.deleteMany({ where: { handle: h } });
         data.isPremium = false;
+      } else if (Object.keys(storeTypeUpdate).length > 0) {
+        // Update storeType without changing premium status
+        await tx.premiumStore.updateMany({
+          where: { handle: h },
+          data: storeTypeUpdate,
+        });
       }
 
       if (Object.keys(data).length > 0) {
@@ -216,11 +237,12 @@ export const premiumService = {
       }
     });
 
-    const updated = await prisma.location.findUnique({
-      where: { handle: h },
-      select: premiumStoreSelect,
-    });
-    return updated ? toPremiumRecord(updated) : null;
+    const [updated, premiumRow] = await Promise.all([
+      prisma.location.findUnique({ where: { handle: h }, select: premiumStoreSelect }),
+      prisma.premiumStore.findUnique({ where: { handle: h }, select: { storeType: true } }),
+    ]);
+    if (!updated) return null;
+    return { ...toPremiumRecord(updated), storeType: premiumRow?.storeType ?? null };
   },
 
   /**

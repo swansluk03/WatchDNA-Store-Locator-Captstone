@@ -10,6 +10,20 @@ DISCOVERY_SAMPLE_LIMIT = 15
 
 _PAGE_SIZE_KEYS = frozenset({'limit', 'per', 'per_page', 'take', 'page_size', 'count', 'pagesize'})
 
+# Verified responses from these URLs are often nested product/page context — not locator APIs.
+_MIN_STORES_TO_TRUST_SUSPICIOUS_HOST = 5
+
+
+def _is_suspected_tracking_or_personalization_url(url: str) -> bool:
+    if not url:
+        return False
+    u = url.lower()
+    if 'cquotient.com' in u or 'commercecloudanalytics' in u:
+        return True
+    if 'activitytype=viewpage' in u.replace(' ', '') or 'activity_type=viewpage' in u.replace(' ', ''):
+        return True
+    return False
+
 
 def _url_with_sample_limit(url: str, limit: int = DISCOVERY_SAMPLE_LIMIT) -> str:
     parsed = urlparse(url)
@@ -505,7 +519,9 @@ class EndpointVerifier:
             List of endpoints with verification results added
         """
         verified_endpoints = []
-        best_verified_count = 0
+        # Only "trusted" verifications should trigger early-skip of lower-confidence candidates.
+        # A CQuotient beacon can verify with 2 bogus stores and must not skip the real /dw/shop/ URL.
+        best_trusted_verified_count = 0
 
         for endpoint in endpoints:
             url = endpoint.get('url', '')
@@ -550,7 +566,7 @@ class EndpointVerifier:
 
             # Early exit: a high-confidence verified result means remaining
             # lower-confidence candidates are unlikely to be better.
-            if best_verified_count > 0 and endpoint.get('confidence', 0) < 0.8:
+            if best_trusted_verified_count > 0 and endpoint.get('confidence', 0) < 0.8:
                 endpoint.update({
                     'verified': False,
                     'verified_store_count': 0,
@@ -652,20 +668,34 @@ class EndpointVerifier:
                 current_confidence = endpoint.get('confidence', 0)
                 endpoint['confidence'] = min(current_confidence + 0.2, 1.0)
                 endpoint['indicators'].append(f"verified:{verification['store_count']}_stores")
-                if verification['store_count'] > best_verified_count:
-                    best_verified_count = verification['store_count']
+                sc = verification['store_count'] or 0
+                final_url = endpoint.get('url') or ''
+                suspicious = _is_suspected_tracking_or_personalization_url(final_url)
+                trusted = not (suspicious and sc < _MIN_STORES_TO_TRUST_SUSPICIOUS_HOST)
+                if trusted and sc > best_trusted_verified_count:
+                    best_trusted_verified_count = sc
 
             verified_endpoints.append(endpoint)
         
-        # Re-sort by confidence after verification
-        verified_endpoints.sort(
-            key=lambda x: (
-                x.get('verified', False),  # Verified endpoints first
-                x.get('verified_store_count', 0) or 0,  # Then by store count
-                x.get('confidence', 0)  # Then by original confidence
-            ),
-            reverse=True
-        )
+        # Re-sort after verification: prefer real locator APIs over beacons that happen to
+        # embed a tiny "stores" array. Previously (verified, store_count, confidence) put
+        # 2-store false positives above stronger unverified candidates.
+        def _rank_after_verify(ep: Dict) -> tuple:
+            url = ep.get('url') or ''
+            sc = ep.get('verified_store_count') or 0
+            conf = float(ep.get('confidence') or 0)
+            verified_ok = bool(ep.get('verified')) and sc > 0
+            suspicious = _is_suspected_tracking_or_personalization_url(url)
+            junk_verified = verified_ok and suspicious and sc < _MIN_STORES_TO_TRUST_SUSPICIOUS_HOST
+            if verified_ok and not junk_verified:
+                group = 2
+            elif not verified_ok:
+                group = 1
+            else:
+                group = 0
+            return (group, conf, sc)
+
+        verified_endpoints.sort(key=_rank_after_verify, reverse=True)
         
         return verified_endpoints
     

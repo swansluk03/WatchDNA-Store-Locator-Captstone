@@ -22,6 +22,7 @@ export interface StoreRecord {
   friday: string | null;
   saturday: string | null;
   sunday: string | null;
+  storeType: string | null;
 }
 
 /** Body for PATCH /premium/stores/:handle — all fields optional on wire; we send a full snapshot on save. */
@@ -44,6 +45,7 @@ export type StoreUpdatePayload = Partial<{
   saturday: string | null;
   sunday: string | null;
   isPremium: boolean;
+  storeType: string | null;
 }>;
 
 export async function fetchAllStores(): Promise<StoreRecord[]> {

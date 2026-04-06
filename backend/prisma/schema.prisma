@@ -182,6 +182,7 @@ model PremiumStore {
   handle    String   @id
   addedAt   DateTime @default(now())
   notes     String?
+  storeType String?
 }
 
 /// Per-brand scraper config; merged over backend/brand_configs.json for persistence on Railway.

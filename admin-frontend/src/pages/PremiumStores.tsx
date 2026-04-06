@@ -10,6 +10,16 @@ import {
 import '../styles/PremiumStores.css';
 import { parseBrandsForDisplay, storeMatchesBrandFilter } from '../utils/brandDisplay';
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+export const STORE_TYPES = [
+  'Retailer',
+  'Service Center',
+  'Authorized Dealer',
+  'Distributor',
+  'Other',
+] as const;
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** One street line: line 1 if present, otherwise line 2 (never both). */
@@ -62,6 +72,7 @@ function draftToPayload(d: StoreEditDraft, baseline: StoreRecord): StoreUpdatePa
     friday: empty(d.friday),
     saturday: empty(d.saturday),
     sunday: empty(d.sunday),
+    storeType: empty(d.storeType),
   };
   if (d.isPremium !== baseline.isPremium) {
     out.isPremium = d.isPremium;
@@ -89,6 +100,7 @@ function storeToDraft(s: StoreRecord): StoreEditDraft {
     saturday: n2s(s.saturday),
     sunday: n2s(s.sunday),
     isPremium: s.isPremium,
+    storeType: n2s(s.storeType),
   };
 }
 
@@ -111,6 +123,7 @@ interface StoreEditDraft {
   saturday: string;
   sunday: string;
   isPremium: boolean;
+  storeType: string;
 }
 
 const DAY_LABELS: { key: keyof Pick<StoreEditDraft, 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'>; label: string }[] = [
@@ -168,14 +181,19 @@ const StoreCard: React.FC<StoreCardProps> = ({
 
       <div className="store-card__top">
         <span className="store-card__name">{store.name}</span>
-        {store.isPremium && (
-          <span className="badge badge-warning badge-premium">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-            </svg>
-            Premium
-          </span>
-        )}
+        <div className="store-card__badges">
+          {store.isPremium && (
+            <span className="badge badge-warning badge-premium">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </svg>
+              Premium
+            </span>
+          )}
+          {store.storeType && (
+            <span className="badge badge-store-type">{store.storeType}</span>
+          )}
+        </div>
       </div>
 
       <div className="store-card__address">{formatAddress(store)}</div>
@@ -683,7 +701,7 @@ const PremiumStores: React.FC = () => {
                 </label>
               </section>
 
-              <section className="store-edit-section store-edit-section--inline">
+              <section className="store-edit-section">
                 <h3 className="store-edit-section__title">Premium</h3>
                 <label className="store-edit-premium-toggle">
                   <div
@@ -698,6 +716,20 @@ const PremiumStores: React.FC = () => {
                   </div>
                   <span>Premium store</span>
                 </label>
+                {editDraft.isPremium && (
+                  <label className="store-edit-field store-edit-field--store-type">
+                    <span className="store-edit-label">Store type</span>
+                    <select
+                      value={editDraft.storeType}
+                      onChange={(e) => updateDraft({ storeType: e.target.value })}
+                    >
+                      <option value="">— Select type —</option>
+                      {STORE_TYPES.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
               </section>
             </div>
 

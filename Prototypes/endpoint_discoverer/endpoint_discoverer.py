@@ -592,7 +592,8 @@ class EndpointDiscoverer:
         skip_domains = ['google-analytics', 'googletagmanager', 'facebook', 'twitter',
                        'linkedin', 'pinterest', 'analytics', 'tracking', 'ads', 'advertising',
                        'fonts.googleapis', 'fonts.gstatic', 'cdn', 'static',
-                       'contentsquare', 'c.contentsquare.net']
+                       'contentsquare', 'c.contentsquare.net',
+                       'cquotient.com', 'e.cquotient.com', 'p.cquotient.com']
         if any(domain in url_lower for domain in skip_domains):
             return False
         

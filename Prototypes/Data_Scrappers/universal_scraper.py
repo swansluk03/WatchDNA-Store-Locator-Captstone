@@ -1726,6 +1726,173 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
     return all_stores
 
 
+def _get_nested(store: Dict, field_path: str) -> Any:
+    """Resolve a dot-notation path inside a raw store dict (e.g. 'extra_fields.Rank')."""
+    value: Any = store
+    for part in field_path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def apply_row_filters(stores: List[Dict], brand_config: Optional[Dict]) -> List[Dict]:
+    """Filter raw store records using the ``row_filters`` list from brand config.
+
+    Returns the original list unchanged when ``row_filters`` is absent or empty,
+    so all other brands are completely unaffected.
+
+    Each filter entry is a dict with:
+      - ``field``  : dot-notation path into the raw store dict (e.g. ``"extra_fields.Rank"``)
+      - ``op``     : one of ``eq`` (default), ``in``, ``not_in``, ``contains``
+      - ``value``  : single value (used by ``eq`` / ``contains``)
+      - ``values`` : list of values (used by ``in`` / ``not_in``)
+
+    All filters are ANDed together; a store must pass every filter to be kept.
+
+    Example brand config fragment::
+
+        "row_filters": [
+            { "field": "extra_fields.Rank", "op": "in", "values": ["2"] }
+        ]
+    """
+    if not brand_config:
+        return stores
+    filters = brand_config.get("row_filters")
+    if not filters:
+        return stores
+
+    before = len(stores)
+    result = []
+    for store in stores:
+        keep = True
+        for f in filters:
+            field = f.get("field", "")
+            op = f.get("op", "eq")
+            raw_val = _get_nested(store, field)
+            val_str = str(raw_val) if raw_val is not None else ""
+
+            if op == "eq":
+                if val_str != str(f.get("value", "")):
+                    keep = False
+                    break
+            elif op == "in":
+                if val_str not in [str(v) for v in f.get("values", [])]:
+                    keep = False
+                    break
+            elif op == "not_in":
+                if val_str in [str(v) for v in f.get("values", [])]:
+                    keep = False
+                    break
+            elif op == "contains":
+                if str(f.get("value", "")) not in val_str:
+                    keep = False
+                    break
+        if keep:
+            result.append(store)
+
+    removed = before - len(result)
+    if removed:
+        log_debug(f"row_filters removed {removed} of {before} stores ({len(result)} kept)", "INFO")
+        print(f"   🔍 row_filters: kept {len(result)} of {before} stores ({removed} removed)")
+    return result
+
+
+def scrape_geohash_prefix_expansion(base_url: str, brand_config: Optional[Dict] = None) -> List[Dict]:
+    """Fetch stores sharded by geohash prefix (e.g. Casio /api/points/{prefix}).
+
+    The API root returns a ``total`` count but an empty ``items`` list.  Each
+    two-character geohash prefix sub-URL returns ``{"items": [...]}`` containing
+    only the stores whose ``geo_hash`` field starts with that prefix.
+
+    Strategy:
+    1. Fetch root once to read the expected total.
+    2. Enumerate all prefixes of ``prefix_length`` (default 2) over the standard
+       geohash alphabet (32 chars).
+    3. GET ``{base_url}/{prefix}``, extract ``items`` (or configured data_path).
+    4. Dedupe by ``id`` and ``key`` fields.
+    5. Warn if final count does not match root total.
+    """
+    import requests
+    import itertools
+
+    cfg = brand_config.get("geohash_prefix_expansion", {}) if brand_config else {}
+    prefix_length: int = int(cfg.get("prefix_length", 2))
+    alphabet: str = cfg.get("alphabet", "0123456789bcdefghjkmnpqrstuvwxyz")
+    items_key: str = cfg.get("items_key", "items")
+    delay: float = float(cfg.get("delay", 0.15))
+
+    base_url = base_url.rstrip("/")
+    custom_headers = _get_custom_headers(brand_config)
+    request_headers = {"User-Agent": "Mozilla/5.0"}
+    if custom_headers:
+        request_headers.update(custom_headers)
+
+    # Fetch root once to get the expected total for validation
+    root_total: Optional[int] = None
+    try:
+        resp = requests.get(base_url, headers=request_headers, timeout=15)
+        resp.raise_for_status()
+        root_data = resp.json()
+        if isinstance(root_data, dict):
+            root_total = root_data.get("total")
+        if root_total:
+            print(f"🌍 Geohash prefix expansion — root total: {root_total} stores")
+        else:
+            print("🌍 Geohash prefix expansion — root total unknown")
+    except Exception as e:
+        log_debug(f"Could not fetch root for total count: {e}", "WARN")
+
+    total_prefixes = len(alphabet) ** prefix_length
+    print(f"   Fetching {total_prefixes} prefix buckets (length={prefix_length})…")
+
+    seen: dict = {}  # keyed by unique store id to dedupe
+    errors = 0
+
+    for chars in itertools.product(alphabet, repeat=prefix_length):
+        prefix = "".join(chars)
+        url = f"{base_url}/{prefix}"
+        try:
+            resp = requests.get(url, headers=request_headers, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            items = []
+            if isinstance(data, dict):
+                items = data.get(items_key, [])
+            elif isinstance(data, list):
+                items = data
+            for store in items:
+                if not isinstance(store, dict):
+                    continue
+                uid = store.get("id") or store.get("key") or store.get("ID")
+                key = str(uid) if uid is not None else f"{store.get('latitude','')},{store.get('longitude','')},{store.get('name','')}"
+                if key not in seen:
+                    seen[key] = store
+            time.sleep(delay)
+        except Exception as e:
+            log_debug(f"Geohash prefix error for {prefix}: {e}", "WARN")
+            errors += 1
+            continue
+
+    all_stores = list(seen.values())
+    log_debug(f"Geohash expansion complete | {len(all_stores)} unique stores | {errors} errors", "SUCCESS")
+    print(f"   ✅ {len(all_stores)} unique stores collected across {total_prefixes} buckets")
+
+    if root_total and len(all_stores) != root_total:
+        diff = root_total - len(all_stores)
+        if diff > 0:
+            log_debug(
+                f"Store count mismatch: got {len(all_stores)}, expected {root_total} ({diff} missing). "
+                "Consider increasing prefix_length if buckets are being truncated.",
+                "WARN",
+            )
+            print(f"   ⚠️  {diff} stores may be missing — root total is {root_total}. Consider prefix_length=3 if counts diverge.")
+        else:
+            log_debug(f"Store count {len(all_stores)} slightly exceeds root total {root_total} (dupes removed from overlapping buckets)", "DEBUG")
+
+    return all_stores
+
+
 def scrape_paginated(url: str, url_params: Dict, is_token_based: bool = False, custom_headers: Optional[Dict] = None) -> List[Dict]:
     """Expand paginated API by following all pages (supports both page numbers, tokens, and offset)"""
     import requests
@@ -1832,6 +1999,11 @@ def scrape_paginated(url: str, url_params: Dict, is_token_based: bool = False, c
                     stores = []
             else:
                 stores = []
+
+            # Yext vertical search: each item is { "data": { entity }, "highlightedFields", "distance", ... }
+            if stores and isinstance(stores[0], dict) and isinstance(stores[0].get("data"), dict):
+                if all(isinstance(x, dict) and isinstance(x.get("data"), dict) for x in stores):
+                    stores = [x["data"] for x in stores]
             
             if not stores:
                 break
@@ -1889,7 +2061,12 @@ def scrape_paginated(url: str, url_params: Dict, is_token_based: bool = False, c
                 elif offset_param:
                     # Offset-based: check total count
                     response_data = data.get('response', data)
-                    total = response_data.get('count') or response_data.get('total') or response_data.get('totalCount')
+                    total = (
+                        response_data.get('count')
+                        or response_data.get('total')
+                        or response_data.get('totalCount')
+                        or response_data.get('resultsCount')
+                    )
                     if total and len(all_stores) >= int(total):
                         break
                     # Get limit value (handle string/int conversion)
@@ -2112,6 +2289,12 @@ def universal_scrape(
                                              use_watch_countries=use_watch_countries)
             results["expansion_used"] = True
         
+        elif brand_config and brand_config.get("geohash_prefix_expansion"):
+            # Geohash prefix expansion (e.g. Casio /api/points/{prefix})
+            log_debug("Strategy: Geohash prefix expansion", "INFO")
+            stores = scrape_geohash_prefix_expansion(url, brand_config=brand_config)
+            results["expansion_used"] = True
+
         elif not is_region_specific or detected_type == "single_call":
             # Single call
             log_debug("Strategy: Single API call", "INFO")
@@ -2145,7 +2328,13 @@ def universal_scrape(
     if not stores:
         print("❌ No stores found")
         return results
-    
+
+    # Step 2b: Apply row_filters from brand config (before normalization)
+    stores = apply_row_filters(stores, brand_config)
+    if not stores:
+        print("❌ No stores remaining after row_filters")
+        return results
+
     # Step 3: Normalize
     print("🔧 Normalizing data...")
     log_debug("PHASE 3: Data Normalization", "INFO")
@@ -2365,6 +2554,10 @@ Auto-detects everything and uses the right strategy!
             if cfg_type == "json" and brand_config.get("worldwide_country_pagination"):
                 # Opt-in: same URL as SPA; iterate countries + offset pages (see scrape_country_expansion)
                 force_type = "country_filter"
+            elif cfg_type == "json" and brand_config.get("geohash_prefix_expansion"):
+                # Geohash prefix expansion: keep force_type as None so universal_scrape
+                # can branch on the geohash flag rather than falling into single_call
+                pass
             else:
                 force_type = _TYPE_NORMALISE.get(cfg_type, cfg_type)
             log_debug(f"Using force_type from brand config: {force_type}", "INFO")

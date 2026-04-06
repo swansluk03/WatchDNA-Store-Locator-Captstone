@@ -176,3 +176,59 @@ class TestOmega:
         assert has_html_signal, (
             "Expected html_analysis or an html-type endpoint for Omega"
         )
+
+
+class TestCquotientFiltering:
+    """CQuotient / Einstein beacons are not store APIs; they must not dominate ranking."""
+
+    def test_network_analyzer_skips_cquotient(self):
+        from network_analyzer import NetworkAnalyzer
+
+        na = NetworkAnalyzer()
+        beacon = (
+            "https://p.cquotient.com/einstein/v3/activities"
+            "?activityType=viewPage&siteId=chopard&json=%7B%22foo%22%3A1%7D"
+        )
+        assert na._should_skip_url(beacon) is True
+
+    def test_unverified_api_sorts_above_low_count_beacon_verification(self):
+        from endpoint_verifier import (
+            _is_suspected_tracking_or_personalization_url,
+            _MIN_STORES_TO_TRUST_SUSPICIOUS_HOST,
+        )
+
+        def _rank_after_verify(ep: dict) -> tuple:
+            url = ep.get("url") or ""
+            sc = ep.get("verified_store_count") or 0
+            conf = float(ep.get("confidence") or 0)
+            verified_ok = bool(ep.get("verified")) and sc > 0
+            suspicious = _is_suspected_tracking_or_personalization_url(url)
+            junk_verified = (
+                verified_ok
+                and suspicious
+                and sc < _MIN_STORES_TO_TRUST_SUSPICIOUS_HOST
+            )
+            if verified_ok and not junk_verified:
+                group = 2
+            elif not verified_ok:
+                group = 1
+            else:
+                group = 0
+            return (group, conf, sc)
+
+        endpoints = [
+            {
+                "url": "https://p.cquotient.com/x?activityType=viewPage",
+                "verified": True,
+                "verified_store_count": 2,
+                "confidence": 0.85,
+            },
+            {
+                "url": "https://api.brand.com/s/site/dw/shop/v22_6/stores",
+                "verified": False,
+                "verified_store_count": 0,
+                "confidence": 0.72,
+            },
+        ]
+        endpoints.sort(key=_rank_after_verify, reverse=True)
+        assert "dw/shop" in endpoints[0]["url"]

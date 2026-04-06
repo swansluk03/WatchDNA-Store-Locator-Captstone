@@ -10,6 +10,8 @@
       "use_watch_store_countries": "Set to true to use comprehensive 88-country list from watch_store_countries.json",
       "countries": "Provide custom countries object if you want to override the comprehensive list",
       "worldwide_country_pagination": "If true and type is json: force country_filter strategy — iterate countries (watch_store_countries or countries) and follow offset/per pagination per country. Does not affect brands without this flag.",
+      "geohash_prefix_expansion": "If set (object), enables geohash-prefix sharding strategy. The scraper enumerates all prefixes of prefix_length (default 2) over the geohash alphabet and fetches {url}/{prefix} for each. Keys: prefix_length (int, default 2), alphabet (str, default standard 32-char geohash), items_key (str, default 'items'), delay (float seconds between requests, default 0.15). Example: Casio locator.",
+      "row_filters": "Optional list of filter rules applied to raw store records after collection, before normalization. Each rule: { field (dot-notation path, e.g. 'extra_fields.Rank'), op (eq|in|not_in|contains, default eq), value or values }. All rules are ANDed. Absent or empty = no filtering (all other brands unaffected).",
       "see": "COUNTRY_CONFIG_GUIDE.md for details on country configuration"
     }
   },
@@ -536,14 +538,6 @@
       "Handle": "id"
     }
   },
-  "rolex_stores": {
-    "type": "html",
-    "url": "https://www.rolex.com/en-us/store-locator/",
-    "method": "GET",
-    "description": "HTML page with store data",
-    "display_name": "ROLEX",
-    "enabled": true
-  },
   "breva_stores": {
     "type": "html",
     "url": "https://www.breva-watches.com/store",
@@ -579,5 +573,65 @@
     "description": "Bulova (SFCC) — storefront HTML embeds map pins in data-locations. For more stores per request, use Stores-FindStores with postalCode and radius (returns JSON stores[]).",
     "display_name": "BULOVA",
     "enabled": true
+  },
+  "calvin_klein_stores": {
+    "type": "paginated",
+    "url": "https://prod-cdn.us.yextapis.com/v2/accounts/me/search/vertical/query?experienceKey=calvin-klein-locator-usa&api_key=e922a5467c105dbc672e892b1c6a6564&v=20220511&version=PRODUCTION&locale=en-US&input=&verticalKey=usa-locations&limit=50&offset=0&retrieveFacets=false&skipSpellCheck=true&sortBys=%5B%5D&source=STANDARD",
+    "method": "GET",
+    "description": "Calvin Klein US (Yext vertical search): limit=50 & offset pagination on prod-cdn.us.yextapis.com; universal scraper walks offsets until resultsCount is reached or a short page.",
+    "display_name": "CALVIN KLEIN",
+    "enabled": true,
+    "custom_headers": {
+      "Accept": "application/json"
+    },
+    "url_base": "https://stores.calvinklein.us",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "name",
+      "Address Line 1": "address.line1",
+      "Address Line 2": "address.line2",
+      "City": "address.city",
+      "State/Province/Region": "address.region",
+      "Country": "address.countryCode",
+      "Postal/ZIP Code": "address.postalCode",
+      "Phone": "mainPhone",
+      "Latitude": "yextDisplayCoordinate.latitude",
+      "Longitude": "yextDisplayCoordinate.longitude"
+    },
+    "_note": "Public search experience key + api_key from the live locator page. verticalKey=usa-locations; ~120 US stores = three pages at limit=50."
+  },
+  "casio_stores": {
+    "type": "json",
+    "url": "https://locator.casio.com/api/points",
+    "description": "Casio Official Store Locator — geohash-prefix sharded API. Root returns total count + empty items; stores are fetched by 2-char geohash prefix (1,024 requests). ✅",
+    "method": "GET",
+    "display_name": "CASIO",
+    "data_path": "items",
+    "geohash_prefix_expansion": {
+      "prefix_length": 2,
+      "alphabet": "0123456789bcdefghjkmnpqrstuvwxyz",
+      "items_key": "items",
+      "delay": 0.15
+    },
+    "row_filters": [
+      {
+        "field": "extra_fields.Rank",
+        "op": "in",
+        "values": ["2"],
+        "_comment": "Rank 2 = official G-Shock / Casio boutiques only. Rank 10 = authorized dealers (dept stores), Rank 15 = shop-in-shop. Keeping only Rank 2 avoids merging hypermarkets, bookstores, and clothing chains into existing watch boutique records."
+      }
+    ],
+    "field_mapping": {
+      "Handle": "key",
+      "Name": "name",
+      "Address Line 1": "address",
+      "City": "extra_fields.City",
+      "State/Province/Region": "extra_fields.Area",
+      "Phone": "extra_fields.Phone 1",
+      "Website": "extra_fields.Link URL 1",
+      "Latitude": "latitude",
+      "Longitude": "longitude"
+    },
+    "_note": "Country field (extra_fields.Country) is a numeric Casio country ID, not a name. batch_normalize will infer country from address. To include authorized dealers add '10' to the row_filters values list; add '15' for shop-in-shop locations."
   }
 }

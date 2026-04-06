@@ -275,10 +275,31 @@ def _normalize_phone_for_parse(phone_str: str) -> str:
     return s.strip()
 
 
-def validate_phone(phone: Any) -> str:
+def _country_name_to_alpha2(country_name: str) -> Optional[str]:
+    """Convert a country display name (e.g. 'South Korea') to ISO alpha-2 ('KR') for phonenumbers."""
+    if not country_name:
+        return None
+    s = country_name.strip()
+    if re.match(r'^[A-Za-z]{2}$', s):
+        return s.upper()
+    try:
+        import pycountry
+        result = pycountry.countries.get(name=s)
+        if result:
+            return result.alpha_2
+        results = pycountry.countries.search_fuzzy(s)
+        if results:
+            return results[0].alpha_2
+    except Exception:
+        pass
+    return None
+
+
+def validate_phone(phone: Any, country: str = "") -> str:
     """
     Normalize phone number format using Google's phonenumbers library.
-    Handles all countries with correct international formatting.
+    Pass country (display name or alpha-2) so local numbers without a + prefix
+    can be correctly identified and formatted.
     """
     import phonenumbers
     from phonenumbers import PhoneNumberFormat
@@ -288,8 +309,10 @@ def validate_phone(phone: Any) -> str:
 
     phone_str = str(phone).strip()
 
-    # Preserve extension - extract before parsing (x 123, ext 123, -8008)
-    ext_match = re.search(r'(?:\s+[xX]\s*\d[\d\s]*|\s+ext\.?\s*\d[\d\s]*|-\d{4,})$', phone_str, re.IGNORECASE)
+    # Preserve extension - extract before parsing (x 123, ext. 123)
+    # Note: hyphen-only extensions (-8008) are intentionally excluded because they are
+    # indistinguishable from the last segment of a normal phone number (e.g. 031-690-1557).
+    ext_match = re.search(r'(?:\s+[xX]\s*\d[\d\s]*|\s+ext\.?\s*\d[\d\s]*)$', phone_str, re.IGNORECASE)
     extension = ext_match.group(0).strip() if ext_match else ""
     if extension:
         phone_str = phone_str[: ext_match.start()].strip()
@@ -301,8 +324,21 @@ def validate_phone(phone: Any) -> str:
     if not phone_str:
         return ""
 
+    normalized = _normalize_phone_for_parse(phone_str)
+    region = _country_name_to_alpha2(country) if country else None
+
+    # Try with region hint first — essential for local numbers that have no + prefix
+    if region:
+        try:
+            parsed = phonenumbers.parse(normalized, region)
+            if phonenumbers.is_valid_number(parsed):
+                formatted = phonenumbers.format_number(parsed, PhoneNumberFormat.INTERNATIONAL)
+                return (formatted + " " + extension).strip() if extension else formatted
+        except Exception:
+            pass
+
+    # Fall back to region-free parse for numbers that already carry a country code (+XX...)
     try:
-        normalized = _normalize_phone_for_parse(phone_str)
         parsed = phonenumbers.parse(normalized, None)
         if phonenumbers.is_valid_number(parsed) or phonenumbers.is_possible_number(parsed):
             formatted = phonenumbers.format_number(parsed, PhoneNumberFormat.INTERNATIONAL)
@@ -1008,7 +1044,7 @@ def normalize_location(
 
     # Validated fields
     normalized["Status"] = validate_boolean(mapped_data.get("Status", True), default=True)
-    normalized["Phone"] = validate_phone(mapped_data.get("Phone", ""))
+    normalized["Phone"] = validate_phone(mapped_data.get("Phone", ""), country=normalized["Country"])
     normalized["Email"] = validate_email(mapped_data.get("Email", ""))
     normalized["Website"] = validate_url(mapped_data.get("Website", ""), base_url=base_url, url_base=url_base, field_context="Website")
     normalized["Image URL"] = validate_url(mapped_data.get("Image URL", ""), base_url=base_url, url_base=url_base)
