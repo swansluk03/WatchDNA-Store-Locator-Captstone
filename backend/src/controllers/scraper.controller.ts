@@ -4,8 +4,13 @@ import uploadService from '../services/upload.service';
 import { storeService } from '../services/store.service';
 import fs from 'fs';
 import path from 'path';
-import { BRAND_CONFIGS_PATH, ENDPOINT_DISCOVERER_PATH, PYTHON_CMD } from '../utils/paths';
+import { ENDPOINT_DISCOVERER_PATH, PYTHON_CMD } from '../utils/paths';
 import prisma from '../lib/prisma';
+import {
+  loadMergedBrandConfigs,
+  upsertBrandConfigRow,
+  applyBrandRename,
+} from '../services/brand-config.service';
 
 // Helper functions for brand config similarity detection
 function calculateSimilarity(str1: string, str2: string): number {
@@ -131,8 +136,7 @@ export const scraperController = {
   // GET /api/scraper/brands - List available brand configs
   async getBrands(req: Request, res: Response) {
     try {
-      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
-      const configs = JSON.parse(configData);
+      const configs = await loadMergedBrandConfigs();
 
       // Filter out _README and disabled brands
       const brands = Object.entries(configs)
@@ -208,9 +212,8 @@ export const scraperController = {
         return res.status(400).json({ error: 'brandName and url are required' });
       }
 
-      // Load brand config
-      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
-      const configs = JSON.parse(configData);
+      // Load brand config (file baseline + DB overlay)
+      const configs = await loadMergedBrandConfigs();
       const brandConfig = configs[brandName];
 
       if (!brandConfig) {
@@ -761,8 +764,7 @@ export const scraperController = {
     try {
       const { id } = req.params;
 
-      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
-      const configs = JSON.parse(configData);
+      const configs = await loadMergedBrandConfigs();
 
       if (!configs[id]) {
         return res.status(404).json({ error: `Brand configuration "${id}" not found` });
@@ -784,9 +786,8 @@ export const scraperController = {
         return res.status(400).json({ error: 'brandId and endpoint.url are required' });
       }
 
-      // Load existing brand configs
-      const configData = fs.readFileSync(BRAND_CONFIGS_PATH, 'utf-8');
-      const configs = JSON.parse(configData);
+      // Load existing brand configs (baseline file + DB)
+      const configs = await loadMergedBrandConfigs();
 
       // Check for exact match first
       if (configs[brandId] && overwrite !== true) {
@@ -864,14 +865,12 @@ export const scraperController = {
         brandConfig._note = baseConfig._note;
       }
 
-      // When overwriting with a new name, remove the old key so we don't keep both
+      // When overwriting with a new name, drop old DB row and hide baseline file key if present
       if (overwrite === true && oldBrandId && oldBrandId !== brandId) {
-        delete configs[oldBrandId];
+        await applyBrandRename(oldBrandId);
       }
 
-      // Save to brand_configs.json
-      configs[brandId] = brandConfig;
-      fs.writeFileSync(BRAND_CONFIGS_PATH, JSON.stringify(configs, null, 2), 'utf-8');
+      await upsertBrandConfigRow(brandId, brandConfig);
 
       res.json({
         message: 'Brand configuration saved successfully',

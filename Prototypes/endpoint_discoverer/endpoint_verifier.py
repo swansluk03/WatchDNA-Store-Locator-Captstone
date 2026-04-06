@@ -8,12 +8,14 @@ from urllib.parse import urlparse, parse_qs
 
 DISCOVERY_SAMPLE_LIMIT = 15
 
+_PAGE_SIZE_KEYS = frozenset({'limit', 'per', 'per_page', 'take', 'page_size', 'count', 'pagesize'})
+
 
 def _url_with_sample_limit(url: str, limit: int = DISCOVERY_SAMPLE_LIMIT) -> str:
     parsed = urlparse(url)
     params = parse_qs(parsed.query, keep_blank_values=True)
-    limit_params = ['limit', 'per', 'per_page', 'take', 'page_size']
-    if any(p.lower() in [k.lower() for k in params.keys()] for p in limit_params):
+    keys_lower = {k.lower() for k in params.keys()}
+    if keys_lower & _PAGE_SIZE_KEYS:
         return url
     sep = '&' if parsed.query else '?'
     return f"{url}{sep}limit={limit}"
@@ -575,11 +577,14 @@ class EndpointVerifier:
             if any(domain in url.lower() for domain in ['stores.bellross.com', 'store.breitling.com', 'stores.']):
                 custom_headers.setdefault('Accept', 'application/json')
             
-            # Check if this is a radius-based endpoint that might need optimization
+            # Check if this is a radius-based endpoint that might need optimization.
+            # max_distance is SFCC's radius param; also skip SFCC /dw/shop/stores since
+            # they need lat+lng at runtime and are optimized by pattern_detector instead.
             parsed = urlparse(url)
             params = parse_qs(parsed.query, keep_blank_values=True)
+            is_sfcc = '/dw/shop/' in parsed.path.lower() and '/stores' in parsed.path.lower()
             radius_params = ['r', 'radius', 'distance']
-            is_radius_endpoint = any(p in params for p in radius_params)
+            is_radius_endpoint = not is_sfcc and any(p in params for p in radius_params)
             
             # For radius endpoints, try optimizing first
             optimized_url = url
@@ -618,9 +623,13 @@ class EndpointVerifier:
             verification = self.quick_verify(optimized_url, custom_headers=custom_headers)
             
             # Merge verification results into endpoint
+            verified_count = verification['store_count']
             endpoint.update({
                 'verified': verification['success'],
-                'verified_store_count': verification['store_count'],
+                'verified_store_count': verified_count,
+                # Promote to store_count so downstream consumers (frontend, pattern_detector)
+                # see a definitive count; only overwrite if verification actually returned data.
+                'store_count': verified_count if verified_count else endpoint.get('store_count'),
                 'verified_type': verification['detected_type'],
                 'verified_is_region_specific': verification['is_region_specific'],
                 'verification_error': verification.get('error'),

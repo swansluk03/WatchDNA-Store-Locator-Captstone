@@ -9,6 +9,7 @@
       "url_base": "Base URL used to reconstruct relative store-detail URLs (e.g. 'https://www.omegawatches.com/en-us').",
       "use_watch_store_countries": "Set to true to use comprehensive 88-country list from watch_store_countries.json",
       "countries": "Provide custom countries object if you want to override the comprehensive list",
+      "worldwide_country_pagination": "If true and type is json: force country_filter strategy — iterate countries (watch_store_countries or countries) and follow offset/per pagination per country. Does not affect brands without this flag.",
       "see": "COUNTRY_CONFIG_GUIDE.md for details on country configuration"
     }
   },
@@ -311,10 +312,14 @@
   },
   "breitling_stores": {
     "type": "json",
+    "worldwide_country_pagination": true,
     "url": "https://store.breitling.com/en?country=US&qp=United+States&r=1000&l=en&per=50&offset=0",
-    "description": "Breitling Store Locator - JSON API with country-based search and offset pagination. URL returns JSON directly. Use country parameter to get stores for different countries. Large radius (1000) gets all stores per country. Scraper handles offset pagination automatically ✅",
+    "description": "Breitling (Yext): Accept: application/json; worldwide_country_pagination walks every country from watch_store_countries and all offset pages (per=50). ✅",
     "method": "GET",
     "display_name": "BREITLING",
+    "custom_headers": {
+      "Accept": "application/json"
+    },
     "data_path": "response.entities",
     "field_mapping": {
       "Handle": "profile.meta.id",
@@ -327,9 +332,12 @@
       "Postal/ZIP Code": "profile.address.postalCode",
       "Phone": "profile.mainPhone.display",
       "Email": "profile.emails.0",
-      "Website": "profile.websiteUrl.url",
-      "Latitude": "profile.geocodedCoordinate.latitude",
-      "Longitude": "profile.geocodedCoordinate.longitude"
+      "Website": [
+        "profile.websiteUrl.url",
+        "profile.websiteUrl"
+      ],
+      "Latitude": "profile.geocodedCoordinate.lat",
+      "Longitude": "profile.geocodedCoordinate.long"
     },
     "use_watch_store_countries": true,
     "_note": "When use_watch_store_countries is true, scraper uses comprehensive list from watch_store_countries.json. Set to false and provide 'countries' object to use custom list."
@@ -525,6 +533,14 @@
     "method": "GET",
     "description": "HTML page with store data",
     "display_name": "ROLEX",
+    "enabled": true
+  },
+  "bulova_stores": {
+    "type": "html",
+    "url": "https://www.bulova.com/us/en/store-locator/?showMap=true&horizontalView=true&isForm=true",
+    "method": "GET",
+    "description": "Bulova (SFCC) — storefront HTML with data-locations pins; or use Stores-FindStores?postalCode=&radius= for JSON.",
+    "display_name": "BULOVA",
     "enabled": true
   }
 }

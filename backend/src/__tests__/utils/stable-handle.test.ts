@@ -31,6 +31,15 @@ describe('stable-handle', () => {
     expect(a).not.toBe(b);
   });
 
+  it('computeStableHandleFromRow ignores punctuation-only address differences', () => {
+    const a = computeStableHandleFromRow(base);
+    const b = computeStableHandleFromRow({
+      ...base,
+      'Address Line 1': '123 Main St.,',
+    });
+    expect(a).toBe(b);
+  });
+
   it('normalizeScraperRowForCsv does not replace handle when incomplete', () => {
     const incomplete = { ...base, Phone: '' };
     expect(normalizeScraperRowForCsv(incomplete).Handle).toBe('upstream-999');

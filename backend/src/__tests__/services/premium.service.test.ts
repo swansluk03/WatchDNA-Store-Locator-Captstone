@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const findUnique = vi.fn();
-const findMany = vi.fn();
-const $transaction = vi.fn();
+const { findUnique, findMany, $transaction } = vi.hoisted(() => ({
+  findUnique: vi.fn(),
+  findMany: vi.fn(),
+  $transaction: vi.fn(),
+}));
 
 vi.mock('../../lib/prisma', () => ({
   __esModule: true,

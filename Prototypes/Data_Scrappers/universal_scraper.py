@@ -21,7 +21,7 @@ import os
 import time
 import json
 from typing import Dict, List, Any, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 from scraper_utils import log_debug
 
@@ -170,6 +170,17 @@ def _get_custom_headers(brand_config: Optional[Dict]) -> Optional[Dict]:
         if headers and isinstance(headers, dict):
             return headers
     return None
+
+
+def _country_expansion_request_headers(brand_config: Optional[Dict]) -> Dict[str, str]:
+    """Headers for scrape_country_expansion (JSON APIs + optional custom_headers / legacy headers)."""
+    merged: Dict[str, str] = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    extra = _get_custom_headers(brand_config)
+    if extra:
+        merged.update(extra)
+    if brand_config and isinstance(brand_config.get("headers"), dict):
+        merged.update(brand_config["headers"])
+    return merged
 
 
 # Request/retry constants
@@ -459,10 +470,139 @@ def _extract_stores_from_html_cards(soup) -> List[Dict]:
     return stores
 
 
+def _infer_site_origin_for_sfcc(soup: Any, html_content: str) -> Optional[str]:
+    """Best-effort https://host origin for resolving relative SFCC links."""
+    try:
+        link = soup.find("link", rel=lambda v: v and "canonical" in str(v).lower())
+        if link and link.get("href"):
+            p = urlparse(link["href"])
+            if p.scheme and p.netloc:
+                return f"{p.scheme}://{p.netloc}"
+    except (TypeError, AttributeError, KeyError):
+        pass
+    m = re.search(r"(https?://[^/\"'\s>]+)/on/demandware", html_content)
+    if m:
+        return m.group(1).rstrip("/")
+    return None
+
+
+def _parse_sfcc_city_state_zip(block: str) -> Tuple[str, str, str]:
+    """Parse SFCC infoWindow lines like 'Tempe, AZ 85281' into city, state, postal."""
+    if not block:
+        return "", "", ""
+    text = re.sub(r"\s+", " ", block.strip())
+    m = re.match(
+        r"^([^,]+),\s*([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?|[A-Za-z]\d[A-Za-z]\s*\d[A-Za-z]\d|\d{4}\s*[A-Za-z]{2})$",
+        text,
+    )
+    if m:
+        return m.group(1).strip(), m.group(2).upper(), m.group(3).strip()
+    parts = [p.strip() for p in text.split(",")]
+    if len(parts) >= 2:
+        city = parts[0]
+        tail = ",".join(parts[1:])
+        m2 = re.search(
+            r"\b([A-Za-z]{2})\b\s+(\d{5}(?:-\d{4})?|[A-Za-z]\d[A-Za-z]\s*\d[A-Za-z]\d|\d{4}\s*[A-Za-z]{2})\s*$",
+            tail,
+        )
+        if m2:
+            return city, m2.group(1).upper(), m2.group(2).strip()
+    return text, "", ""
+
+
+def _sfcc_map_pin_to_store(pin: Dict[str, Any], origin: Optional[str]) -> Optional[Dict[str, str]]:
+    """One SFCC map pin (from data-locations JSON) -> canonical scraper dict."""
+    if not isinstance(pin, dict):
+        return None
+    lat, lng = pin.get("latitude"), pin.get("longitude")
+    if lat is None or lng is None:
+        return None
+    name = str(pin.get("name") or "").strip()
+    hid = str(pin.get("id") or "").strip()
+    if not name and not hid:
+        return None
+    store: Dict[str, str] = {
+        "Handle": hid or name,
+        "Name": name or hid,
+        "Latitude": str(lat).strip(),
+        "Longitude": str(lng).strip(),
+    }
+    frag = pin.get("infoWindowHtml") or ""
+    if not frag:
+        return store
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return store
+
+    inner = BeautifulSoup(frag, "html.parser")
+    line1_el = inner.select_one(".store-address")
+    if line1_el:
+        store["Address Line 1"] = line1_el.get_text(" ", strip=True)
+    city_el = inner.select_one(".store-city-state-zip")
+    if city_el:
+        c, st, z = _parse_sfcc_city_state_zip(city_el.get_text(" ", strip=True))
+        if c:
+            store["City"] = c
+        if st:
+            store["State/Province/Region"] = st
+        if z:
+            store["Postal/ZIP Code"] = z
+    phone_el = inner.select_one("a.storelocator-phone")
+    if phone_el:
+        store["Phone"] = phone_el.get_text(strip=True)
+    detail_a = inner.select_one(".store-name a[href]")
+    if detail_a and detail_a.get("href") and origin:
+        store["Website"] = urljoin(origin + "/", detail_a["href"])
+    return store
+
+
+def extract_stores_from_sfcc_data_locations(html_content: str) -> List[Dict]:
+    """
+    Salesforce Commerce Cloud (Demandware) store locator HTML: map markers are
+    serialized JSON in data-locations=\"[...]\" (e.g. Bulova). Does not run for
+    SFCC endpoints that return application/json (those use the JSON path).
+    """
+    if "data-locations" not in html_content:
+        return []
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return []
+
+    soup = BeautifulSoup(html_content, "html.parser")
+    origin = _infer_site_origin_for_sfcc(soup, html_content)
+    by_handle: Dict[str, Dict] = {}
+
+    for el in soup.find_all(attrs={"data-locations": True}):
+        raw = el.get("data-locations") or ""
+        if not raw or not raw.strip() or raw.strip() == "[]":
+            continue
+        try:
+            pins = json.loads(raw)
+        except json.JSONDecodeError:
+            import html as html_module
+
+            try:
+                pins = json.loads(html_module.unescape(raw))
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(pins, list):
+            continue
+        for pin in pins:
+            rec = _sfcc_map_pin_to_store(pin, origin)
+            if rec:
+                by_handle[rec["Handle"]] = rec
+
+    return list(by_handle.values())
+
+
 def extract_stores_from_html_js(html_content: str) -> List[Dict]:
     """Extract stores from HTML pages with embedded JavaScript or structured HTML"""
-    import re
-    
+    sfcc_stores = extract_stores_from_sfcc_data_locations(html_content)
+    if sfcc_stores:
+        return sfcc_stores
+
     stores = []
     
     # Method 1: Try to find JSON patterns in HTML (original method)
@@ -1073,15 +1213,29 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
     else:
         center_format = 'q'
 
-    # Detect radius key and value from input URL
+    path_lower = urlparse(url.split('?')[0]).path.lower()
+    is_sfcc_stores = '/dw/shop/' in path_lower and 'stores' in path_lower
+
+    # Detect radius key and value from input URL (SFCC / Demandware uses max_distance + distance_unit)
     radius_key = 'r'
     radius = '2000'
-    for _rk in ('radius', 'r', 'distance'):
+    for _rk in ('max_distance', 'maxdistance', 'radius', 'r', 'distance'):
         if _rk in url_params:
             radius_key = _rk
             _rv = url_params[_rk]
             radius = _rv[0] if isinstance(_rv, list) else _rv
             break
+    if radius_key in ('max_distance', 'maxdistance'):
+        try:
+            _rv_num = float(radius)
+        except (TypeError, ValueError):
+            _rv_num = 0.0
+        if _rv_num < 500:
+            radius = '8000'
+            print(
+                f"   💡 {radius_key}={_rv_num} is small (viewport-sized); "
+                f"using {radius} for worldwide multi-center coverage"
+            )
 
     # Pagination: Yext-style (q=lat,lng) APIs typically need per/offset on every request,
     # even when the captured URL omitted them. SFCC / lat+long endpoints usually return one
@@ -1105,7 +1259,7 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
     # Strip location, radius, and pagination keys so we can add our own
     _strip = {
         'q', 'qp', 'lat', 'long', 'lng', 'latitude', 'longitude',
-        'r', 'radius', 'distance',
+        'r', 'radius', 'distance', 'max_distance', 'maxdistance', 'start',
     }
     if offset_key:
         _strip.add(offset_key)
@@ -1113,16 +1267,28 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
         _strip.add(per_key)
     base_params = {k: v for k, v in url_params.items() if k not in _strip}
 
+    use_sfcc_start_count = center_format == 'lat_long' and (
+        is_sfcc_stores or 'count' in url_params
+    )
+    page_sz = 100
+    if use_sfcc_start_count:
+        _craw = url_params.get('count', '100')
+        page_sz = int(_craw[0] if isinstance(_craw, list) else _craw)
+        page_sz = max(1, min(page_sz, 200))
+
     all_stores = []
     seen_ids = set()
 
     print(f"   Using {len(major_cities)} center points with {radius_key}={radius}")
+    if use_sfcc_start_count:
+        print(f"   SFCC-style pagination: count={page_sz}, iterating start=0,{page_sz},...")
     print(f"   Starting multi-point radius expansion...")
 
     for i, (city_name, city_lat, city_lng) in enumerate(major_cities, 1):
         print(f"   [{i}/{len(major_cities)}] {city_name}...", end=" ", flush=True)
 
         offset = 0
+        start_off = 0
         page = 1
         stores_from_city = []
         prev_page_fp: Optional[Tuple[str, ...]] = None
@@ -1136,7 +1302,10 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
             else:
                 params['q'] = f"{city_lat},{city_lng}"
             params[radius_key] = radius
-            if per_key:
+            if use_sfcc_start_count:
+                params['count'] = str(page_sz)
+                params['start'] = str(start_off)
+            elif per_key:
                 params[per_key] = per
                 params[offset_key] = str(offset)
             if lang:
@@ -1230,7 +1399,10 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
                     break
                 prev_page_fp = page_fp
 
-                full_page = per is not None and len(entities) >= int(per)
+                if use_sfcc_start_count:
+                    full_page = len(entities) >= page_sz
+                else:
+                    full_page = per is not None and len(entities) >= int(per)
                 if not new_stores:
                     if full_page:
                         empty_full_pages += 1
@@ -1248,6 +1420,30 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
                     empty_full_pages = 0
 
                 stores_from_city.extend(new_stores)
+
+                if use_sfcc_start_count:
+                    total_api = None
+                    if isinstance(data, dict):
+                        total_api = data.get('total')
+                        if total_api is None and isinstance(data.get('response'), dict):
+                            total_api = data['response'].get('total')
+                    if not entities:
+                        break
+                    if total_api is not None:
+                        try:
+                            if start_off + len(entities) >= int(total_api):
+                                break
+                        except (TypeError, ValueError):
+                            pass
+                    if len(entities) < page_sz:
+                        break
+                    start_off += page_sz
+                    page += 1
+                    if page > 500:
+                        log_debug(f"Reached page limit (500) for {city_name}, stopping", "WARN")
+                        break
+                    time.sleep(0.3)
+                    continue
 
                 count = data.get('response', {}).get('count', len(entities)) if isinstance(data, dict) else len(entities)
                 if per is None or len(entities) < int(per):
@@ -1403,10 +1599,7 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
                     params["offset"] = str(offset)
                 
                 try:
-                    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-                    if brand_config and brand_config.get("headers"):
-                        headers.update(brand_config["headers"])
-                    
+                    headers = _country_expansion_request_headers(brand_config)
                     response = requests.get(url.split('?')[0], params=params, timeout=30, headers=headers)
                     response.raise_for_status()
                     data = response.json()
@@ -1488,10 +1681,7 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
                 params[qp_param] = country_name
             
             try:
-                headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-                if brand_config and brand_config.get("headers"):
-                    headers.update(brand_config["headers"])
-                
+                headers = _country_expansion_request_headers(brand_config)
                 response = requests.get(url.split('?')[0], params=params, timeout=30, headers=headers)
                 response.raise_for_status()
                 data = response.json()
@@ -1838,7 +2028,13 @@ def universal_scrape(
     
     # Check URL params for radius-based detection (used in multiple branches)
     url_params = locator_analysis["url_params"]
-    has_radius = "r" in url_params or "radius" in url_params or "distance" in url_params
+    has_radius = (
+        "r" in url_params
+        or "radius" in url_params
+        or "distance" in url_params
+        or "max_distance" in url_params
+        or "maxdistance" in url_params
+    )
     has_center = "q" in url_params or "lat" in url_params or "latitude" in url_params
     
     try:
@@ -1874,8 +2070,11 @@ def universal_scrape(
             stores = scrape_viewport_expansion(url, locator_analysis["url_params"], region)
             results["expansion_used"] = True
         
-        elif (detected_type == "radius" or (has_radius and has_center)) and detected_type != "single_call":
-            # Radius-based API - use multi-point expansion
+        elif (
+            detected_type in ("radius", "radius_search")
+            or (has_radius and has_center)
+        ) and detected_type != "single_call":
+            # Radius-based API - use multi-point expansion (world city grid + dedupe)
             log_debug("Strategy: Radius-based multi-point expansion", "INFO")
             custom_headers = _get_custom_headers(brand_config)
             stores = scrape_radius_expansion(url, url_params, region, custom_headers=custom_headers)
@@ -2163,7 +2362,11 @@ Auto-detects everything and uses the right strategy!
     if not force_type and brand_config:
         cfg_type = brand_config.get("type", "")
         if cfg_type:
-            force_type = _TYPE_NORMALISE.get(cfg_type, cfg_type)
+            if cfg_type == "json" and brand_config.get("worldwide_country_pagination"):
+                # Opt-in: same URL as SPA; iterate countries + offset pages (see scrape_country_expansion)
+                force_type = "country_filter"
+            else:
+                force_type = _TYPE_NORMALISE.get(cfg_type, cfg_type)
             log_debug(f"Using force_type from brand config: {force_type}", "INFO")
 
     # Run universal scraper

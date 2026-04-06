@@ -115,6 +115,12 @@ class EndpointDiscoverer:
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
         chrome_options.add_experimental_option('useAutomationExtension', False)
+        # Grant geolocation without a permission prompt so map-based store locators
+        # (e.g. SFCC/Demandware) fire their API calls in headless mode.
+        chrome_options.add_argument('--use-fake-ui-for-media-stream')
+        chrome_options.add_experimental_option('prefs', {
+            'profile.default_content_setting_values.geolocation': 1,  # 1 = allow
+        })
         
         # Enable performance logging to capture network requests
         chrome_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
@@ -161,6 +167,18 @@ class EndpointDiscoverer:
                 print("  ✓ Enabled Chrome DevTools Protocol network monitoring")
             except Exception as cdp_error:
                 print(f"  ⚠️  CDP not available (may still work): {cdp_error}")
+
+            # Mock geolocation so map-based store locators (e.g. SFCC) fire API calls.
+            # Without this, headless Chrome has no location and the map stays blank.
+            try:
+                self.driver.execute_cdp_cmd('Emulation.setGeolocationOverride', {
+                    'latitude': 40.7128,    # New York City
+                    'longitude': -74.0060,
+                    'accuracy': 100,
+                })
+                print("  ✓ Mocked geolocation to New York City (40.71°N, 74.00°W)")
+            except Exception as geo_error:
+                print(f"  ⚠️  Could not mock geolocation: {geo_error}")
             
             self.driver.set_page_load_timeout(self.timeout)
             print("  ✓ Driver setup complete")
@@ -226,9 +244,14 @@ class EndpointDiscoverer:
                 print(f"  ⚠️  Page load warning: {error_str[:200]}")
             # Continue anyway - page might have loaded partially
         
-        # Wait for page to fully load and JavaScript to execute
-        print(f"  ⏳ Waiting for page to initialize...")
-        time.sleep(3)
+        # Wait for page to fully load and JavaScript to execute.
+        # Hash-routed map pages (e.g. #lat=...&lng=...) fire their SFCC API call during a
+        # second render cycle triggered by the hash — give them extra time.
+        parsed_initial = urlparse(url)
+        has_map_hash = any(k in (parsed_initial.fragment or '').lower() for k in ('lat', 'lng', 'lon'))
+        initial_wait = 6 if has_map_hash else 4
+        print(f"  ⏳ Waiting {initial_wait}s for page to initialize...")
+        time.sleep(initial_wait)
         
         # Try to wait for common store locator elements
         try:
@@ -272,9 +295,10 @@ class EndpointDiscoverer:
         # Final capture of current URL
         _capture_current_url()
         
-        # Final wait to capture any delayed requests
-        print(f"  ⏳ Final wait for delayed requests...")
-        time.sleep(2)
+        # Final wait — map-heavy pages can be slow to resolve their first API call
+        final_wait = 5 if has_map_hash else 3
+        print(f"  ⏳ Final wait {final_wait}s for delayed requests...")
+        time.sleep(final_wait)
         
         return seen_urls
     
@@ -507,7 +531,50 @@ class EndpointDiscoverer:
         
         print(f"  ✓ Found {len(requests)} relevant network requests")
         return requests
-    
+
+    def _capture_performance_api_requests(self, seen_urls: set) -> List[Dict]:
+        """
+        Use window.performance.getEntriesByType('resource') to collect ALL network
+        requests the browser recorded since page load — including those that fired
+        before CDP logging started (common on map-heavy, hash-routed pages like SFCC).
+
+        Args:
+            seen_urls: Set of already-collected URLs (mutated in place to deduplicate).
+
+        Returns:
+            List of new request dicts not already in seen_urls.
+        """
+        if not self.driver:
+            return []
+        try:
+            entries = self.driver.execute_script(
+                "return window.performance.getEntriesByType('resource').map(function(e){"
+                "return {url: e.name, initiatorType: e.initiatorType};});"
+            ) or []
+        except Exception:
+            return []
+
+        new_requests: List[Dict] = []
+        for entry in entries:
+            url = (entry.get('url') or '').strip()
+            if not url or url in seen_urls:
+                continue
+            if not self._is_relevant_request(url, ''):
+                continue
+            seen_urls.add(url)
+            initiator = entry.get('initiatorType', '')
+            new_requests.append({
+                'url': url,
+                'method': 'GET',
+                'status': 0,
+                'mimeType': 'application/json' if 'fetch' in initiator or 'xmlhttprequest' in initiator else '',
+                'headers': {},
+            })
+
+        if new_requests:
+            print(f"  ✓ Performance API found {len(new_requests)} additional request(s) not in CDP logs")
+        return new_requests
+
     def _is_relevant_request(self, url: str, mime_type: str) -> bool:
         """Check if a network request is relevant for store locator discovery"""
         if not url:
@@ -533,10 +600,22 @@ class EndpointDiscoverer:
         if 'maps.googleapis.com' in url_lower:
             if '/api/js' in url_lower or '/api/place' in url_lower or '/maps/vt' in url_lower:
                 return False
+
+        # SFCC site URLs use hostname/path "demandware.store" — substring contains "store" but
+        # ServiceWorker-Manifest, site prefs, etc. are not store APIs (real JSON is under /dw/shop/).
+        if 'demandware.store' in url_lower and '/dw/shop/' not in url_lower:
+            return False
+        if 'serviceworker' in url_lower or 'service-worker' in url_lower:
+            return False
+        if url_lower.rstrip('/').endswith('-manifest') or '/manifest' in url_lower and 'stores' not in url_lower:
+            return False
         
         # Look for relevant indicators
         relevant_keywords = ['api', 'json', 'store', 'location', 'retailer', 'establishment',
                            'point', 'dealer', 'boutique', 'locator', 'search', 'find']
+        # Salesforce Commerce Cloud (Demandware) JSON store search
+        if '/dw/shop/' in url_lower and '/stores' in url_lower:
+            return True
         
         # Check URL
         if any(keyword in url_lower for keyword in relevant_keywords):
@@ -550,6 +629,84 @@ class EndpointDiscoverer:
                 return True
         
         return False
+
+    def _extract_sfcc_store_api_urls_from_page(self) -> List[Dict]:
+        """
+        Pull SFCC / Demandware store search URLs from rendered page source.
+        These often call api.<brand>.<tld>/s/.../dw/shop/vXX_XX/stores?client_id=... and may
+        be missed when performance logs truncate or the map loads late (hash routing).
+
+        Also tries to attach a discovered client_id to the base URL so the verifier
+        can make a real test request.
+        """
+        if not self.driver:
+            return []
+        try:
+            source = self.driver.page_source or ''
+        except Exception:
+            return []
+
+        # Escaped URLs in JSON strings: https:\/\/api...
+        norm = source.replace('\\/', '/')
+
+        # Collect SFCC base URLs (path-only, no query string yet)
+        base_found: List[str] = []
+        for m in re.finditer(
+            r'(https?://[a-zA-Z0-9.-]+/s/[^/\s"\'<>]+/dw/shop/v\d+_\d+/stores)',
+            norm,
+            re.IGNORECASE,
+        ):
+            u = m.group(1).rstrip('.,;)\'"')
+            if u not in base_found:
+                base_found.append(u)
+
+        # Also capture full URLs that already include a query string (client_id may be inline)
+        full_found: dict[str, str] = {}  # base_url -> full_url_with_qs
+        for m in re.finditer(
+            r'(https?://[a-zA-Z0-9.-]+/s/[^/\s"\'<>]+/dw/shop/v\d+_\d+/stores'
+            r'\?[^\s"\'<>]{10,})',
+            norm,
+            re.IGNORECASE,
+        ):
+            u = m.group(1).rstrip('.,;)\'"')
+            parsed = urlparse(u)
+            base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            if base not in full_found:
+                full_found[base] = u
+
+        # Try to find a client_id anywhere in the page source (UUID or long hex string)
+        client_id_match = re.search(
+            r'client[_-]?id["\s]*[:=]["\s]*([0-9a-f-]{20,})',
+            norm,
+            re.IGNORECASE,
+        )
+        client_id = client_id_match.group(1).strip('"\'') if client_id_match else None
+
+        out: List[Dict] = []
+        seen_bases = set()
+        for base_url in base_found:
+            if base_url in seen_bases:
+                continue
+            seen_bases.add(base_url)
+            # Prefer a full URL with query string if we already found one
+            if base_url in full_found:
+                url = full_found[base_url]
+            elif client_id:
+                url = f"{base_url}?client_id={client_id}"
+                print(f"  ✓ Attached client_id={client_id[:8]}... to SFCC URL")
+            else:
+                url = base_url
+            out.append({
+                'url': url,
+                'method': 'GET',
+                'status': 0,
+                'mimeType': 'application/json',
+                'headers': {'Accept': 'application/json'},
+            })
+
+        if out:
+            print(f"  ✓ Extracted {len(out)} SFCC /dw/shop/.../stores URL(s) from page source")
+        return out
     
     def _analyze_html_content(self, url: str) -> Optional[Dict]:
         """
@@ -883,10 +1040,16 @@ class EndpointDiscoverer:
             # Interact with page to trigger API calls
             navigation_urls = self._interact_with_page(store_locator_url)
             
-            # Capture network requests
+            # Capture network requests via CDP performance logs
             print("\n📡 Capturing network requests...")
             network_requests = self._capture_network_requests()
-            
+
+            # Supplement with window.performance entries — catches requests that fired
+            # before CDP was ready (e.g. SFCC map call on hash-routed pages).
+            cdp_seen = {r['url'] for r in network_requests}
+            perf_requests = self._capture_performance_api_requests(cdp_seen)
+            network_requests.extend(perf_requests)
+
             # Add URLs captured from page navigation (e.g. after filter selection)
             for nav_url in navigation_urls:
                 if not any(r.get('url') == nav_url for r in network_requests):
@@ -911,6 +1074,12 @@ class EndpointDiscoverer:
             print("\n🔎 Probing related brand domains from page config...")
             related_domain_requests = self._probe_related_api_domains(store_locator_url)
             for req in related_domain_requests:
+                if not any(r.get('url') == req['url'] for r in network_requests):
+                    network_requests.append(req)
+
+            # SFCC store locator: API URL is often embedded in JS (api.* + /dw/shop/v.../stores)
+            print("\n📎 Scanning page source for SFCC store API URLs...")
+            for req in self._extract_sfcc_store_api_urls_from_page():
                 if not any(r.get('url') == req['url'] for r in network_requests):
                     network_requests.append(req)
 

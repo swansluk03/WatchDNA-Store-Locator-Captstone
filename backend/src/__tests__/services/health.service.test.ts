@@ -9,13 +9,13 @@ vi.mock('../../lib/prisma', () => ({
     $queryRaw: vi.fn(),
     user: { count: vi.fn() },
     premiumStore: { count: vi.fn() },
+    brandConfig: { count: vi.fn() },
   },
 }));
 
 vi.mock('../../utils/paths', () => ({
   PYTHON_CMD: 'python3',
   VALIDATE_CSV_PATH: '/fake/path/validate_csv.py',
-  BRAND_CONFIGS_PATH: '/fake/path/brand_configs.json',
   SCRAPER_PATH: '/fake/path/scrapers',
 }));
 
@@ -49,6 +49,7 @@ describe('Health Service', () => {
     (prisma.$queryRaw as any).mockResolvedValue([{ count: BigInt(500) }]);
     (prisma.user.count as any).mockResolvedValue(1);
     (prisma.premiumStore.count as any).mockResolvedValue(5);
+    (prisma.brandConfig.count as any).mockResolvedValue(3);
   });
 
   afterEach(() => {
@@ -90,12 +91,13 @@ describe('Health Service', () => {
       expect(report.summary.unhealthy).toBe(0);
     });
 
-    it('should include location count from database check', async () => {
+    it('should include location and brand config counts from database check', async () => {
       const report = await getHealthReport();
 
       const dbService = report.services.find(s => s.name === 'PostgreSQL Database');
       expect(dbService?.status).toBe('healthy');
       expect(dbService?.details?.locationCount).toBe(500);
+      expect(dbService?.details?.brandConfigCount).toBe(3);
     });
 
     it('should include response times for all services', async () => {

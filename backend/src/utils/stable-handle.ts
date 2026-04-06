@@ -3,8 +3,18 @@ import { normalizeCountry } from './country';
 import { normalizedCountryAndPhoneFromCsvRow } from './csv-to-location';
 import { isRowCompleteForDb } from './row-completeness';
 
-function norm(s: string | undefined | null): string {
-  return (s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+/** Lowercase, trim, collapse spaces — for handle hash address/city keys only. */
+function normForStableHandleKey(s: string | undefined | null): string {
+  const t = (s ?? '').trim().toLowerCase();
+  const alnumSpaced = t.replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  return alnumSpaced;
+}
+
+/**
+ * ASCII letters+digits only (matches PostgreSQL regexp_replace(..., '[^a-z0-9]', '', 'g') in dedupe SQL).
+ */
+export function addressFingerprintLine1(line1: string): string {
+  return (line1 ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
 /**
@@ -18,10 +28,10 @@ export function computeStableHandleFromRow(row: Record<string, string>): string 
   if (Number.isNaN(lat) || Number.isNaN(lon)) {
     throw new Error('stable handle requires valid coordinates');
   }
-  const addr1 = norm(row['Address Line 1']);
-  const addr2 = norm(row['Address Line 2']);
+  const addr1 = normForStableHandleKey(row['Address Line 1']);
+  const addr2 = normForStableHandleKey(row['Address Line 2']);
   const addressPart = addr1 || addr2 || '';
-  const city = norm(row.City);
+  const city = normForStableHandleKey(row.City);
   const country = normalizeCountry(String(row.Country || '')).toLowerCase();
   const key = [addressPart, city, country, lat.toFixed(5), lon.toFixed(5)].join('|');
   return `loc_${crypto.createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 24)}`;

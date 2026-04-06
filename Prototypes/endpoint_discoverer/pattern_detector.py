@@ -13,8 +13,8 @@ class PatternDetector:
         "Address Line 1": ["streetAddress", "shortAddress", "address", "address1", "address.line1", "address.street"],
         "Address Line 2": ["address2", "address.line2", "address.street2"],
         "City": ["cityName", "city", "address.city"],
-        "State/Province/Region": ["regionName", "state", "province", "region", "stateCode", "address.region", "address.state"],
-        "Country": ["countryName", "country", "countryCode", "address.countryCode", "address.country"],
+        "State/Province/Region": ["regionName", "state", "province", "region", "stateCode", "state_code", "address.region", "address.state"],
+        "Country": ["countryName", "country", "countryCode", "country_code", "address.countryCode", "address.country"],
         "Postal/ZIP Code": ["postalCode", "zipCode", "zip", "postal", "postcode", "address.postalCode"],
         "Phone": ["mainPhone.display", "mainPhone.number", "phone1", "phone", "phoneNumber", "mainPhone", "telephone"],
         "Email": ["c_baaEmail", "emails.0", "emails", "email", "contact_email"],
@@ -160,7 +160,7 @@ class PatternDetector:
                 parsed = urlparse(url)
                 params = parse_qs(parsed.query, keep_blank_values=True)
                 param_keys = [k.lower() for k in params.keys()]
-                if not any(p in param_keys for p in ['limit', 'per', 'per_page']):
+                if not any(p in param_keys for p in ['limit', 'per', 'per_page', 'count', 'take', 'page_size']):
                     sep = '&' if parsed.query else '?'
                     fetch_url = f"{url}{sep}limit=15"
                 response = requests.get(fetch_url, timeout=10, headers={
@@ -195,7 +195,7 @@ class PatternDetector:
                 parsed = urlparse(url)
                 params = parse_qs(parsed.query, keep_blank_values=True)
                 param_keys = [k.lower() for k in params.keys()]
-                if not any(p in param_keys for p in ['limit', 'per', 'per_page']):
+                if not any(p in param_keys for p in ['limit', 'per', 'per_page', 'count', 'take', 'page_size']):
                     sep = '&' if parsed.query else '?'
                     fetch_url = f"{url}{sep}limit=15"
                 response = requests.get(fetch_url, timeout=5, headers={
@@ -231,11 +231,26 @@ class PatternDetector:
         elif endpoint_type == 'radius':
             # Build a detailed description for radius-based endpoints
             url_params = self._parse_url_params(url)
-            radius_val = url_params.get('r') or url_params.get('radius') or url_params.get('distance') or '2000'
+            radius_val = (
+                url_params.get('max_distance')
+                or url_params.get('maxdistance')
+                or url_params.get('r')
+                or url_params.get('radius')
+                or url_params.get('distance')
+                or '2000'
+            )
             
-            # Extract center point info
-            center_coords = url_params.get('q') or url_params.get('center') or '48.8566,2.3522'
-            # Format center point description
+            # Extract center point info (SFCC uses latitude & longitude query params)
+            lat = url_params.get('latitude') or url_params.get('lat')
+            lng = (
+                url_params.get('longitude')
+                or url_params.get('lng')
+                or url_params.get('long')
+            )
+            if lat and lng:
+                center_coords = f'{lat},{lng}'
+            else:
+                center_coords = url_params.get('q') or url_params.get('center') or '48.8566,2.3522'
             if center_coords == '48.8566,2.3522':
                 center_point = 'Paris center point'
             elif ',' in str(center_coords):
@@ -243,15 +258,34 @@ class PatternDetector:
             else:
                 center_point = 'center point'
             
-            # Check for pagination
-            has_pagination = any(p in url_params for p in ['offset', 'per', 'per_page', 'limit', 'page'])
+            # Check for pagination (SFCC often uses start=0&count=100)
+            has_pagination = any(
+                p in url_params for p in ['offset', 'per', 'per_page', 'limit', 'page', 'start', 'count']
+            )
             pagination_info = ""
             if has_pagination:
-                per_val = url_params.get('per') or url_params.get('per_page') or url_params.get('limit') or '50'
-                pagination_info = f" with offset pagination, returns {per_val} stores per page"
+                per_val = (
+                    url_params.get('count')
+                    or url_params.get('per')
+                    or url_params.get('per_page')
+                    or url_params.get('limit')
+                    or '50'
+                )
+                if 'start' in url_params:
+                    pagination_info = f" with start/count pagination (~{per_val} stores per request)"
+                else:
+                    pagination_info = f" with offset pagination, returns {per_val} stores per page"
             
-            config["description"] = f"Radius-based search API{pagination_info}. Uses radius={radius_val}km from {center_point}. Scraper follows all pages (offset 0, 50, 100…) and uses multiple center points worldwide to get all stores ✅"
-            config["_note"] = "This endpoint uses radius search. When paginated (per=50&offset=0), the scraper automatically follows all pages to get every store; it also uses multiple center points worldwide when needed."
+            dist_unit = (url_params.get('distance_unit') or 'mi').lower()
+            radius_desc = f"max_distance={radius_val} {dist_unit}" if url_params.get('max_distance') else f"radius={radius_val}km"
+            config["description"] = (
+                f"Radius-based search API{pagination_info}. Uses {radius_desc} from {center_point}. "
+                "Scraper should iterate start (or offset) for each map center and use multiple centers worldwide for full coverage ✅"
+            )
+            config["_note"] = (
+                "Radius / bounding search: paginate with start+count or offset+limit per center; "
+                "repeat for multiple lat/lng centers to cover the globe (API caps results per request)."
+            )
         elif endpoint_type == 'country_filter':
             # Ensure URL has country param for iteration - use base URL with example country
             # Scraper will replace country-region=US with IT, FR, etc. for worldwide coverage

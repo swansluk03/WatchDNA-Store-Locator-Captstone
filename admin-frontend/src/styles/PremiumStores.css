@@ -201,7 +201,6 @@
 .premium-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
   gap: 0.5rem;
 }
@@ -209,27 +208,6 @@
 .premium-toolbar__info {
   font-size: 0.875rem;
   color: var(--gray-600);
-}
-
-.premium-toolbar__actions {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.btn-select-all {
-  background: none;
-  border: 1px solid var(--gray-300);
-  border-radius: 0.375rem;
-  padding: 0.375rem 0.75rem;
-  font-size: 0.8rem;
-  color: var(--gray-700);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.btn-select-all:hover {
-  background: var(--gray-100);
 }
 
 /* Store grid */

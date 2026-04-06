@@ -9,14 +9,18 @@ import requests
 
 DISCOVERY_SAMPLE_LIMIT = 15
 
+# Page-size params: do not append ?limit= (breaks APIs that use count= / start= only, e.g. SFCC dw/shop)
+_PAGE_SIZE_PARAM_KEYS = frozenset(
+    {'limit', 'per', 'per_page', 'take', 'page_size', 'count', 'pagesize', 'page_size'}
+)
+
 
 def _url_with_sample_limit(url: str, limit: int = DISCOVERY_SAMPLE_LIMIT) -> str:
     parsed = urlparse(url)
     params = parse_qs(parsed.query, keep_blank_values=True)
-    param_keys_lower = [k.lower() for k in params.keys()]
-    limit_params = ['limit', 'per', 'per_page', 'take', 'page_size']
-    if any(p in param_keys_lower for p in limit_params):
-        return url  # Already has limit, don't modify
+    param_keys_lower = {k.lower() for k in params.keys()}
+    if param_keys_lower & _PAGE_SIZE_PARAM_KEYS:
+        return url  # Already has page size; SFCC uses count= not limit=
     sep = '&' if parsed.query else '?'
     return f"{url}{sep}limit={limit}"
 
@@ -36,7 +40,8 @@ class NetworkAnalyzer:
         r'/locations',
         r'/find',
         r'/establishments',
-        r'/retailers'
+        r'/retailers',
+        r'/dw/shop/',  # Salesforce Commerce Cloud (SFCC) shop APIs
     ]
     
     def __init__(self):
@@ -44,7 +49,7 @@ class NetworkAnalyzer:
 
     # Maximum number of candidate URLs to run full analysis (including HTTP fetches) on.
     # Pre-filtering by keyword relevance keeps this fast without losing accuracy.
-    MAX_CANDIDATES = 30
+    MAX_CANDIDATES = 48
 
     def _keyword_score(self, url: str) -> int:
         """Return a quick relevance score for pre-sorting candidates before full analysis."""
@@ -56,6 +61,11 @@ class NetworkAnalyzer:
         for pat in self.API_PATTERNS:
             if re.search(pat, url_lower):
                 score += 1
+        # SFCC / Demandware store search (Hugo Boss, many fashion brands)
+        if '/dw/shop/' in url_lower and '/stores' in url_lower:
+            score += 5
+        if 'client_id=' in url_lower and ('store' in url_lower or 'shop' in url_lower):
+            score += 3
         return score
 
     def analyze_requests(self, requests: List[Dict], base_url: str) -> List[Dict]:
@@ -129,11 +139,18 @@ class NetworkAnalyzer:
             r'maps\.googleapis\.com/maps/vt',  # Google Maps tiles
             r'maps\.googleapis\.com/maps/api/geocode',  # Geocoding API
             r'contentsquare',  # Analytics
-            r'c\.contentsquare\.net'  # Analytics
+            r'c\.contentsquare\.net',  # Analytics
+            r'serviceworker-manifest',
+            r'/serviceworker',
         ]
         
         url_lower = url.lower()
-        return any(re.search(pattern, url_lower) for pattern in skip_patterns)
+        if any(re.search(pattern, url_lower) for pattern in skip_patterns):
+            return True
+        # demandware.store host/path contains "store" as substring — skip non-API paths
+        if 'demandware.store' in url_lower and '/dw/shop/' not in url_lower:
+            return True
+        return False
     
     def _find_base_url_variations(self, url: str, request: Dict, base_url: str) -> List[str]:
         """
@@ -151,6 +168,16 @@ class NetworkAnalyzer:
         parsed = urlparse(url)
         params = parse_qs(parsed.query)
         
+        # SFCC / Demandware store-search URLs require lat+lng at call time; stripping them
+        # produces a URL that returns 0 results, so keep the full captured URL as-is.
+        parsed_path = parsed.path.lower()
+        if '/dw/shop/' in parsed_path and '/stores' in parsed_path:
+            return variations  # SFCC: full URL with coordinates is canonical
+        # Any coordinate-based radius API — if max_distance is present, coordinates are required
+        param_keys_lower = [k.lower() for k in params.keys()]
+        if 'max_distance' in param_keys_lower or 'maxdistance' in param_keys_lower:
+            return variations
+
         # Location-specific parameters to remove (country-region, per, offset are filters - kept)
         location_params = [
             'keyword', 'query', 'q', 'search', 'location', 'city', 'zip', 'zipcode',
@@ -256,12 +283,14 @@ class NetworkAnalyzer:
             confidence += 0.25
             indicators.append("type:viewport")
         
-        radius_params = ['radius', 'distance', 'r']
-        if any(param in params for param in radius_params):
+        rk = {k.lower() for k in params.keys()}
+        if rk & {'radius', 'r', 'distance', 'max_distance', 'maxdistance'}:
             confidence += 0.2
             indicators.append("type:radius")
         
-        pagination_params = ['page', 'offset', 'limit', 'per_page', 'skip', 'take', 'pagetoken']
+        pagination_params = [
+            'page', 'offset', 'limit', 'per_page', 'skip', 'take', 'pagetoken', 'start',
+        ]
         if any(param in params for param in pagination_params):
             confidence += 0.15
             indicators.append("type:paginated")
@@ -356,10 +385,19 @@ class NetworkAnalyzer:
         if any(param.lower() in param_keys_lower for param in country_params):
             return 'country_filter'
 
+        # Coordinate + max distance (SFCC, Hugo Boss: latitude, longitude, max_distance)
+        pset = set(param_keys_lower)
+        has_lat = 'lat' in pset or 'latitude' in pset
+        has_lng = 'lng' in pset or 'longitude' in pset or 'long' in pset
+        if has_lat and has_lng and bool(
+            pset & {'max_distance', 'maxdistance', 'radius', 'distance', 'r'}
+        ):
+            return 'radius'
+
         # Check for radius-based.
         # Only match explicit radius param keys — do NOT use 'r=' as a URL substring because
         # that incorrectly matches params like 'country-region=US' (contains 'r=').
-        if any(param.lower() in param_keys_lower for param in ['radius', 'distance', 'r']):
+        if any(param.lower() in param_keys_lower for param in ['radius', 'distance', 'r', 'max_distance', 'maxdistance']):
             return 'radius'
 
         # Looser region/state filter check (after radius so an explicit 'r' param wins)
@@ -367,8 +405,8 @@ class NetworkAnalyzer:
         if any(param.lower() in param_keys_lower for param in region_params):
             return 'country_filter'
 
-        # Check for paginated
-        pagination_params = ['page', 'offset', 'limit', 'per_page', 'skip', 'take', 'pagetoken']
+        # Check for paginated (start/count is common on SFCC store search)
+        pagination_params = ['page', 'offset', 'limit', 'per_page', 'skip', 'take', 'pagetoken', 'start']
         if any(param.lower() in param_keys_lower for param in pagination_params):
             return 'paginated'
 

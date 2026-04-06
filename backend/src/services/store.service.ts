@@ -9,7 +9,20 @@ import prisma from '../lib/prisma';
 import { parseRowToLocationData, locationToCSVRow, type LocationData } from '../utils/csv-to-location';
 import { isRowCompleteForDb } from '../utils/row-completeness';
 import { mergeLocationDataForUpdate } from '../utils/merge-location-update';
-import { computeStableHandleFromRow } from '../utils/stable-handle';
+import { computeStableHandleFromRow, addressFingerprintLine1 } from '../utils/stable-handle';
+import {
+  boundingBoxForRadiusMeters,
+  countriesMatchForDedupe,
+  isUnusableScraperCoordinate,
+  pickNearestWithin,
+  PROXIMITY_MERGE_MAX_METERS,
+} from '../utils/geo-dedupe';
+import { normalizeCountry } from '../utils/country';
+import {
+  dedupeAddressFingerprint,
+  MIN_ADDRESS_FP_CONTAIN_LEN,
+  safeAddressFingerprintContainment,
+} from '../utils/address-dedupe';
 import { logger } from '../utils/logger';
 import { brandConfigIdToDisplayName } from '../utils/brand-display-name';
 
@@ -55,15 +68,21 @@ function applyStableHandleToCompleteParsedRow(loc: LocationData): LocationData {
 }
 
 /**
- * Find an existing Location within ~50 m of the given coordinates.
- * Returns the minimal snapshot needed for merging, or null if none found.
+ * Nearest existing Location within {@link PROXIMITY_MERGE_MAX_METERS} and same normalized country.
+ * Distance-ranked (unlike findFirst in a small box) so geocode drift and dense retail behave predictably.
  */
-async function findNearbyLocation(lat: number, lon: number): Promise<ExistingLocationSnapshot | null> {
-  const lonTol = COORD_TOLERANCE_DEG / Math.cos((lat * Math.PI) / 180);
-  return prisma.location.findFirst({
+async function findNearestLocationForDedupe(
+  lat: number,
+  lon: number,
+  country: string
+): Promise<ExistingLocationSnapshot | null> {
+  if (isUnusableScraperCoordinate(lat, lon)) return null;
+
+  const box = boundingBoxForRadiusMeters(lat, lon, PROXIMITY_MERGE_MAX_METERS);
+  const candidates = await prisma.location.findMany({
     where: {
-      latitude: { gte: lat - COORD_TOLERANCE_DEG, lte: lat + COORD_TOLERANCE_DEG },
-      longitude: { gte: lon - lonTol, lte: lon + lonTol },
+      latitude: { gte: box.latMin, lte: box.latMax },
+      longitude: { gte: box.lonMin, lte: box.lonMax },
     },
     select: {
       handle: true,
@@ -79,8 +98,17 @@ async function findNearbyLocation(lat: number, lon: number): Promise<ExistingLoc
       phone: true,
       website: true,
       email: true,
+      latitude: true,
+      longitude: true,
     },
   });
+
+  const sameCountry = candidates.filter((c) => countriesMatchForDedupe(c.country, country));
+  const nearest = pickNearestWithin(sameCountry, lat, lon, PROXIMITY_MERGE_MAX_METERS);
+  if (!nearest) return null;
+
+  const { latitude: _lat, longitude: _lon, ...snapshot } = nearest;
+  return snapshot;
 }
 
 export interface UpsertResult {
@@ -117,6 +145,298 @@ type ExistingLocationSnapshot = {
   email: string | null;
 };
 
+/** Row shape from raw SQL (includes coords for nearest pick). */
+type LocationMatchRow = ExistingLocationSnapshot & {
+  latitude: number;
+  longitude: number;
+};
+
+function matchRowToSnapshot(r: LocationMatchRow): ExistingLocationSnapshot {
+  const { latitude: _la, longitude: _lo, ...snap } = r;
+  return snap;
+}
+
+const existingSelect = {
+  handle: true,
+  name: true,
+  brands: true,
+  customBrands: true,
+  addressLine1: true,
+  addressLine2: true,
+  city: true,
+  stateProvinceRegion: true,
+  country: true,
+  postalCode: true,
+  phone: true,
+  website: true,
+  email: true,
+} as const;
+
+/**
+ * Existing row with same coordinates rounded to 5 dp and same country (scrapers often drift only in address text / handle hash).
+ */
+async function findByRoundedCoords(
+  lat: number,
+  lon: number,
+  country: string
+): Promise<ExistingLocationSnapshot | null> {
+  if (isUnusableScraperCoordinate(lat, lon)) return null;
+  const c = normalizeCountry(country);
+  const rows = await prisma.$queryRaw<LocationMatchRow[]>`
+    SELECT
+      "handle", "name", "brands", "customBrands",
+      "addressLine1", "addressLine2", "city", "stateProvinceRegion", "country",
+      "postalCode", "phone", "website", "email",
+      "latitude", "longitude"
+    FROM "Location"
+    WHERE ROUND("latitude"::numeric, 5) = ROUND(${lat}::double precision::numeric, 5)
+      AND ROUND("longitude"::numeric, 5) = ROUND(${lon}::double precision::numeric, 5)
+      AND "country" = ${c}
+    ORDER BY "handle" ASC
+    LIMIT 40
+  `;
+  if (rows.length === 0) return null;
+  if (rows.length === 1) return matchRowToSnapshot(rows[0]);
+  const nearest = pickNearestWithin(rows, lat, lon, PROXIMITY_MERGE_MAX_METERS * 2);
+  return matchRowToSnapshot(nearest ?? rows[0]);
+}
+
+/**
+ * Existing row with same normalized address line1 fingerprint + city + country as analyze-duplicate-locations.ts.
+ */
+async function findByAddressFingerprint(
+  fpRaw: string,
+  fpDeduped: string,
+  city: string,
+  country: string,
+  lat: number,
+  lon: number
+): Promise<ExistingLocationSnapshot | null> {
+  if (Math.max(fpRaw.length, fpDeduped.length) < 6 || isUnusableScraperCoordinate(lat, lon)) {
+    return null;
+  }
+  const c = normalizeCountry(country);
+  const cityNorm = city.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const rows = await prisma.$queryRaw<LocationMatchRow[]>`
+    SELECT
+      "handle", "name", "brands", "customBrands",
+      "addressLine1", "addressLine2", "city", "stateProvinceRegion", "country",
+      "postalCode", "phone", "website", "email",
+      "latitude", "longitude"
+    FROM "Location"
+    WHERE (
+        regexp_replace(lower(trim(COALESCE("addressLine1", ''))), '[^a-z0-9]', '', 'g') = ${fpRaw}
+        OR regexp_replace(lower(trim(COALESCE("addressLine1", ''))), '[^a-z0-9]', '', 'g') = ${fpDeduped}
+      )
+      AND regexp_replace(lower(trim("city")), '[^a-z0-9]', '', 'g') = ${cityNorm}
+      AND "country" = ${c}
+    ORDER BY "handle" ASC
+    LIMIT 40
+  `;
+  if (rows.length === 0) return null;
+  if (rows.length === 1) return matchRowToSnapshot(rows[0]);
+  const nearest = pickNearestWithin(rows, lat, lon, 2500);
+  return matchRowToSnapshot(nearest ?? rows[0]);
+}
+
+/**
+ * Same city + country, and one address fingerprint contains the other (e.g. "marinamall" vs "marinamall18st").
+ * Stricter than analyze "similar pairs"; requires min length to reduce false merges.
+ */
+async function findByContainedFingerprint(
+  fpRaw: string,
+  fpDeduped: string,
+  city: string,
+  country: string,
+  lat: number,
+  lon: number
+): Promise<ExistingLocationSnapshot | null> {
+  if (
+    Math.max(fpRaw.length, fpDeduped.length) < MIN_ADDRESS_FP_CONTAIN_LEN ||
+    isUnusableScraperCoordinate(lat, lon)
+  ) {
+    return null;
+  }
+  const c = normalizeCountry(country);
+  const cityNormContain = city.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const rows = await prisma.$queryRaw<LocationMatchRow[]>`
+    SELECT
+      "handle", "name", "brands", "customBrands",
+      "addressLine1", "addressLine2", "city", "stateProvinceRegion", "country",
+      "postalCode", "phone", "website", "email",
+      "latitude", "longitude"
+    FROM "Location"
+    WHERE "country" = ${c}
+      AND regexp_replace(lower(trim("city")), '[^a-z0-9]', '', 'g') = ${cityNormContain}
+      AND length(regexp_replace(lower(trim(COALESCE("addressLine1", ''))), '[^a-z0-9]', '', 'g')) >= ${MIN_ADDRESS_FP_CONTAIN_LEN}
+      AND (
+        strpos(
+          regexp_replace(lower(trim(COALESCE("addressLine1", ''))), '[^a-z0-9]', '', 'g'),
+          ${fpRaw}
+        ) > 0
+        OR strpos(
+          ${fpRaw},
+          regexp_replace(lower(trim(COALESCE("addressLine1", ''))), '[^a-z0-9]', '', 'g')
+        ) > 0
+        OR strpos(
+          regexp_replace(lower(trim(COALESCE("addressLine1", ''))), '[^a-z0-9]', '', 'g'),
+          ${fpDeduped}
+        ) > 0
+        OR strpos(
+          ${fpDeduped},
+          regexp_replace(lower(trim(COALESCE("addressLine1", ''))), '[^a-z0-9]', '', 'g')
+        ) > 0
+      )
+    ORDER BY "handle" ASC
+    LIMIT 40
+  `;
+  if (rows.length === 0) return null;
+  const filtered = rows.filter((r) => {
+    const dbRaw = addressFingerprintLine1(r.addressLine1);
+    const dbDed = dedupeAddressFingerprint(r.addressLine1);
+    return (
+      safeAddressFingerprintContainment(fpRaw, dbRaw) ||
+      safeAddressFingerprintContainment(fpRaw, dbDed) ||
+      safeAddressFingerprintContainment(fpDeduped, dbRaw) ||
+      safeAddressFingerprintContainment(fpDeduped, dbDed)
+    );
+  });
+  if (filtered.length === 0) return null;
+  if (filtered.length === 1) return matchRowToSnapshot(filtered[0]);
+  const nearest = pickNearestWithin(filtered, lat, lon, 3000);
+  return matchRowToSnapshot(nearest ?? filtered[0]);
+}
+
+async function resolveExistingMatchForRow(
+  row: LocationData,
+  coordCache: Map<string, ExistingLocationSnapshot | null>,
+  fpCache: Map<string, ExistingLocationSnapshot | null>
+): Promise<ExistingLocationSnapshot | null> {
+  const c = normalizeCountry(row.country);
+  const coordKey = `${row.latitude.toFixed(5)}|${row.longitude.toFixed(5)}|${c}`;
+  if (!coordCache.has(coordKey)) {
+    const hit = await findByRoundedCoords(row.latitude, row.longitude, row.country);
+    coordCache.set(coordKey, hit);
+  }
+  const coordHit = coordCache.get(coordKey);
+  if (coordHit) return coordHit;
+
+  const fp = addressFingerprintLine1(row.addressLine1);
+  const fpDed = dedupeAddressFingerprint(row.addressLine1);
+  if (Math.max(fp.length, fpDed.length) >= 6) {
+    const fpKey = `${fp}|${fpDed}|${row.city.trim().toLowerCase()}|${c}`;
+    if (!fpCache.has(fpKey)) {
+      let hit = await findByAddressFingerprint(
+        fp,
+        fpDed,
+        row.city,
+        row.country,
+        row.latitude,
+        row.longitude
+      );
+      if (!hit) {
+        hit = await findByContainedFingerprint(
+          fp,
+          fpDed,
+          row.city,
+          row.country,
+          row.latitude,
+          row.longitude
+        );
+      }
+      fpCache.set(fpKey, hit);
+    }
+    const fpHit = fpCache.get(fpKey);
+    if (fpHit) return fpHit;
+  }
+
+  return findNearestLocationForDedupe(row.latitude, row.longitude, row.country);
+}
+
+/**
+ * Merge multiple incoming rows in one batch that target the same place (same 5dp coords or same address fingerprint + city + country).
+ */
+function collapseBatchRowsByIdentity(
+  rows: LocationData[],
+  mergeOnUpdate: boolean,
+  inDbHandles: Set<string>
+): LocationData[] {
+  if (rows.length <= 1 || !mergeOnUpdate) return rows;
+
+  const n = rows.length;
+  const parent = Array.from({ length: n }, (_, i) => i);
+  function find(i: number): number {
+    if (parent[i] !== i) parent[i] = find(parent[i]);
+    return parent[i];
+  }
+  function union(i: number, j: number) {
+    const ri = find(i);
+    const rj = find(j);
+    if (ri !== rj) parent[Math.max(ri, rj)] = Math.min(ri, rj);
+  }
+
+  const countryKey = (r: LocationData) => normalizeCountry(r.country);
+  const coordKey = (r: LocationData) =>
+    `${r.latitude.toFixed(5)}|${r.longitude.toFixed(5)}|${countryKey(r)}`;
+  const addrKey = (r: LocationData) =>
+    `${dedupeAddressFingerprint(r.addressLine1)}|${r.city.trim().toLowerCase()}|${countryKey(r)}`;
+
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (!countriesMatchForDedupe(rows[i].country, rows[j].country)) continue;
+      if (coordKey(rows[i]) === coordKey(rows[j])) union(i, j);
+      else if (
+        dedupeAddressFingerprint(rows[i].addressLine1).length >= 6 &&
+        addrKey(rows[i]) === addrKey(rows[j])
+      ) {
+        union(i, j);
+      } else if (
+        rows[i].city.trim().toLowerCase() === rows[j].city.trim().toLowerCase() &&
+        countriesMatchForDedupe(rows[i].country, rows[j].country)
+      ) {
+        const fi = addressFingerprintLine1(rows[i].addressLine1);
+        const fj = addressFingerprintLine1(rows[j].addressLine1);
+        const di = dedupeAddressFingerprint(rows[i].addressLine1);
+        const dj = dedupeAddressFingerprint(rows[j].addressLine1);
+        if (safeAddressFingerprintContainment(fi, fj) || safeAddressFingerprintContainment(di, dj)) {
+          union(i, j);
+        }
+      }
+    }
+  }
+
+  const byRoot = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    if (!byRoot.has(r)) byRoot.set(r, []);
+    byRoot.get(r)!.push(i);
+  }
+
+  const out: LocationData[] = [];
+  for (const idxs of byRoot.values()) {
+    if (idxs.length === 1) {
+      out.push(rows[idxs[0]]);
+      continue;
+    }
+    const sub = idxs.map((i) => rows[i]);
+    const sortedHandles = sub.map((r) => r.handle).sort();
+    const inDb = sortedHandles.filter((h) => inDbHandles.has(h));
+    const canonical = inDb.length ? inDb[0] : sortedHandles[0];
+    const ordered = sub.slice().sort((a, b) => a.handle.localeCompare(b.handle));
+    let anchorIdx = ordered.findIndex((r) => r.handle === canonical);
+    if (anchorIdx < 0) anchorIdx = 0;
+    let folded: LocationData = { ...ordered[anchorIdx], handle: canonical };
+    for (let k = 0; k < ordered.length; k++) {
+      if (k === anchorIdx) continue;
+      const r = ordered[k];
+      const snap = { brands: folded.brands, customBrands: folded.customBrands, phone: folded.phone };
+      folded = { ...mergeLocationDataForUpdate(snap, r), handle: canonical };
+    }
+    out.push(folded);
+  }
+  return out;
+}
+
 /** Compare an incoming parsed row against what's already in the DB. */
 function classifyLocationChange(
   incoming: LocationData,
@@ -139,7 +459,6 @@ function classifyLocationChange(
 
   const infoChanged =
     norm(incoming.name) !== norm(existing.name) ||
-    norm(incoming.phone) !== norm(existing.phone) ||
     norm(incoming.website) !== norm(existing.website) ||
     norm(incoming.email) !== norm(existing.email);
 
@@ -205,7 +524,9 @@ export const storeService = {
    * - failFast: true (default) — one transaction per 500-row batch (scraper jobs).
    * - failFast: false — per-row upsert with try/catch (manual CSV upload parity).
    * - requireCompleteForDb — only rows passing isRowCompleteForDb are upserted (incomplete stay on CSV only).
-   * - mergeOnUpdate — scraper/job saves: union brands and keep DB phone on conflict; manual uploads omit this.
+   * - mergeOnUpdate — scraper/job saves: union brands; phone is never overwritten (DB value kept). Manual CSV uploads omit merge.
+   *   Dedupe before insert (mergeOnUpdate): same rounded coords + country; exact address fingerprint + city + country;
+   *   fingerprint substring (same city/country, min length); distance within PROXIMITY_MERGE_MAX_METERS; plus intra-batch collapse.
    */
   async batchUpsertLocations(
     records: Record<string, string>[],
@@ -277,6 +598,7 @@ export const storeService = {
     const brandsChanged: string[] = [];
     const addressChanged: string[] = [];
     const infoChanged: string[] = [];
+    const premiumHandles = new Set<string>();
 
     for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
       const batch = parsed.slice(i, i + BATCH_SIZE);
@@ -284,37 +606,23 @@ export const storeService = {
 
       const existingRecords = await prisma.location.findMany({
         where: { handle: { in: batchHandles } },
-        select: {
-          handle: true,
-          name: true,
-          brands: true,
-          customBrands: true,
-          addressLine1: true,
-          addressLine2: true,
-          city: true,
-          stateProvinceRegion: true,
-          country: true,
-          postalCode: true,
-          phone: true,
-          website: true,
-          email: true,
-        },
+        select: existingSelect,
       });
       const existingMap = new Map(existingRecords.map((r) => [r.handle, r]));
 
-      // For rows whose handle wasn't found, check if a nearby record exists (~50 m).
-      // If so, remap to the existing handle to prevent duplicates from minor address/GPS drift.
+      const coordCache = new Map<string, ExistingLocationSnapshot | null>();
+      const fpCache = new Map<string, ExistingLocationSnapshot | null>();
       const handleRemap = new Map<string, ExistingLocationSnapshot>();
+
       for (const row of batch) {
-        if (!existingMap.has(row.handle)) {
-          const nearby = await findNearbyLocation(row.latitude, row.longitude);
-          if (nearby) {
-            handleRemap.set(row.handle, nearby);
-            existingMap.set(row.handle, nearby);
-            logger.info(
-              `[storeService] Proximity merge: "${row.name}" (${row.handle}) → existing "${nearby.name}" (${nearby.handle})`
-            );
-          }
+        if (existingMap.has(row.handle)) continue;
+        const match = await resolveExistingMatchForRow(row, coordCache, fpCache);
+        if (match) {
+          handleRemap.set(row.handle, match);
+          existingMap.set(row.handle, match);
+          logger.info(
+            `[storeService] Dedupe merge: "${row.name}" (${row.handle}) → existing "${match.name}" (${match.handle})`
+          );
         }
       }
 
@@ -325,12 +633,22 @@ export const storeService = {
         return remapped ? { ...baseRow, handle: remapped.handle } : baseRow;
       });
 
-      for (const row of mergedBatch) {
-        const originalHandle = batch.find((b) => {
-          const remap = handleRemap.get(b.handle);
-          return (remap ? remap.handle : b.handle) === row.handle;
-        })?.handle;
-        const existing = originalHandle ? existingMap.get(originalHandle) : existingMap.get(row.handle);
+      const inDbHandles = new Set(existingRecords.map((r) => r.handle));
+      for (const m of handleRemap.values()) inDbHandles.add(m.handle);
+
+      const finalBatch = mergeOnUpdate
+        ? collapseBatchRowsByIdentity(mergedBatch, true, inDbHandles)
+        : mergedBatch;
+
+      const uniqueHandles = [...new Set(finalBatch.map((r) => r.handle))];
+      const snapshots = await prisma.location.findMany({
+        where: { handle: { in: uniqueHandles } },
+        select: existingSelect,
+      });
+      const snapByHandle = new Map(snapshots.map((s) => [s.handle, s]));
+
+      for (const row of finalBatch) {
+        const existing = snapByHandle.get(row.handle);
         if (!existing) {
           newStores.push(row.name);
           created++;
@@ -347,8 +665,10 @@ export const storeService = {
         }
       }
 
+      for (const h of finalBatch.map((r) => r.handle)) premiumHandles.add(h);
+
       await prisma.$transaction(
-        mergedBatch.map((row) =>
+        finalBatch.map((row) =>
           prisma.location.upsert({
             where: { handle: row.handle },
             update: {
@@ -366,8 +686,7 @@ export const storeService = {
       upserted += batch.length;
     }
 
-    const handles = parsed.map((r) => r.handle);
-    await storeService.reapplyPremiumFlags(handles);
+    await storeService.reapplyPremiumFlags([...premiumHandles]);
 
     return { upserted, skipped, created, updated, unchanged, newStores, brandsChanged, addressChanged, infoChanged };
   },
@@ -397,36 +716,23 @@ export const storeService = {
 
       const existingRecords = await prisma.location.findMany({
         where: { handle: { in: batchHandles } },
-        select: {
-          handle: true,
-          name: true,
-          brands: true,
-          customBrands: true,
-          addressLine1: true,
-          addressLine2: true,
-          city: true,
-          stateProvinceRegion: true,
-          country: true,
-          postalCode: true,
-          phone: true,
-          website: true,
-          email: true,
-        },
+        select: existingSelect,
       });
       const existingMap = new Map(existingRecords.map((r) => [r.handle, r]));
 
-      // For rows whose handle wasn't found, check if a nearby record exists (~50 m).
+      const coordCache = new Map<string, ExistingLocationSnapshot | null>();
+      const fpCache = new Map<string, ExistingLocationSnapshot | null>();
       const handleRemap = new Map<string, ExistingLocationSnapshot>();
+
       for (const row of batch) {
-        if (!existingMap.has(row.handle)) {
-          const nearby = await findNearbyLocation(row.latitude, row.longitude);
-          if (nearby) {
-            handleRemap.set(row.handle, nearby);
-            existingMap.set(row.handle, nearby);
-            logger.info(
-              `[storeService] Proximity merge: "${row.name}" (${row.handle}) → existing "${nearby.name}" (${nearby.handle})`
-            );
-          }
+        if (existingMap.has(row.handle)) continue;
+        const match = await resolveExistingMatchForRow(row, coordCache, fpCache);
+        if (match) {
+          handleRemap.set(row.handle, match);
+          existingMap.set(row.handle, match);
+          logger.info(
+            `[storeService] Dedupe merge: "${row.name}" (${row.handle}) → existing "${match.name}" (${match.handle})`
+          );
         }
       }
 
@@ -437,12 +743,22 @@ export const storeService = {
         return remapped ? { ...baseRow, handle: remapped.handle } : baseRow;
       });
 
-      for (const row of mergedBatch) {
-        const originalHandle = batch.find((b) => {
-          const remap = handleRemap.get(b.handle);
-          return (remap ? remap.handle : b.handle) === row.handle;
-        })?.handle;
-        const snapshot = originalHandle ? existingMap.get(originalHandle) : existingMap.get(row.handle);
+      const inDbHandles = new Set(existingRecords.map((r) => r.handle));
+      for (const m of handleRemap.values()) inDbHandles.add(m.handle);
+
+      const finalBatch = mergeOnUpdate
+        ? collapseBatchRowsByIdentity(mergedBatch, true, inDbHandles)
+        : mergedBatch;
+
+      const uniqueHandles = [...new Set(finalBatch.map((r) => r.handle))];
+      const snapshots = await prisma.location.findMany({
+        where: { handle: { in: uniqueHandles } },
+        select: existingSelect,
+      });
+      const snapByHandle = new Map(snapshots.map((s) => [s.handle, s]));
+
+      for (const row of finalBatch) {
+        const preExisting = snapByHandle.get(row.handle);
         try {
           await prisma.location.upsert({
             where: { handle: row.handle },
@@ -458,11 +774,11 @@ export const storeService = {
           successfulHandles.push(row.handle);
           upserted++;
 
-          if (!snapshot) {
+          if (!preExisting) {
             newStores.push(row.name);
             created++;
           } else {
-            const changes = classifyLocationChange(row, snapshot);
+            const changes = classifyLocationChange(row, preExisting);
             if (changes.brandsChanged || changes.addressChanged || changes.infoChanged) {
               if (changes.brandsChanged) brandsChanged.push(row.name);
               if (changes.addressChanged) addressChanged.push(row.name);

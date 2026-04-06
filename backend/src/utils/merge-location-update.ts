@@ -28,36 +28,10 @@ export function mergeCommaSeparatedBrands(a: string | null, b: string | null): s
   return out.length ? out.join(', ') : null;
 }
 
-/** Digits only for comparing phone numbers across formatting. */
-export function phoneDigits(phone: string | null | undefined): string {
-  return (phone ?? '').replace(/\D/g, '');
-}
-
 /**
- * On update: keep DB phone when incoming is empty, or when both are non-empty but differ
- * (avoids a second brand scrape replacing a good number with a different API value).
- * When digits match (same number, possibly different formatting), prefer the incoming
- * value so that previously un-normalized numbers are upgraded to E.164 on the next scrape.
- */
-export function mergePhoneOnUpdate(existing: string | null, incoming: string | null): string | null {
-  const e = (existing ?? '').trim();
-  const i = (incoming ?? '').trim();
-  if (!i) return e || null;
-  if (!e) return i;
-  const de = phoneDigits(e);
-  const di = phoneDigits(i);
-  if (!de || !di) return e;
-  // Same number — prefer incoming so E.164 format propagates on re-scrape.
-  // A suffix match handles cases where existing lacks the country code prefix.
-  const sameNumber = de === di || (de.length >= 7 && di.endsWith(de)) || (di.length >= 7 && de.endsWith(di));
-  if (sameNumber) return i;
-  // Different digits — keep existing to avoid overwriting with a wrong number.
-  return e;
-}
-
-/**
- * Merge incoming scrape row into an existing Location so multi-brand scrapes add brands
- * without overwriting phone / merged brand list.
+ * Merge incoming scrape/job row into an existing Location.
+ * Brands are unioned. Phone always stays the DB value — scrapes do not change it;
+ * only manual admin edits (e.g. premium store editor) update phone.
  */
 export function mergeLocationDataForUpdate(
   existing: ExistingSnapshot,
@@ -70,6 +44,6 @@ export function mergeLocationDataForUpdate(
       normalizeBrandsCsvField(incoming.brands)
     ),
     customBrands: mergeCommaSeparatedBrands(existing.customBrands, incoming.customBrands),
-    phone: mergePhoneOnUpdate(existing.phone, incoming.phone),
+    phone: existing.phone,
   };
 }

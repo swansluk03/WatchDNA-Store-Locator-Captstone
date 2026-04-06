@@ -282,7 +282,7 @@ const EndpointDiscovery: React.FC<EndpointDiscoveryProps> = ({ onConfigSaved }) 
 
                     {endpoint.verified && endpoint.type !== 'html' && endpoint.verified_store_count !== undefined && (
                       <div className="verification-badge verified">
-                        ✓ Verified: {endpoint.verified_store_count} stores found
+                        ✓ Verified: {endpoint.verified_store_count} stores in sample
                         {endpoint.verified_type && ` (Type: ${endpoint.verified_type})`}
                         {endpoint.verification_time && ` in ${endpoint.verification_time.toFixed(2)}s`}
                       </div>
@@ -294,9 +294,20 @@ const EndpointDiscovery: React.FC<EndpointDiscoveryProps> = ({ onConfigSaved }) 
                       </div>
                     )}
 
-                    {!endpoint.verified && !endpoint.verification_error && endpoint.store_count && (
+                    {!endpoint.verified &&
+                      !endpoint.verification_error &&
+                      typeof endpoint.store_count === 'number' && (
                       <div className="verification-badge">
-                        ℹ️ {endpoint.store_count} stores detected (not verified)
+                        ℹ️ ~{endpoint.store_count} stores in sample (discovery only — not verified)
+                      </div>
+                    )}
+
+                    {endpoint.verified &&
+                      endpoint.type === 'html' &&
+                      endpoint.verified_store_count === undefined &&
+                      typeof endpoint.store_count === 'number' && (
+                      <div className="verification-badge">
+                        ℹ️ ~{endpoint.store_count} stores estimated from page analysis
                       </div>
                     )}
 
@@ -394,9 +405,15 @@ const EndpointDiscovery: React.FC<EndpointDiscoveryProps> = ({ onConfigSaved }) 
                 <strong>Endpoint:</strong> {selectedEndpoint.url}<br />
                 <strong>Type:</strong> {selectedEndpoint.type}<br />
                 <strong>Confidence:</strong> {formatConfidence(selectedEndpoint.confidence)}<br />
-                {selectedEndpoint.verified_store_count !== undefined && (
+                {(selectedEndpoint.verified_store_count !== undefined ||
+                  typeof selectedEndpoint.store_count === 'number') && (
                   <>
-                    <strong>Stores Found:</strong> {selectedEndpoint.verified_store_count}<br />
+                    <strong>Stores in sample:</strong>{' '}
+                    {selectedEndpoint.verified_store_count !== undefined
+                      ? selectedEndpoint.verified_store_count
+                      : selectedEndpoint.store_count}
+                    {selectedEndpoint.verified ? ' (verified)' : ' (discovery estimate)'}
+                    <br />
                   </>
                 )}
                 {selectedEndpoint.data_path && (

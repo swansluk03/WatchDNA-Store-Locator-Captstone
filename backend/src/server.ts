@@ -1,11 +1,10 @@
+// Must run before any import that loads Prisma (env is read when PrismaClient is constructed).
+import './load-env';
+
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-
-// Load environment variables
-dotenv.config();
 
 // Import configuration
 import { config, validateConfig } from './config';

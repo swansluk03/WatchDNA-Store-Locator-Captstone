@@ -16,9 +16,17 @@ import { isRowCompleteForDb } from '../utils/row-completeness';
 import { logger } from '../utils/logger';
 import prisma from '../lib/prisma';
 
+/** One-line summary for job footer and server logs. */
+function formatDbSyncSummaryLine(result: UpsertResult): string {
+  const synced = result.updated + result.unchanged;
+  return `${result.created} new store(s) | ${synced} synced to existing (${result.updated} updated, ${result.unchanged} unchanged) | ${result.upserted} rows written, ${result.skipped} skipped`;
+}
+
 /** Format a detailed DB sync summary from a batchUpsertLocations result. */
 function formatDbSyncLog(result: UpsertResult): string {
+  const syncedToExisting = result.updated + result.unchanged;
   const lines: string[] = [
+    `Summary: ${result.created} new store(s) added | ${syncedToExisting} synced to existing store(s) (of ${result.upserted} complete rows written to DB)`,
     `Processed: ${result.upserted} | Skipped (invalid / incomplete): ${result.skipped}`,
   ];
   if (result.skippedIncomplete != null && result.skippedIncomplete > 0) {
@@ -27,9 +35,8 @@ function formatDbSyncLog(result: UpsertResult): string {
     );
   }
   lines.push(
-    `  + ${result.created} new stores added`,
-    `  ~ ${result.updated} stores updated`,
-    `  = ${result.unchanged} stores unchanged`
+    `  New stores added: ${result.created}`,
+    `  Synced to existing: ${syncedToExisting} total (${result.updated} with field changes, ${result.unchanged} unchanged vs DB)`
   );
 
   if (result.newStores.length > 0) {
@@ -258,6 +265,7 @@ class ScraperService {
 
             // ── DB UPSERT (complete rows only; incomplete stay on CSV) ────────
             postProcessLogs += '\n\n=== DB SYNC ===\n';
+            let dbSyncResult: UpsertResult | null = null;
             try {
               const fileContent = fs.readFileSync(individualCsvFile, 'utf-8');
               const { data: csvRecords } = Papa.parse(fileContent, {
@@ -269,12 +277,13 @@ class ScraperService {
                 ...r,
                 Brands: normalizeBrandsCsvField(r.Brands) ?? displayName,
               }));
-              const upsertResult = await storeService.batchUpsertLocations(
+              dbSyncResult = await storeService.batchUpsertLocations(
                 enrichedRecords,
                 individualUpload.id,
                 { failFast: true, requireCompleteForDb: true, mergeOnUpdate: true }
               );
-              postProcessLogs += formatDbSyncLog(upsertResult);
+              postProcessLogs += formatDbSyncLog(dbSyncResult);
+              logger.info(`[Job ${jobId}] DB sync — ${formatDbSyncSummaryLine(dbSyncResult)}`);
               const rowsInDb = await this.countLocationsForUpload(individualUpload.id);
               await prisma.upload.update({
                 where: { id: individualUpload.id },
@@ -286,11 +295,16 @@ class ScraperService {
             }
 
             // ── COMPLETION SUMMARY ────────────────────────────────────────────
+            const dbSyncFooter =
+              dbSyncResult != null
+                ? `\nDB sync: ${formatDbSyncSummaryLine(dbSyncResult)}`
+                : '';
             const finalLogs =
               baseLogs +
               postProcessLogs +
               `\n\n=== JOB COMPLETED ===\n` +
               `Scraped: ${recordsScraped ?? 0} records` +
+              dbSyncFooter +
               `\nExit: 0 | Completed: ${completedAt}`;
 
             try {
@@ -304,7 +318,10 @@ class ScraperService {
                   logs: finalLogs
                 }
               });
-              logger.info(`[Job ${jobId}] Completed — ${recordsScraped ?? 0} records`);
+              logger.info(
+                `[Job ${jobId}] Completed — scraped ${recordsScraped ?? 0} records` +
+                  (dbSyncResult != null ? `; ${formatDbSyncSummaryLine(dbSyncResult)}` : '')
+              );
             } catch (updateError: any) {
               logger.error(`[Job ${jobId}] Status update failed, retrying:`, updateError.message);
               try {
@@ -524,6 +541,7 @@ class ScraperService {
         });
         dbUpserted = lastUpsert.upserted;
         editLogSection += `\n\n=== DB SYNC ===\n${formatDbSyncLog(lastUpsert)}`;
+        logger.info(`[Job ${jobId}] DB sync (save) — ${formatDbSyncSummaryLine(lastUpsert)}`);
       } catch (dbErr: any) {
         editLogSection += `\n\n=== DB SYNC ===\nFailed: ${dbErr.message}`;
         logger.error(`[Job ${jobId}] DB upsert failed:`, dbErr.message);

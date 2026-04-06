@@ -20,6 +20,7 @@
     "audit:location-countries": "ts-node src/scripts/audit-location-countries.ts",
     "analyze-duplicates": "ts-node src/scripts/analyze-duplicate-locations.ts",
     "cleanup-locations": "ts-node src/scripts/cleanup-locations-db.ts",
+    "merge-address-dupes": "ts-node src/scripts/merge-address-duplicate-locations.ts",
     "normalize-phones": "ts-node src/scripts/normalize-db-phones.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
@@ -65,6 +66,6 @@
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.3.3",
-    "vitest": "^4.1.0"
+    "vitest": "^2.1.9"
   }
 }

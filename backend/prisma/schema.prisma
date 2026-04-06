@@ -184,6 +184,20 @@ model PremiumStore {
   notes     String?
 }
 
+/// Per-brand scraper config; merged over backend/brand_configs.json for persistence on Railway.
+model BrandConfig {
+  brandId   String   @id
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Baseline keys from brand_configs.json to omit after rename/delete (file cannot be patched in prod).
+model BrandConfigBaselineExclude {
+  brandId   String   @id
+  createdAt DateTime @default(now())
+}
+
 model AnalyticsEvent {
   id         String   @id @default(uuid())
   event      String   // e.g. "store_tapped", "brand_searched", "store_phone_tapped"

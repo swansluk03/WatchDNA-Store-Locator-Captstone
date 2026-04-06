@@ -2,7 +2,7 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import prisma from '../lib/prisma';
-import { PYTHON_CMD, VALIDATE_CSV_PATH, BRAND_CONFIGS_PATH, SCRAPER_PATH } from '../utils/paths';
+import { PYTHON_CMD, VALIDATE_CSV_PATH, SCRAPER_PATH } from '../utils/paths';
 import { config } from '../config';
 
 export interface ServiceCheck {
@@ -33,14 +33,17 @@ const startTime = Date.now();
 async function checkDatabase(): Promise<ServiceCheck> {
   const start = Date.now();
   try {
-    const result = await prisma.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*) as count FROM "Location"`;
+    const [result, brandConfigCount] = await Promise.all([
+      prisma.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*) as count FROM "Location"`,
+      prisma.brandConfig.count(),
+    ]);
     const count = Number(result[0]?.count ?? 0);
     return {
       name: 'PostgreSQL Database',
       status: 'healthy',
       responseTime: Date.now() - start,
-      message: `Connected — ${count} locations in database`,
-      details: { locationCount: count },
+      message: `Connected — ${count} locations, ${brandConfigCount} brand config(s) in DB`,
+      details: { locationCount: count, brandConfigCount },
     };
   } catch (error: any) {
     return {
@@ -90,16 +93,15 @@ function checkFileSystem(): ServiceCheck {
     }
   }
 
-  if (!fs.existsSync(BRAND_CONFIGS_PATH)) {
-    issues.push('brand_configs.json not found');
-  }
-
   return {
     name: 'File System',
     status: issues.length === 0 ? 'healthy' : 'degraded',
     responseTime: Date.now() - start,
-    message: issues.length === 0 ? 'Upload directory writable, config files present' : issues.join('; '),
-    details: { uploadDir, brandConfigExists: fs.existsSync(BRAND_CONFIGS_PATH) },
+    message:
+      issues.length === 0
+        ? 'Upload directory writable (brand configs persist in PostgreSQL)'
+        : issues.join('; '),
+    details: { uploadDir },
   };
 }
 

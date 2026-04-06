@@ -322,14 +322,6 @@ const PremiumStores: React.FC = () => {
     });
   }, []);
 
-  const selectAllFiltered = useCallback(() => {
-    setSelectedHandles((prev) => {
-      const next = new Set(prev);
-      filteredStores.forEach((s) => next.add(s.handle));
-      return next;
-    });
-  }, [filteredStores]);
-
   const clearSelection = useCallback(() => {
     setSelectedHandles(new Set());
   }, []);
@@ -434,10 +426,6 @@ const PremiumStores: React.FC = () => {
   if (loading) return <div className="loading">Loading stores...</div>;
   if (error) return <div className="error">{error}</div>;
 
-  const allFilteredSelected =
-    filteredStores.length > 0 &&
-    filteredStores.every((s) => selectedHandles.has(s.handle));
-
   return (
     <div className="premium-stores">
       {toast && (
@@ -530,13 +518,6 @@ const PremiumStores: React.FC = () => {
           Showing {filteredStores.length} store{filteredStores.length !== 1 ? 's' : ''}
           {selectedHandles.size > 0 && ` · ${selectedHandles.size} selected`}
         </span>
-        <div className="premium-toolbar__actions">
-          {filteredStores.length > 0 && (
-            <button className="btn-select-all" onClick={allFilteredSelected ? clearSelection : selectAllFiltered}>
-              {allFilteredSelected ? 'Deselect all' : `Select all ${filteredStores.length}`}
-            </button>
-          )}
-        </div>
       </div>
 
       {/* Store grid */}
