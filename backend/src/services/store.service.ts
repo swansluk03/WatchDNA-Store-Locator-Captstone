@@ -15,8 +15,10 @@ import {
   countriesMatchForDedupe,
   haversineDistanceMeters,
   isUnusableScraperCoordinate,
+  normalizeNameForDedupe,
   pickNearestWithin,
   PROXIMITY_MERGE_MAX_METERS,
+  PROXIMITY_MERGE_NAME_MATCH_MAX_METERS,
   ADDRESS_FP_EXACT_MAX_METERS,
   ADDRESS_FP_CONTAIN_MAX_METERS,
 } from '../utils/geo-dedupe';
@@ -73,15 +75,23 @@ function applyStableHandleToCompleteParsedRow(loc: LocationData): LocationData {
 /**
  * Nearest existing Location within {@link PROXIMITY_MERGE_MAX_METERS} and same normalized country.
  * Distance-ranked (unlike findFirst in a small box) so geocode drift and dense retail behave predictably.
+ *
+ * When `incomingName` is provided and the strict radius finds nothing, a second pass checks within
+ * {@link PROXIMITY_MERGE_NAME_MATCH_MAX_METERS} but only for candidates whose name normalizes to the
+ * same alnum key. This catches the same physical store scraped by two brand sources that transliterate
+ * a non-Latin address differently (e.g. "Soborniy (Lenin) avenue" vs "AVENUE SOBORNY").
  */
 async function findNearestLocationForDedupe(
   lat: number,
   lon: number,
-  country: string
+  country: string,
+  incomingName?: string
 ): Promise<ExistingLocationSnapshot | null> {
   if (isUnusableScraperCoordinate(lat, lon)) return null;
 
-  const box = boundingBoxForRadiusMeters(lat, lon, PROXIMITY_MERGE_MAX_METERS);
+  // Use the wider radius for the DB query so we can reuse the result set for both passes.
+  const queryRadius = incomingName ? PROXIMITY_MERGE_NAME_MATCH_MAX_METERS : PROXIMITY_MERGE_MAX_METERS;
+  const box = boundingBoxForRadiusMeters(lat, lon, queryRadius);
   const candidates = await prisma.location.findMany({
     where: {
       latitude: { gte: box.latMin, lte: box.latMax },
@@ -107,11 +117,32 @@ async function findNearestLocationForDedupe(
   });
 
   const sameCountry = candidates.filter((c) => countriesMatchForDedupe(c.country, country));
-  const nearest = pickNearestWithin(sameCountry, lat, lon, PROXIMITY_MERGE_MAX_METERS);
-  if (!nearest) return null;
 
-  const { latitude: _lat, longitude: _lon, ...snapshot } = nearest;
-  return snapshot;
+  // Primary pass: strict 75 m radius, no name requirement.
+  const nearest = pickNearestWithin(sameCountry, lat, lon, PROXIMITY_MERGE_MAX_METERS);
+  if (nearest) {
+    const { latitude: _lat, longitude: _lon, ...snapshot } = nearest;
+    return snapshot;
+  }
+
+  // Extended pass: up to 300 m, but only when the store name normalizes identically.
+  if (incomingName) {
+    const normIncoming = normalizeNameForDedupe(incomingName);
+    const nameMatched = sameCountry.filter(
+      (c) => normalizeNameForDedupe(c.name) === normIncoming
+    );
+    const nameNearest = pickNearestWithin(nameMatched, lat, lon, PROXIMITY_MERGE_NAME_MATCH_MAX_METERS);
+    if (nameNearest) {
+      logger.info(
+        `[storeService] Name-match dedupe (${PROXIMITY_MERGE_NAME_MATCH_MAX_METERS}m): ` +
+          `"${incomingName}" → existing "${nameNearest.name}" (${nameNearest.handle})`
+      );
+      const { latitude: _lat, longitude: _lon, ...snapshot } = nameNearest;
+      return snapshot;
+    }
+  }
+
+  return null;
 }
 
 export interface UpsertResult {
@@ -380,7 +411,7 @@ async function resolveExistingMatchForRow(
     if (fpHit) return fpHit;
   }
 
-  return findNearestLocationForDedupe(row.latitude, row.longitude, row.country);
+  return findNearestLocationForDedupe(row.latitude, row.longitude, row.country, row.name);
 }
 
 /**

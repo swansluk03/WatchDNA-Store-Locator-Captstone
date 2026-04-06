@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { findUnique, findMany, $transaction } = vi.hoisted(() => ({
+const { findUnique, findMany, $transaction, premiumFindUnique } = vi.hoisted(() => ({
   findUnique: vi.fn(),
   findMany: vi.fn(),
   $transaction: vi.fn(),
+  premiumFindUnique: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({
@@ -14,7 +15,9 @@ vi.mock('../../lib/prisma', () => ({
       findMany,
     },
     $transaction,
-    premiumStore: {},
+    premiumStore: {
+      findUnique: premiumFindUnique,
+    },
   },
 }));
 
@@ -47,6 +50,7 @@ const baseRow = {
 describe('premiumService.updateStoreByHandle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    premiumFindUnique.mockResolvedValue({ storeType: null });
   });
 
   it('returns null for blank handle', async () => {

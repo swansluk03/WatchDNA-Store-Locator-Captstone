@@ -25,7 +25,7 @@ export interface StoreRecord {
   storeType: string | null;
 }
 
-/** Body for PATCH /premium/stores/:handle — all fields optional on wire; we send a full snapshot on save. */
+/** Body for PATCH /premium-stores/stores/:handle — all fields optional on wire; we send a full snapshot on save. */
 export type StoreUpdatePayload = Partial<{
   addressLine1: string;
   addressLine2: string | null;
@@ -58,7 +58,22 @@ export async function updateStore(
   payload: StoreUpdatePayload
 ): Promise<StoreRecord> {
   const encoded = encodeURIComponent(handle);
-  const res = await api.patch<{ store: StoreRecord }>(`/premium/stores/${encoded}`, payload);
+  const res = await api.patch<{ store: StoreRecord }>(`/premium-stores/stores/${encoded}`, payload);
+  return res.data.store;
+}
+
+/** POST multipart field `image` — saves file and updates store imageUrl. */
+export async function uploadStoreImage(handle: string, file: File): Promise<StoreRecord> {
+  const formData = new FormData();
+  formData.append('image', file);
+  const encoded = encodeURIComponent(handle);
+  const res = await api.post<{ store: StoreRecord }>(
+    `/premium-stores/stores/${encoded}/image`,
+    formData,
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }
+  );
   return res.data.store;
 }
 

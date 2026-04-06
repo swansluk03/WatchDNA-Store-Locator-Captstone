@@ -4,6 +4,7 @@ import {
   markStoresPremium,
   removeStoresPremium,
   updateStore,
+  uploadStoreImage,
   type StoreRecord,
   type StoreUpdatePayload,
 } from '../services/premium.service';
@@ -50,6 +51,16 @@ function formatAddress(store: StoreRecord): string {
 
 function n2s(v: string | null | undefined): string {
   return v ?? '';
+}
+
+const API_ORIGIN = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+/** Admin runs on another origin; API-relative image paths need the backend base URL. */
+function imagePreviewSrc(imageUrl: string): string {
+  const t = imageUrl.trim();
+  if (!t) return '';
+  if (t.startsWith('/api/')) return `${API_ORIGIN}${t}`;
+  return t;
 }
 
 function draftToPayload(d: StoreEditDraft, baseline: StoreRecord): StoreUpdatePayload {
@@ -243,6 +254,7 @@ const PremiumStores: React.FC = () => {
   const [editingStore, setEditingStore] = useState<StoreRecord | null>(null);
   const [editDraft, setEditDraft] = useState<StoreEditDraft | null>(null);
   const [editSaving, setEditSaving] = useState(false);
+  const [imageUploading, setImageUploading] = useState(false);
   const [imagePreviewBroken, setImagePreviewBroken] = useState(false);
 
   useEffect(() => {
@@ -413,12 +425,53 @@ const PremiumStores: React.FC = () => {
   };
 
   const closeEditModal = useCallback(() => {
-    if (!editSaving) setEditingStore(null);
-  }, [editSaving]);
+    if (!editSaving && !imageUploading) setEditingStore(null);
+  }, [editSaving, imageUploading]);
 
   const updateDraft = useCallback((patch: Partial<StoreEditDraft>) => {
     setEditDraft((prev) => (prev ? { ...prev, ...patch } : null));
   }, []);
+
+  const handleStoreImageFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingStore) return;
+    if (!/^image\/(jpeg|png|webp|gif)$/i.test(file.type)) {
+      setToast({ message: 'Please choose a JPEG, PNG, WebP, or GIF image.', type: 'error' });
+      e.target.value = '';
+      return;
+    }
+    setImageUploading(true);
+    try {
+      const store = await uploadStoreImage(editingStore.handle, file);
+      setStores((prev) => prev.map((s) => (s.handle === store.handle ? store : s)));
+      setEditingStore(store);
+      setEditDraft(storeToDraft(store));
+      setImagePreviewBroken(false);
+      setToast({ message: 'Image uploaded.', type: 'success' });
+    } catch {
+      setToast({ message: 'Image upload failed. Please try again.', type: 'error' });
+    } finally {
+      setImageUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveStoreImage = async () => {
+    if (!editingStore) return;
+    setEditSaving(true);
+    try {
+      const store = await updateStore(editingStore.handle, { imageUrl: null });
+      setStores((prev) => prev.map((s) => (s.handle === store.handle ? store : s)));
+      setEditingStore(store);
+      setEditDraft(storeToDraft(store));
+      setImagePreviewBroken(false);
+      setToast({ message: 'Image removed.', type: 'success' });
+    } catch {
+      setToast({ message: 'Failed to remove image.', type: 'error' });
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   const handleSaveEdit = async () => {
     if (!editingStore || !editDraft) return;
@@ -574,7 +627,7 @@ const PremiumStores: React.FC = () => {
                 type="button"
                 className="store-edit-modal__close"
                 onClick={closeEditModal}
-                disabled={editSaving}
+                disabled={editSaving || imageUploading}
                 aria-label="Close"
               >
                 ×
@@ -650,22 +703,33 @@ const PremiumStores: React.FC = () => {
 
               <section className="store-edit-section">
                 <h3 className="store-edit-section__title">Image</h3>
-                <label className="store-edit-field store-edit-field--full">
-                  <span className="store-edit-label">Image URL</span>
-                  <input
-                    type="url"
-                    placeholder="https://"
-                    value={editDraft.imageUrl}
-                    onChange={(e) => {
-                      setImagePreviewBroken(false);
-                      updateDraft({ imageUrl: e.target.value });
-                    }}
-                  />
-                </label>
+                <p className="store-edit-hint">Upload a JPEG, PNG, WebP, or GIF (max 5 MB). Saves immediately.</p>
+                <div className="store-edit-image-actions">
+                  <label className="store-edit-field store-edit-field--full">
+                    <span className="store-edit-label">Upload image</span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      onChange={handleStoreImageFile}
+                      disabled={imageUploading || editSaving}
+                    />
+                  </label>
+                  {editDraft.imageUrl.trim() !== '' && (
+                    <button
+                      type="button"
+                      className="store-edit-btn store-edit-btn--secondary store-edit-remove-image"
+                      onClick={handleRemoveStoreImage}
+                      disabled={imageUploading || editSaving}
+                    >
+                      Remove image
+                    </button>
+                  )}
+                </div>
+                {imageUploading && <p className="store-edit-hint">Uploading…</p>}
                 {editDraft.imageUrl.trim() !== '' && !imagePreviewBroken && (
                   <div className="store-edit-image-preview">
                     <img
-                      src={editDraft.imageUrl.trim()}
+                      src={imagePreviewSrc(editDraft.imageUrl)}
                       alt=""
                       onError={() => setImagePreviewBroken(true)}
                     />
@@ -734,10 +798,20 @@ const PremiumStores: React.FC = () => {
             </div>
 
             <div className="store-edit-modal__footer">
-              <button type="button" className="store-edit-btn store-edit-btn--secondary" onClick={closeEditModal} disabled={editSaving}>
+              <button
+                type="button"
+                className="store-edit-btn store-edit-btn--secondary"
+                onClick={closeEditModal}
+                disabled={editSaving || imageUploading}
+              >
                 Cancel
               </button>
-              <button type="button" className="store-edit-btn store-edit-btn--primary" onClick={handleSaveEdit} disabled={editSaving}>
+              <button
+                type="button"
+                className="store-edit-btn store-edit-btn--primary"
+                onClick={handleSaveEdit}
+                disabled={editSaving || imageUploading}
+              >
                 {editSaving ? 'Saving…' : 'Save changes'}
               </button>
             </div>

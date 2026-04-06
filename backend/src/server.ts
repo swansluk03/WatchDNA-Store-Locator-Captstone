@@ -72,6 +72,10 @@ const uploadsDir = path.join(__dirname, '..', config.upload.dir);
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
+const storeImagesDir = path.join(uploadsDir, 'store-images');
+if (!fs.existsSync(storeImagesDir)) {
+  fs.mkdirSync(storeImagesDir, { recursive: true });
+}
 
 // Health check routes (no rate limiting)
 app.use('/health', healthRoutes);

@@ -112,6 +112,22 @@ export function pickNearestWithin<T extends GeoPoint>(
 }
 
 /**
+ * Extended proximity radius (m) used only when the incoming store name normalizes to the same
+ * value as the candidate. Looser than PROXIMITY_MERGE_MAX_METERS because the matching store name
+ * is a strong additional signal — absorbs geocoder disagreement on non-Latin addresses where the
+ * same street can be transliterated completely differently across data sources.
+ */
+export const PROXIMITY_MERGE_NAME_MATCH_MAX_METERS = 300;
+
+/**
+ * Alnum-only, lowercase name fingerprint for name-similarity dedupe.
+ * "ACCENT" and "Accent" collapse to the same key; whitespace and punctuation are stripped.
+ */
+export function normalizeNameForDedupe(name: string): string {
+  return (name ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+/**
  * Coordinates unsuitable for proximity dedupe (bad scraper placeholders).
  */
 export function isUnusableScraperCoordinate(lat: number, lon: number): boolean {

@@ -8,6 +8,12 @@ import type { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { normalizeCountry } from '../utils/country';
 import { normalizePhone } from '../utils/normalize-phone';
+import {
+  STORE_IMAGE_PUBLIC_PREFIX,
+  isValidStoreImageFilename,
+  managedImageFilenameFromUrl,
+  removeStoreImageFile,
+} from '../utils/store-premium-image';
 
 export interface PremiumStoreRecord {
   handle: string;
@@ -236,6 +242,50 @@ export const premiumService = {
         });
       }
     });
+
+    const [updated, premiumRow] = await Promise.all([
+      prisma.location.findUnique({ where: { handle: h }, select: premiumStoreSelect }),
+      prisma.premiumStore.findUnique({ where: { handle: h }, select: { storeType: true } }),
+    ]);
+    if (!updated) return null;
+
+    if (body.imageUrl !== undefined) {
+      const prevFile = managedImageFilenameFromUrl(existing.imageUrl);
+      const nextUrl = emptyToNull(body.imageUrl);
+      const nextFile = managedImageFilenameFromUrl(nextUrl);
+      if (prevFile && prevFile !== nextFile) {
+        await removeStoreImageFile(prevFile).catch(() => undefined);
+      }
+    }
+
+    return { ...toPremiumRecord(updated), storeType: premiumRow?.storeType ?? null };
+  },
+
+  /**
+   * Save an uploaded store image file (already on disk under store-images/) and set Location.imageUrl.
+   * Removes the previous managed image file when replacing.
+   */
+  async applyStoreImageUpload(handle: string, storedFilename: string): Promise<PremiumStoreRecord | null> {
+    const h = handle.trim();
+    if (!h || !isValidStoreImageFilename(storedFilename)) return null;
+
+    const existing = await prisma.location.findUnique({
+      where: { handle: h },
+      select: premiumStoreSelect,
+    });
+    if (!existing) return null;
+
+    const prevFile = managedImageFilenameFromUrl(existing.imageUrl);
+    const imageUrl = `${STORE_IMAGE_PUBLIC_PREFIX}${storedFilename}`;
+
+    await prisma.location.update({
+      where: { handle: h },
+      data: { imageUrl },
+    });
+
+    if (prevFile && prevFile !== storedFilename) {
+      await removeStoreImageFile(prevFile).catch(() => undefined);
+    }
 
     const [updated, premiumRow] = await Promise.all([
       prisma.location.findUnique({ where: { handle: h }, select: premiumStoreSelect }),

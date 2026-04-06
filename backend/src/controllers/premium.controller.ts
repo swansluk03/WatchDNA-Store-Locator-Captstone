@@ -1,9 +1,16 @@
+import fs from 'fs/promises';
 import { Request, Response } from 'express';
 import {
   premiumService,
   type PremiumStoreUpdateInput,
 } from '../services/premium.service';
 import { logger } from '../utils/logger';
+import {
+  contentTypeForStoreImageFilename,
+  isValidStoreImageFilename,
+  removeStoreImageFile,
+  storeImageAbsolutePath,
+} from '../utils/store-premium-image';
 
 const PATCH_KEYS: (keyof PremiumStoreUpdateInput)[] = [
   'addressLine1',
@@ -97,6 +104,56 @@ export const premiumController = {
     } catch (err) {
       logger.error('premiumController.markPremium error:', err);
       res.status(500).json({ error: 'Failed to mark stores as premium' });
+    }
+  },
+
+  /** GET /api/premium-stores/images/:filename — public (map and admin preview). */
+  async serveStoreImage(req: Request, res: Response): Promise<void> {
+    const filename = req.params.filename as string;
+    if (!isValidStoreImageFilename(filename)) {
+      res.status(404).end();
+      return;
+    }
+    const abs = storeImageAbsolutePath(filename);
+    if (!abs) {
+      res.status(404).end();
+      return;
+    }
+    try {
+      await fs.access(abs);
+    } catch {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader('Content-Type', contentTypeForStoreImageFilename(filename));
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.sendFile(abs);
+  },
+
+  /** POST /api/premium-stores/stores/:handle/image — multipart field `image`. */
+  async uploadStoreImage(req: Request, res: Response): Promise<void> {
+    const handle = req.params.handle as string | undefined;
+    if (!handle?.trim()) {
+      res.status(400).json({ error: 'Missing store handle' });
+      return;
+    }
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: 'No image file uploaded (use field name "image")' });
+      return;
+    }
+    try {
+      const store = await premiumService.applyStoreImageUpload(handle, file.filename);
+      if (!store) {
+        await removeStoreImageFile(file.filename).catch(() => undefined);
+        res.status(404).json({ error: 'Store not found' });
+        return;
+      }
+      res.json({ store });
+    } catch (err) {
+      logger.error('premiumController.uploadStoreImage error:', err);
+      await removeStoreImageFile(file.filename).catch(() => undefined);
+      res.status(500).json({ error: 'Failed to save store image' });
     }
   },
 
