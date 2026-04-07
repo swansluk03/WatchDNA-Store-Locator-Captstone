@@ -47,6 +47,12 @@
       "config_key": "swatch_stores",
       "rows": 1510,
       "notes": "SFCC. First attempt timed out on every country — Akamai requires a full browser User-Agent. Fixed by adding custom_headers."
+    },
+    {
+      "brand": "RAYMOND WEIL",
+      "config_key": "raymond_weil_stores",
+      "rows": 1358,
+      "notes": "Stockist.co SaaS. Uses radius_search expansion. Stockist is multi-tenant — expect to clone this for several smaller brands by swapping the map_<tenant> ID."
     }
   ],
   "blocked": [
@@ -76,7 +82,7 @@
     }
   ],
   "queue_remaining_excludes": ["SWAROVSKI"], "queue_remaining": [ "SWAROVSKI",
-    "RAYMOND WEIL", "RADO",
+    "RADO",
     "PILO & CO", "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
     "MONTBLANC", "MONDAINE", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
     "LONGINES", "LACOSTE", "JACOB & CO", "IWC", "HUBLOT", "HAMILTON",
