@@ -9,6 +9,8 @@ export interface Brand {
   method?: string;
   enabled?: boolean;
   isViewportBased?: boolean;
+  /** When true, show Region (world / North America / …) — viewport, geo-radius, country iteration, etc. */
+  supportsRegionPreset?: boolean;
 }
 
 export interface ScraperJob {

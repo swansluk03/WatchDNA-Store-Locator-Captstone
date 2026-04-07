@@ -120,11 +120,61 @@ export function pickNearestWithin<T extends GeoPoint>(
 export const PROXIMITY_MERGE_NAME_MATCH_MAX_METERS = 300;
 
 /**
+ * When store names are clearly the same retailer but not identical ("… Inc.", JP dept-store variants),
+ * allow a wider proximity merge than {@link PROXIMITY_MERGE_NAME_MATCH_MAX_METERS}. Same tower / mall
+ * geocode variance and tall buildings should stay inside this radius.
+ */
+export const PROXIMITY_MERGE_SIMILAR_NAME_MAX_METERS = 550;
+
+/**
  * Alnum-only, lowercase name fingerprint for name-similarity dedupe.
  * "ACCENT" and "Accent" collapse to the same key; whitespace and punctuation are stripped.
  */
 export function normalizeNameForDedupe(name: string): string {
   return (name ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+const TRAILING_ORG_SUFFIX_RE =
+  /(inc|llc|ltd|limited|corporation|corp|company|gmbh|srl|nv|plc)+$/g;
+
+function stripTrailingOrgSuffixTokens(normalized: string): string {
+  let s = normalized;
+  let prev = '';
+  while (s !== prev) {
+    prev = s;
+    s = s.replace(TRAILING_ORG_SUFFIX_RE, '');
+  }
+  return s;
+}
+
+/**
+ * True when two display names almost certainly refer to the same retailer (suffix variants, long shared
+ * prefix for department-store / building names). Used only together with tight geography checks.
+ */
+export function namesSimilarForDedupe(nameA: string, nameB: string): boolean {
+  const a = normalizeNameForDedupe(nameA);
+  const b = normalizeNameForDedupe(nameB);
+  if (!a || !b) return false;
+  if (a === b) return true;
+
+  const aSt = stripTrailingOrgSuffixTokens(a);
+  const bSt = stripTrailingOrgSuffixTokens(b);
+  if (aSt === bSt) return true;
+
+  const [shorter, longer] = aSt.length <= bSt.length ? [aSt, bSt] : [bSt, aSt];
+  if (shorter.length < 8) return false;
+  if (longer.startsWith(shorter)) return true;
+
+  let prefix = 0;
+  const max = Math.min(aSt.length, bSt.length);
+  while (prefix < max && aSt[prefix] === bSt[prefix]) prefix++;
+  if (prefix >= 14) return true;
+  if (prefix >= 10 && prefix >= 0.55 * shorter.length) return true;
+
+  // Number-prefixed retailer names: "13 Secrets Jewelry …" vs "13 Secrets Plant …" share "13secrets".
+  if (/^\d/.test(aSt) && /^\d/.test(bSt) && prefix >= 9) return true;
+
+  return false;
 }
 
 /**

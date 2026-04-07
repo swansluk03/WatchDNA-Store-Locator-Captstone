@@ -13,7 +13,11 @@ import prisma from '../lib/prisma';
 import { dedupeAddressFingerprint } from '../utils/address-dedupe';
 import { normalizeBrandsCsvField } from '../utils/brand-display-name';
 import { normalizeCountry } from '../utils/country';
-import { haversineDistanceMeters, isUnusableScraperCoordinate } from '../utils/geo-dedupe';
+import {
+  haversineDistanceMeters,
+  isUnusableScraperCoordinate,
+  namesSimilarForDedupe,
+} from '../utils/geo-dedupe';
 import { mergeCommaSeparatedBrands } from '../utils/merge-location-update';
 
 const execute = process.argv.includes('--execute');
@@ -61,27 +65,6 @@ function canMergeGroup(members: Loc[], skipSpreadCheck = false): boolean {
   return maxD <= MAX_GROUP_SPREAD_M;
 }
 
-/** Normalize a store name for similarity comparison. */
-function normalizeName(name: string | null): string {
-  return (name ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
-
-/**
- * True if two store names are similar enough to be considered the same store.
- * One normalized name must be a substring of the other (min 4 chars for the shorter).
- * This prevents merging "Omega Boutique" and "Breitling Boutique" that happen to be
- * in the same mall.
- */
-function namesSimilarForGeoDedupe(nameA: string | null, nameB: string | null): boolean {
-  const na = normalizeName(nameA);
-  const nb = normalizeName(nameB);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  const [shorter, longer] = na.length <= nb.length ? [na, nb] : [nb, na];
-  if (shorter.length < 4) return false;
-  return longer.includes(shorter);
-}
-
 /**
  * Extract multi-digit street numbers from an address string.
  * Single digits are excluded to avoid false matches on unit/floor numbers.
@@ -112,7 +95,7 @@ function addressesShareStreetNumber(addrA: string, addrB: string): boolean {
  *   - not already captured by the address-fingerprint pass
  *   - within GEO_PROXIMITY_M metres
  *   - in the same country
- *   - have similar names (one contains the other)
+ *   - pass {@link namesSimilarForDedupe} (substring, long prefix, number-prefixed names like "13 Secrets …")
  * are grouped.
  */
 function buildGeoProximityGroups(all: Loc[], alreadyGroupedHandles: Set<string>): Loc[][] {
@@ -144,7 +127,7 @@ function buildGeoProximityGroups(all: Loc[], alreadyGroupedHandles: Set<string>)
       // Only merge if address fingerprints differ (same-fp pairs are already handled above)
       if (dedupeAddressFingerprint(a.addressLine1) === dedupeAddressFingerprint(b.addressLine1)) continue;
       // Require name similarity to avoid merging different stores in the same building
-      if (!namesSimilarForGeoDedupe(a.name, b.name)) continue;
+      if (!namesSimilarForDedupe(a.name, b.name)) continue;
       // Require at least one shared street number (prevents "1600 Water St" vs "5001 Expressway")
       if (!addressesShareStreetNumber(a.addressLine1, b.addressLine1)) continue;
       union(i, j);

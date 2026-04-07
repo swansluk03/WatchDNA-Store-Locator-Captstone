@@ -132,6 +132,51 @@ function findSimilarBrandConfigs(
   return similar.sort((a, b) => b.similarity - a.similarity);
 }
 
+/** Query has distance + map center — universal_scraper uses --region for multi-center radius presets. */
+function urlHasRadiusAndGeoCenter(brandUrl: string): boolean {
+  if (!brandUrl) return false;
+  try {
+    const parsed = new URL(brandUrl);
+    const hasRadius =
+      parsed.searchParams.has('radius') ||
+      parsed.searchParams.has('r') ||
+      parsed.searchParams.has('max_distance') ||
+      parsed.searchParams.has('maxdistance');
+    const hasCenter =
+      parsed.searchParams.has('lat') ||
+      parsed.searchParams.has('latitude') ||
+      parsed.searchParams.has('long') ||
+      parsed.searchParams.has('lng') ||
+      parsed.searchParams.has('q');
+    return hasRadius && hasCenter;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Brand benefits from the admin "Region" control (passed as --region to universal_scraper):
+ * viewport grids, country-list subsets, multi-center radius expansion, etc.
+ */
+function brandSupportsRegionPreset(brandUrl: string, cfg: Record<string, unknown>): boolean {
+  const u = brandUrl || '';
+  const viewportLike =
+    u.includes('viewport') ||
+    u.includes('by_viewport') ||
+    u.includes('bounds') ||
+    u.includes('bbox') ||
+    u.includes('northEast') ||
+    u.includes('southWest');
+  if (viewportLike) return true;
+  if (/Stores-FindStores/i.test(u)) return true;
+  if (urlHasRadiusAndGeoCenter(u)) return true;
+  if (cfg.worldwide_country_pagination === true) return true;
+  if (cfg.force_radius_multi_point === true) return true;
+  const centers = cfg.radius_expansion_centers;
+  if (Array.isArray(centers) && centers.length > 0) return true;
+  return false;
+}
+
 export const scraperController = {
   // GET /api/scraper/brands - List available brand configs
   async getBrands(req: Request, res: Response) {
@@ -172,14 +217,17 @@ export const scraperController = {
             formattedName += ' (U.S.)';
           }
           
-          // Check if this is a viewport-based scraper (check URL for viewport indicators)
-          const isViewportBased = brandUrl.includes('viewport') || 
-                                 brandUrl.includes('by_viewport') ||
-                                 brandUrl.includes('bounds') ||
-                                 brandUrl.includes('bbox') ||
-                                 brandUrl.includes('northEast') ||
-                                 brandUrl.includes('southWest');
-          
+          // Viewport-style URLs (subset of region-aware scrapers)
+          const isViewportBased =
+            brandUrl.includes('viewport') ||
+            brandUrl.includes('by_viewport') ||
+            brandUrl.includes('bounds') ||
+            brandUrl.includes('bbox') ||
+            brandUrl.includes('northEast') ||
+            brandUrl.includes('southWest');
+
+          const supportsRegionPreset = brandSupportsRegionPreset(brandUrl, value);
+
           return {
             id: key,
             name: formattedName,
@@ -188,7 +236,8 @@ export const scraperController = {
             description: value.description || '',
             method: value.method || 'GET',
             enabled: true,
-            isViewportBased: isViewportBased
+            isViewportBased,
+            supportsRegionPreset,
           };
         })
         .sort((a, b) => {
