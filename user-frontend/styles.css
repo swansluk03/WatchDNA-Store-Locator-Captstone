@@ -129,14 +129,44 @@ header::-webkit-scrollbar-thumb {
 #brandCheckboxes,
 #typeCheckboxes {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
   margin-bottom: 6px;
+  width: 100%;
+}
+
+/* Make the brand list scrollable while keeping alphabet headers visible */
+#brandCheckboxes {
+  max-height: 300px; /* adjust as needed */
+  overflow-y: auto;
+  padding-right: 6px;
+  border: 1px solid transparent;
+}
+
+.brand-letter {
+  font-weight: 700;
+  padding-right: 6px;
+}
+
+/* Sticky alphabet headers inside the scrollable brand list */
+.brand-group-header {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  z-index: 3;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+}
+
+.brand-group {
+  display: block;
+  padding-left: 8px;
 }
 
 /* Watch / Accessory toggle */
 .type-toggle-row {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 10px;
   margin-bottom: 8px;
@@ -204,11 +234,6 @@ header::-webkit-scrollbar-thumb {
   cursor: pointer;
 }
 
-#filtersPanel label[for="typeCheckboxes"],
-#filtersPanel label[for="storeFilter"] {
-  margin-left: 12px;
-}
-
 #typeCheckboxes label,
 #brandCheckboxes label {
   display: inline-flex;
@@ -220,6 +245,13 @@ header::-webkit-scrollbar-thumb {
 #typeCheckboxes span,
 #brandCheckboxes span {
   user-select: none;
+}
+
+.filters-panel label,
+.filters-panel > div {
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 #storeFilter {

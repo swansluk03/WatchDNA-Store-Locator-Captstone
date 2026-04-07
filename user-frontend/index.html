@@ -993,6 +993,30 @@
         baseRows = baseRows.filter(row => isRowInsideBounds(row, areaFilterBounds));
       }
 
+      // Update brand list to reflect only brands present in the current filtered set
+      try {
+        // capture previously-checked brands so we can restore them if still present
+        const prevCheckedBrands = new Set(Array.from(document.querySelectorAll('#brandCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value));
+
+        const visibleBrandSet = new Set();
+        baseRows.forEach(row => {
+          (extractBrandsText(row) || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .forEach(b => visibleBrandSet.add(b));
+        });
+
+        populateBrandSelect(visibleBrandSet);
+
+        // restore checked brands where possible
+        document.querySelectorAll('#brandCheckboxes input[type="checkbox"]').forEach(cb => {
+          if (prevCheckedBrands.has(cb.value)) cb.checked = true;
+        });
+      } catch (e) {
+        console.warn('Could not update brand list dynamically', e);
+      }
+
       rebuildStoreCheckboxes(baseRows);
       syncStoreCheckboxes(baseRows);
 
@@ -1345,14 +1369,14 @@
       });
 
       Object.keys(groups).sort().forEach(letter => {
-        // Letter header (collapsible)
-        const header = document.createElement('div');
-        header.style.cssText = 'cursor:pointer; font-weight:600; padding:4px 0; user-select:none; display:flex; justify-content:space-between; align-items:center;';
-        header.innerHTML = `<span>${letter}</span><span class="az-arrow">▸</span>`;
+          // Letter header (always expanded)
+          const header = document.createElement('div');
+          header.className = 'brand-group-header';
+          header.innerHTML = `<span class="brand-letter">${letter}</span>`;
 
-        // Group container
-        const group = document.createElement('div');
-        group.style.cssText = 'display:none; padding-left:8px;';
+          // Group container (always visible)
+          const group = document.createElement('div');
+          group.className = 'brand-group';
 
         groups[letter].forEach(b => {
           const label = document.createElement('label');
@@ -1372,12 +1396,7 @@
           group.appendChild(label);
         });
 
-        header.addEventListener('click', () => {
-          const isOpen = group.style.display !== 'none';
-          group.style.display = isOpen ? 'none' : 'block';
-          header.querySelector('.az-arrow').textContent = isOpen ? '▸' : '▾';
-        });
-
+        // Always append header and expanded group (no dropdown behavior)
         container.appendChild(header);
         container.appendChild(group);
       });
