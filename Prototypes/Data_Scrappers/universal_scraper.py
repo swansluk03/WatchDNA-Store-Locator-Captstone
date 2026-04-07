@@ -1893,6 +1893,127 @@ def scrape_geohash_prefix_expansion(base_url: str, brand_config: Optional[Dict] 
     return all_stores
 
 
+def scrape_post_per_country(base_url: str, brand_config: Optional[Dict] = None) -> List[Dict]:
+    """POST to a single endpoint once per country, with a JSON body template.
+
+    Strategy used by APIs like Zenith's storeLocator: one URL, POST method,
+    body ``{"country": "US"}``. The endpoint returns all stores for that
+    country in a single response (no pagination). We iterate the brand's
+    country list (or the global watch_store_countries list) and POST each.
+
+    Brand config keys (under ``post_per_country``):
+      - ``body_template`` (dict, required): JSON body to POST. Any string value
+        equal to ``"{country}"`` is replaced with the current country code.
+      - ``data_path`` (str, optional): dot-path into the response to reach the
+        store list (e.g. ``"result"``). If omitted, common keys are tried.
+      - ``delay`` (float, default 0.2): seconds between requests.
+      - ``countries`` (list[str], optional): explicit country code list. If
+        omitted, uses ``watch_store_countries.json``'s ``countries`` dict.
+      - ``stop_on_empty`` (bool, default False): if True, stop after N
+        consecutive empty country responses (currently unused, reserved).
+    """
+    import requests
+    import copy
+
+    cfg = brand_config.get("post_per_country", {}) if brand_config else {}
+    body_template = cfg.get("body_template") or {"country": "{country}"}
+    data_path = cfg.get("data_path") or brand_config.get("data_path", "") if brand_config else ""
+    delay = float(cfg.get("delay", 0.2))
+
+    # Resolve country list
+    countries: List[str] = []
+    if isinstance(cfg.get("countries"), list) and cfg["countries"]:
+        countries = list(cfg["countries"])
+    else:
+        try:
+            wsc_path = os.path.join(os.path.dirname(__file__), "watch_store_countries.json")
+            with open(wsc_path, "r", encoding="utf-8") as f:
+                wsc = json.load(f)
+            countries = list((wsc.get("countries") or {}).keys())
+        except Exception as e:
+            log_debug(f"Could not load watch_store_countries.json: {e}", "WARN")
+            countries = ["US"]
+
+    custom_headers = _get_custom_headers(brand_config)
+    request_headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if custom_headers:
+        request_headers.update(custom_headers)
+
+    def _interpolate(obj, country_code):
+        if isinstance(obj, dict):
+            return {k: _interpolate(v, country_code) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_interpolate(v, country_code) for v in obj]
+        if isinstance(obj, str):
+            return obj.replace("{country}", country_code)
+        return obj
+
+    def _extract_items(data):
+        # Walk data_path if provided
+        if data_path:
+            cur = data
+            for part in data_path.split("."):
+                if isinstance(cur, dict):
+                    cur = cur.get(part)
+                else:
+                    cur = None
+                    break
+            if isinstance(cur, list):
+                return cur
+        # Fallback: try common keys
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            for k in ("result", "results", "data", "stores", "items", "locations", "retailers", "dealers"):
+                v = data.get(k)
+                if isinstance(v, list):
+                    return v
+        return []
+
+    print(f"🌍 POST-per-country expansion — {len(countries)} countries")
+    seen: dict = {}
+    errors = 0
+
+    for i, country_code in enumerate(countries, 1):
+        body = _interpolate(copy.deepcopy(body_template), country_code)
+        try:
+            resp = requests.post(base_url, headers=request_headers, json=body, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+            items = _extract_items(data)
+            new_count = 0
+            for store in items:
+                if not isinstance(store, dict):
+                    continue
+                uid = (
+                    store.get("id")
+                    or store.get("ID")
+                    or store.get("seller_code")
+                    or store.get("code")
+                    or f"{store.get('name','')}|{country_code}|{json.dumps(store.get('address',''), sort_keys=True, default=str)[:80]}"
+                )
+                key = str(uid)
+                if key not in seen:
+                    seen[key] = store
+                    new_count += 1
+            if i % 10 == 0 or new_count > 0:
+                print(f"   [{i}/{len(countries)}] {country_code}: +{new_count} (total {len(seen)})")
+            time.sleep(delay)
+        except Exception as e:
+            log_debug(f"POST-per-country error for {country_code}: {e}", "WARN")
+            errors += 1
+            continue
+
+    all_stores = list(seen.values())
+    log_debug(f"POST-per-country complete | {len(all_stores)} unique stores | {errors} errors", "SUCCESS")
+    print(f"   ✅ {len(all_stores)} unique stores collected across {len(countries)} countries")
+    return all_stores
+
+
 def scrape_paginated(url: str, url_params: Dict, is_token_based: bool = False, custom_headers: Optional[Dict] = None) -> List[Dict]:
     """Expand paginated API by following all pages (supports both page numbers, tokens, and offset)"""
     import requests
@@ -2144,14 +2265,21 @@ def universal_scrape(
     # Apply per-brand custom headers for initial fetch (from brand_config)
     initial_headers = _get_custom_headers(brand_config)
 
-    try:
-        log_debug("Fetching sample data for detection...", "DEBUG")
-        sample_data = fetch_data(url, headers=initial_headers)
-        log_debug(f"Sample data retrieved successfully", "SUCCESS")
-    except Exception as e:
-        log_debug(f"Failed to fetch sample data: {e}", "ERROR")
-        print(f"❌ Failed to fetch: {e}")
-        return results
+    # Brands using post_per_country don't accept GET — skip the GET sample probe
+    skip_sample_fetch = bool(brand_config and brand_config.get("post_per_country"))
+
+    if skip_sample_fetch:
+        log_debug("Skipping GET sample fetch (post_per_country brand)", "DEBUG")
+        sample_data = {}
+    else:
+        try:
+            log_debug("Fetching sample data for detection...", "DEBUG")
+            sample_data = fetch_data(url, headers=initial_headers)
+            log_debug(f"Sample data retrieved successfully", "SUCCESS")
+        except Exception as e:
+            log_debug(f"Failed to fetch sample data: {e}", "ERROR")
+            print(f"❌ Failed to fetch: {e}")
+            return results
     
     # Detect locator type
     log_debug("Running locator type detection...", "DEBUG")
@@ -2215,7 +2343,14 @@ def universal_scrape(
     has_center = "q" in url_params or "lat" in url_params or "latitude" in url_params
     
     try:
-        if detected_type == "paginated":
+        if brand_config and brand_config.get("post_per_country"):
+            # POST-per-country expansion (e.g. Zenith storeLocator) — checked first
+            # because the GET-based detector cannot probe a POST-only endpoint.
+            log_debug("Strategy: POST per country", "INFO")
+            stores = scrape_post_per_country(url, brand_config=brand_config)
+            results["expansion_used"] = True
+
+        elif detected_type == "paginated":
             # Pagination (check this first before single_call)
             log_debug("Strategy: Paginated scraping", "INFO")
             
@@ -2557,6 +2692,10 @@ Auto-detects everything and uses the right strategy!
             elif cfg_type == "json" and brand_config.get("geohash_prefix_expansion"):
                 # Geohash prefix expansion: keep force_type as None so universal_scrape
                 # can branch on the geohash flag rather than falling into single_call
+                pass
+            elif cfg_type == "json" and brand_config.get("post_per_country"):
+                # POST-per-country: keep force_type as None so universal_scrape
+                # can branch on the post_per_country flag
                 pass
             else:
                 force_type = _TYPE_NORMALISE.get(cfg_type, cfg_type)

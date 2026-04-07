@@ -11,6 +11,7 @@
       "countries": "Provide custom countries object if you want to override the comprehensive list",
       "worldwide_country_pagination": "If true and type is json: force country_filter strategy — iterate countries (watch_store_countries or countries) and follow offset/per pagination per country. Does not affect brands without this flag.",
       "geohash_prefix_expansion": "If set (object), enables geohash-prefix sharding strategy. The scraper enumerates all prefixes of prefix_length (default 2) over the geohash alphabet and fetches {url}/{prefix} for each. Keys: prefix_length (int, default 2), alphabet (str, default standard 32-char geohash), items_key (str, default 'items'), delay (float seconds between requests, default 0.15). Example: Casio locator.",
+      "post_per_country": "If set (object), enables POST-per-country expansion for endpoints that accept POST with a JSON body and return one country's stores per call. The scraper iterates the global watch_store_countries list (or 'countries' override) and POSTs body_template with {country} interpolated to the ISO2 code. Keys: body_template (dict, default {country:'{country}'}), data_path (str, dot-path into response, e.g. 'result'), delay (float, default 0.2), countries (list[str], optional override). Example: Zenith storeLocator.",
       "row_filters": "Optional list of filter rules applied to raw store records after collection, before normalization. Each rule: { field (dot-notation path, e.g. 'extra_fields.Rank'), op (eq|in|not_in|contains, default eq), value or values }. All rules are ANDed. Absent or empty = no filtering (all other brands unaffected).",
       "see": "COUNTRY_CONFIG_GUIDE.md for details on country configuration"
     }
@@ -633,5 +634,36 @@
       "Longitude": "longitude"
     },
     "_note": "Country field (extra_fields.Country) is a numeric Casio country ID, not a name. batch_normalize will infer country from address. To include authorized dealers add '10' to the row_filters values list; add '15' for shop-in-shop locations."
+  },
+  "zenith_stores": {
+    "type": "json",
+    "url": "https://prd-sf-api.zenith-watches.com/api/ext/store-locator/storeLocator",
+    "method": "POST",
+    "description": "Zenith Watches storeLocator — POST endpoint, one body per country. Iterates the global watch_store_countries list. ✅",
+    "display_name": "ZENITH",
+    "url_base": "https://www.zenith-watches.com",
+    "data_path": "result",
+    "post_per_country": {
+      "body_template": { "country": "{country}" },
+      "data_path": "result",
+      "delay": 0.2
+    },
+    "custom_headers": {
+      "Origin": "https://www.zenith-watches.com",
+      "Referer": "https://www.zenith-watches.com/"
+    },
+    "field_mapping": {
+      "Handle": "seller_code",
+      "Name": "name",
+      "Address Line 1": "address.street",
+      "City": "address.city",
+      "Postal/ZIP Code": "address.zip",
+      "Country": "address.countryId",
+      "Phone": "phone",
+      "Latitude": "address.coords.lat",
+      "Longitude": "address.coords.lng",
+      "Service Type": "type"
+    },
+    "_note": "POST body is {\"country\":\"<ISO2>\"}. Response is {code, result: [{name, type, phone, seller_code, address:{street, city, zip, countryId, coords:{lat,lng}}}, ...]}. Authorized retailers + Service centers + LVMH boutiques."
   }
 }
