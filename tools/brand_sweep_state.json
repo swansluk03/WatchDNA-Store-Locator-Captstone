@@ -45,6 +45,12 @@
       "fix_estimate": "half-day of engine work; defer until 2+ similar brands surface"
     },
     {
+      "brand": "STIL TIMEPIECES",
+      "reason": "Brand has no store locator at all (direct-to-consumer / no retail partners). Nothing to scrape.",
+      "endpoint_seen": null,
+      "fix_estimate": "n/a"
+    },
+    {
       "brand": "SWAROVSKI",
       "reason": "HTML response with .swa-store-view__store divs (data-latitude/data-longitude attrs). Radius-capped at ~150 miles (huge radius returns 0). 12 stores per call. Would need country iteration + multi-point radius grid + HTML parser. ~1-2h engine work, marginal ROI: Swarovski is mostly fashion, watches are a side product.",
       "endpoint_seen": "https://www.swarovski.com/en-US/store-finder/stores/?countryIso=US&allBaseStores=true&radius=150.0&geoPoint.latitude=...",
@@ -52,7 +58,7 @@
     }
   ],
   "queue_remaining_excludes": ["SWAROVSKI"], "queue_remaining": [ "SWATCH", "SWAROVSKI",
-    "STIL TIMEPIECES", "SEIKO", "ROGER DUBUIS", "RAYMOND WEIL", "RADO",
+    "SEIKO", "ROGER DUBUIS", "RAYMOND WEIL", "RADO",
     "PILO & CO", "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
     "MONTBLANC", "MONDAINE", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
     "LONGINES", "LACOSTE", "JACOB & CO", "IWC", "HUBLOT", "HAMILTON",
