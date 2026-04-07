@@ -51,6 +51,12 @@
       "fix_estimate": "half-day of engine work; defer until 2+ similar brands surface"
     },
     {
+      "brand": "ROGER DUBUIS",
+      "reason": "Laravel/Phoenix backend with X-CSRF-TOKEN required on every request. Routes /api/search/stores and /api/search/store/locator return HTTP 500 without session cookies + CSRF token from /api/xhr/ping. Markers on the boutiques page are loaded via XHR but obscured by analytics noise; the route is gated on session state.",
+      "endpoint_seen": "https://www.rogerdubuis.com/api/search/stores (also /api/search/store/locator)",
+      "fix_estimate": "30-60 min for a session-aware engine helper. Worth building if 2+ Richemont brands (IWC, Panerai) use the same pattern."
+    },
+    {
       "brand": "STIL TIMEPIECES",
       "reason": "Brand has no store locator at all (direct-to-consumer / no retail partners). Nothing to scrape.",
       "endpoint_seen": null,
@@ -64,7 +70,7 @@
     }
   ],
   "queue_remaining_excludes": ["SWAROVSKI"], "queue_remaining": [ "SWATCH", "SWAROVSKI",
-    "ROGER DUBUIS", "RAYMOND WEIL", "RADO",
+    "RAYMOND WEIL", "RADO",
     "PILO & CO", "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
     "MONTBLANC", "MONDAINE", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
     "LONGINES", "LACOSTE", "JACOB & CO", "IWC", "HUBLOT", "HAMILTON",
