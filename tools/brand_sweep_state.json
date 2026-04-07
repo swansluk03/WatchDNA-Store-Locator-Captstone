@@ -41,6 +41,12 @@
       "config_key": "seiko_stores",
       "rows": 10463,
       "notes": "Custom country UUIDs (mapped via country_id_map). Required new inject_country_field engine option. unit=99999 returns all stores per country in one call."
+    },
+    {
+      "brand": "SWATCH",
+      "config_key": "swatch_stores",
+      "rows": 1510,
+      "notes": "SFCC. First attempt timed out on every country — Akamai requires a full browser User-Agent. Fixed by adding custom_headers."
     }
   ],
   "blocked": [
@@ -69,7 +75,7 @@
       "fix_estimate": "1-2h; revisit if 2+ similar HTML+radius brands surface"
     }
   ],
-  "queue_remaining_excludes": ["SWAROVSKI"], "queue_remaining": [ "SWATCH", "SWAROVSKI",
+  "queue_remaining_excludes": ["SWAROVSKI"], "queue_remaining": [ "SWAROVSKI",
     "RAYMOND WEIL", "RADO",
     "PILO & CO", "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
     "MONTBLANC", "MONDAINE", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
