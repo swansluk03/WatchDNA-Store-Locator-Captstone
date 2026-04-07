@@ -23,6 +23,12 @@
       "config_key": "tudor_retailers",
       "rows": 789,
       "notes": "Same backend as Rolex (retailers.tudorwatch.com). Cloned rolex_retailers with brand=TDR. Required type:viewport to enable expansion."
+    },
+    {
+      "brand": "TISSOT",
+      "config_key": "tissot_stores",
+      "rows": 10618,
+      "notes": "SFCC backend. country_filter via worldwide_country_pagination. data_path: stores.stores. Likely template for other Swatch Group brands."
     }
   ],
   "blocked": [
