@@ -1567,12 +1567,13 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
     if not country_param:
         country_param = "country"
 
-    # OpenCart/other APIs use numeric country_id - map ISO codes via country_id_map
+    # APIs that need their own country IDs (numeric, UUID, etc.) — map ISO codes via country_id_map
+    # Activates whenever country_id_map is present, regardless of the URL param name.
     country_id_map = brand_config.get("country_id_map", {}) if brand_config else {}
-    if country_id_map and country_param and "country_id" in country_param.lower():
+    if country_id_map:
         countries_list = [c for c in countries_list if c in country_id_map]
         country_names = {c: country_names.get(c, c) for c in countries_list}
-        print(f"   Using country_id_map: {len(countries_list)} countries (ISO->numeric)")
+        print(f"   Using country_id_map: {len(countries_list)} countries (ISO->internal id)")
     
     # Check if pagination is needed (has offset or per parameter)
     has_pagination = "offset" in url_params or "per" in url_params or "per_page" in url_params
@@ -1643,10 +1644,13 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
                     break
             
             # Deduplicate stores for this country
+            inject_country_field = (brand_config or {}).get("inject_country_field")
             new_stores = 0
             for store in country_stores:
                 store_id = None
                 if isinstance(store, dict):
+                    if inject_country_field:
+                        store[inject_country_field] = country_name
                     # Try multiple ID extraction strategies
                     profile = store.get('profile', {})
                     if isinstance(profile, dict):
@@ -1706,23 +1710,28 @@ def scrape_country_expansion(url: str, url_params: Dict, region: str = "world", 
                         response_data = data.get('response', data)
                         stores = response_data.get('entities', []) or response_data.get('results', []) or response_data.get('data', [])
                 
+                # Inject iterated country into each store record so field_mapping can read it
+                # (used by APIs that return only an internal country id, e.g. Seiko UUIDs)
+                inject_country_field = (brand_config or {}).get("inject_country_field")
                 new_stores = 0
                 for store in stores:
+                    if inject_country_field and isinstance(store, dict):
+                        store[inject_country_field] = country_name
                     store_id = store.get("id") or store.get("store_id") or str(store)
                     if store_id not in seen_ids:
                         all_stores.append(store)
                         seen_ids.add(store_id)
                         new_stores += 1
-                
+
                 if new_stores > 0:
                     print(f"  [{i}/{len(countries_list)}] {country_code}: +{new_stores} stores (total: {len(all_stores)})")
-                
+
                 time.sleep(0.3)
-            
+
             except Exception as e:
                 log_debug(f"Error fetching {country_code}: {e}", "WARN")
                 continue
-    
+
     return all_stores
 
 
