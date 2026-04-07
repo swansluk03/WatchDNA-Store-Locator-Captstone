@@ -33,8 +33,7 @@ body {
 header {
   box-sizing: border-box;
   background: var(--card);
-  width: 400px;
-  /* width of the left control bar */
+  width: clamp(240px, 28vw, 400px);
   min-width: 240px;
   height: 100vh;
   position: fixed;
@@ -68,10 +67,9 @@ header::-webkit-scrollbar-thumb {
   width: 100%;
 }
 
-/* push the map to the right so it doesn't sit underneath the fixed left bar */
 #map {
-  margin-left: 400px;
-  width: calc(100% - 400px);
+  margin-left: clamp(240px, 28vw, 400px);
+  width: calc(100% - clamp(240px, 28vw, 400px));
   height: 100vh;
 }
 
@@ -302,7 +300,7 @@ header::-webkit-scrollbar-thumb {
   border-radius: 6px;
 }
 
-/* On small screens keep the original top-header behavior: make the header a normal top bar */
+/* On small screens keep the original top-header behavior: make the header a normal top bar
 @media(max-width:899px) {
   body {
     display: block;
@@ -333,7 +331,7 @@ header::-webkit-scrollbar-thumb {
     gap: 12px;
   }
 }
-
+*/
 .banner {
   position: absolute;
   top: 10px;
