@@ -682,5 +682,32 @@
       "Longitude": "lng"
     },
     "_note": "Markers API returns a flat array (no wrapper). data_path empty. City/Country/Phone are not present as discrete fields; rely on infer_country_from_address."
+  },
+  "tudor_retailers": {
+    "type": "viewport",
+    "url": "https://retailers.tudorwatch.com/app/establishments/by_viewport/light?brand=TDR&northEastLat=50.0&northEastLng=10.0&southWestLat=40.0&southWestLng=-10.0&langCode=en&establishmentType=STORE",
+    "description": "Tudor Official Retailers API — same backend as Rolex (retailers.tudorwatch.com mirrors retailers.rolex.com). brand=TDR distinguishes Tudor dealers from Rolex. Viewport expansion walks the world. ✅",
+    "method": "GET",
+    "display_name": "TUDOR",
+    "url_base": "https://www.tudorwatch.com",
+    "data_path": "",
+    "custom_headers": {
+      "Origin": "https://www.tudorwatch.com",
+      "Referer": "https://www.tudorwatch.com/"
+    },
+    "field_mapping": {
+      "Handle": "rolexId",
+      "Name": ["nameTranslated", "shortName"],
+      "Address Line 1": ["streetAddress", "shortAddress", "address"],
+      "City": ["cityName", "city"],
+      "State/Province/Region": ["regionName", "state", "province"],
+      "Country": ["countryName", "country"],
+      "Postal/ZIP Code": ["postalCode", "zip"],
+      "Phone": ["phone1", "phone"],
+      "Website": ["urlTudor", "urlTudorSeo"],
+      "Latitude": ["lat", "latitude"],
+      "Longitude": ["lng", "longitude"]
+    },
+    "_note": "Confirmed working: 255 US dealers from a single US-bbox call. Field names identical to Rolex (nameTranslated, streetAddress, etc). Viewport expansion will walk the rest of the world."
   }
 }
