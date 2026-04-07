@@ -29,6 +29,12 @@
       "config_key": "tissot_stores",
       "rows": 10618,
       "notes": "SFCC backend. country_filter via worldwide_country_pagination. data_path: stores.stores. Likely template for other Swatch Group brands."
+    },
+    {
+      "brand": "TAG HEUER",
+      "config_key": "tagheuer_stores",
+      "rows": 2001,
+      "notes": "Algolia stores index. Reused post_per_country with {country} templated inside the params filter string. Search-only API key is public."
     }
   ],
   "blocked": [
@@ -39,7 +45,7 @@
       "fix_estimate": "half-day of engine work; defer until 2+ similar brands surface"
     }
   ],
-  "queue_remaining": ["TAG HEUER", "SWATCH", "SWAROVSKI",
+  "queue_remaining": [ "SWATCH", "SWAROVSKI",
     "STIL TIMEPIECES", "SEIKO", "ROGER DUBUIS", "RAYMOND WEIL", "RADO",
     "PILO & CO", "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
     "MONTBLANC", "MONDAINE", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
