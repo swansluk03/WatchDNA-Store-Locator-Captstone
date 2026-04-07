@@ -10,6 +10,13 @@
       "commit": "02ea134",
       "rows": 450,
       "notes": "POST per country. Required new post_per_country engine strategy."
+    },
+    {
+      "brand": "U-BOAT",
+      "config_key": "uboat_stores",
+      "commit": "9f692e3",
+      "rows": 483,
+      "notes": "wpgmza REST markers. Borderline: 701 raw → 483 normalized; city 0%, country 54%, phone 0%. Upstream data is mashed."
     }
   ],
   "blocked": [
@@ -21,7 +28,7 @@
     }
   ],
   "queue_remaining": [
-    "U-BOAT", "TUDOR", "TISSOT", "TAG HEUER", "SWATCH", "SWAROVSKI",
+    "TUDOR","TISSOT", "TAG HEUER", "SWATCH", "SWAROVSKI",
     "STIL TIMEPIECES", "SEIKO", "ROGER DUBUIS", "RAYMOND WEIL", "RADO",
     "PILO & CO", "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
     "MONTBLANC", "MONDAINE", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
