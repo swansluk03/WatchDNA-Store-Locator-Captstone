@@ -889,5 +889,30 @@
       "Longitude": "longitude"
     },
     "_note": "Country UUIDs sourced from /api/v2/countries (82 supported countries; 53 mapped here that overlap with watch_store_countries.json). inject_country_field puts the iterated human-readable country name onto each record so field_mapping.Country can read it (since the response only has country_id UUID, no country name)."
+  },
+  "raymond_weil_stores": {
+    "type": "radius_search",
+    "url": "https://stockist.co/api/v1/map_vq7vry93/locations/search?tag=map_vq7vry93&latitude=33.4306&longitude=-111.9256&filter_operator=and&distance=2500",
+    "method": "GET",
+    "description": "Raymond Weil — uses Stockist.co SaaS store locator. Endpoint returns the closest ~100 locations to a center point regardless of distance value (capped server-side). Uses multi-point radius expansion over the world city grid + dedup by id.",
+    "display_name": "RAYMOND WEIL",
+    "url_base": "https://www.raymond-weil.com",
+    "data_path": "locations",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "name",
+      "Address Line 1": "address_line_1",
+      "Address Line 2": "address_line_2",
+      "City": "city",
+      "State/Province/Region": "state",
+      "Postal/ZIP Code": "postal_code",
+      "Country": "country",
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "website",
+      "Latitude": "latitude",
+      "Longitude": "longitude"
+    },
+    "_note": "Stockist.co is a SaaS used by many smaller brands. The map_vq7vry93 ID is Raymond Weil's Stockist tenant. Field names follow Stockist's standard schema."
   }
 }
