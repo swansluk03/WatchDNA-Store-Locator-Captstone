@@ -665,5 +665,22 @@
       "Service Type": "type"
     },
     "_note": "POST body is {\"country\":\"<ISO2>\"}. Response is {code, result: [{name, type, phone, seller_code, address:{street, city, zip, countryId, coords:{lat,lng}}}, ...]}. Authorized retailers + Service centers + LVMH boutiques."
+  },
+  "uboat_stores": {
+    "type": "json",
+    "url": "https://uboatwatch.com/wp-json/wpgmza/v1/markers",
+    "method": "GET",
+    "description": "U-Boat — WordPress WP Google Maps plugin REST endpoint. Single GET returns all 701 markers with lat/lng. Address is one combined string ('STREET - CITY - COUNTRY'); country is inferred by data_normalizer. Phone/email are buried in HTML description and not extracted (acceptable data gap).",
+    "display_name": "U-BOAT",
+    "url_base": "https://uboatwatch.com",
+    "data_path": "",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "title",
+      "Address Line 1": "address",
+      "Latitude": "lat",
+      "Longitude": "lng"
+    },
+    "_note": "Markers API returns a flat array (no wrapper). data_path empty. City/Country/Phone are not present as discrete fields; rely on infer_country_from_address."
   }
 }
