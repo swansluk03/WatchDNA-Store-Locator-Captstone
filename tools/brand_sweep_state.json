@@ -17,6 +17,12 @@
       "commit": "9f692e3",
       "rows": 483,
       "notes": "wpgmza REST markers. Borderline: 701 raw → 483 normalized; city 0%, country 54%, phone 0%. Upstream data is mashed."
+    },
+    {
+      "brand": "TUDOR",
+      "config_key": "tudor_retailers",
+      "rows": 789,
+      "notes": "Same backend as Rolex (retailers.tudorwatch.com). Cloned rolex_retailers with brand=TDR. Required type:viewport to enable expansion."
     }
   ],
   "blocked": [
@@ -27,8 +33,7 @@
       "fix_estimate": "half-day of engine work; defer until 2+ similar brands surface"
     }
   ],
-  "queue_remaining": [
-    "TUDOR","TISSOT", "TAG HEUER", "SWATCH", "SWAROVSKI",
+  "queue_remaining": ["TISSOT", "TAG HEUER", "SWATCH", "SWAROVSKI",
     "STIL TIMEPIECES", "SEIKO", "ROGER DUBUIS", "RAYMOND WEIL", "RADO",
     "PILO & CO", "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
     "MONTBLANC", "MONDAINE", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
