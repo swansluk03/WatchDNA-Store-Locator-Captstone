@@ -155,10 +155,6 @@
     const originalCenter = map.getCenter();
     const originalZoom = map.getZoom();
 
-    map.on('popupclose', () => {
-      resetFocusedStore();
-    });
-
     // Should help with location retention issues with Near Me feature
     let cachedLatLng = null;
     let lastLocationTime = 0;
@@ -173,7 +169,8 @@
       // User did not allow browser/application to use their location
       if (!navigator.geolocation) {
         failure({ code: 0 });
-        return;
+        return; const marker = L.marker([lat, lon], { icon: iconToUse })
+
       }
 
       navigator.geolocation.getCurrentPosition(
@@ -219,16 +216,16 @@
 
     // --- CSV loader (with cache-busting to avoid stale results) ---
     //function loadCSV(path) {
-      //const url = `${path}?v=${Date.now()}`;
-      //return new Promise((resolve, reject) => {
-        //Papa.parse(url, {
-          //download: true,
-          //header: true,
-          //skipEmptyLines: true,
-          //complete: res => resolve(res.data),
-          //error: err => reject(err)
-        //});
-      //});
+    //const url = `${path}?v=${Date.now()}`;
+    //return new Promise((resolve, reject) => {
+    //Papa.parse(url, {
+    //download: true,
+    //header: true,
+    //skipEmptyLines: true,
+    //complete: res => resolve(res.data),
+    //error: err => reject(err)
+    //});
+    //});
     //}
 
     const API_LOCATIONS_URL = 'https://backend-production-033e.up.railway.app/api/locations';
@@ -811,7 +808,7 @@
 
       // Optional: keep the map movement consistent
       if (marker && hasCoords) {
-        map.flyTo([lat, lon], 14, { animate: true, duration: 2.5 });
+        // Keep the current zoom/position so tight clusters do not recluster immediately
       }
     }
 
@@ -819,8 +816,11 @@
     function resetFocusedStore() {
       setDetailPanelVisible(false);
 
-      // lastSearchAreaBounds is the snapshot of the map bounds when "Search this area" was clicked
-      map.fitBounds(lastSearchAreaBounds, { animate: true });
+      if (lastSearchAreaBounds) {
+        map.fitBounds(lastSearchAreaBounds, { animate: true });
+      } else {
+        map.setView(originalCenter, originalZoom, { animate: true });
+      }
     }
 
     // When the close store detail button is clicked, it will close itself, the popup, and zoom the map back out to full view
@@ -832,9 +832,9 @@
 
         // Close the popup on the associated map marker
         if (focusedMarker) {
-          focusedMarker.closePopup();
-          focusedMarker = null;
+          focusedMarker.setZIndexOffset(0);
         }
+        focusedMarker = null;
 
         resetFocusedStore();
       });
@@ -1067,16 +1067,12 @@
           });
 
           map.once('moveend', () => {
-            areaFilterEnabled = true;
-            areaFilterBounds = map.getBounds().pad(-0.05);
-            lastSearchAreaBounds = areaFilterBounds;
+            areaFilterEnabled = false;
+            areaFilterBounds = null;
+            lastSearchAreaBounds = null;
 
             applyFilter();
-
-            const visible = getVisibleMarkers().length;
-            setNearMeStatus(
-              `Showing ${visible} location${visible !== 1 ? 's' : ''} near you. Pan or zoom, then press Search this area.`
-            );
+            setNearMeStatus('Location found. Use the location button to find stores near you, or pan and press Search this area.');
           });
         },
         () => {
@@ -1304,7 +1300,12 @@
             map.flyTo([latitude, longitude], 14, { animate: true, duration: 0.8 });
           }
 
+          if (focusedMarker && focusedMarker !== marker) {
+            focusedMarker.setZIndexOffset(0);
+          }
+
           focusedMarker = marker;
+          marker.setZIndexOffset(1000);
           openStoreDetail(row, marker);
         });
 
@@ -1474,7 +1475,22 @@
         const brandSet = new Set();
 
         // Keep only rows that *have something* in lat/lon
-        allRows = rows.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
+        const seenLocationKeys = new Set();
+
+        allRows = rows.filter(r => {
+          if ((r.Latitude ?? '') === '' || (r.Longitude ?? '') === '') return false;
+
+          const key = [
+            String(r['Name'] || '').trim().toLowerCase(),
+            String(r['Address Line 1'] || '').trim().toLowerCase(),
+            String(r['City'] || '').trim().toLowerCase(),
+            String(r['Country'] || '').trim().toLowerCase()
+          ].join('|');
+
+          if (seenLocationKeys.has(key)) return false;
+          seenLocationKeys.add(key);
+          return true;
+        });
         console.log('Rows with any lat/lon value:', allRows.length);
 
         const detailCloseBtn = document.getElementById('detailCloseBtn');
@@ -1508,10 +1524,13 @@
 
           const iconToUse = getMarkerIconForRow(row);
 
-          const marker = L.marker([lat, lon], { icon: iconToUse })
-            .bindPopup(buildPopup(row));
+          const marker = L.marker([lat, lon], { icon: iconToUse });
           marker.on('click', () => {
+            if (focusedMarker && focusedMarker !== marker) {
+              focusedMarker.setZIndexOffset(0);
+            }
             focusedMarker = marker;
+            marker.setZIndexOffset(1000);
             openStoreDetail(row, marker);
           });
           allMarkers.push({ row, marker });
@@ -1559,7 +1578,7 @@
           });
         }
         applyFilter();
-        requestInitialLocation();
+        setNearMeStatus('Use the location button to find stores near you, or pan and press Search this area.');
 
         // Do not pre-check checkboxes from URL params; users must explicitly
         // select stores using the checkbox controls.
