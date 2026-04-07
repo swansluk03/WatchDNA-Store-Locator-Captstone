@@ -93,6 +93,10 @@ def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]
     # keep_blank_values=True preserves params like input= (required by some APIs e.g. Yext vertical search)
     params = parse_qs(parsed.query, keep_blank_values=True)
     result["url_params"] = {k: v[0] if len(v) == 1 else v for k, v in params.items()}
+    wp_ajax_sale_country = (
+        "admin-ajax.php" in parsed.path.lower()
+        and str(result["url_params"].get("action", "")).lower() == "sale_country"
+    )
     scores = {}
     
     for type_key, type_info in LOCATOR_TYPES.items():
@@ -120,7 +124,21 @@ def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]
             paginated_score = scores["paginated"]["score"]
             if paginated_score > 0:
                 best = ("paginated", scores["paginated"])
-        
+
+        # Geo center + distance beats postal-only: many storefront APIs include empty
+        # postalCode alongside lat/long + radius (e.g. SFCC Stores-FindStores).
+        p = result["url_params"]
+        has_geo_center = (
+            ("lat" in p and ("long" in p or "lng" in p))
+            or ("latitude" in p and ("longitude" in p or "lng" in p))
+            or ("q" in p)
+        )
+        has_rad = any(
+            k in p for k in ("radius", "r", "distance", "max_distance", "maxdistance")
+        )
+        if has_geo_center and has_rad and "radius_search" in scores:
+            best = ("radius_search", scores["radius_search"])
+
         result["detected_type"] = best[0]
         result["confidence"] = min(best[1]["score"] / 2.0, 1.0)
         result["matched_indicators"] = best[1]["matched"]
@@ -147,6 +165,19 @@ def detect_locator_type(url: str, sample_response: Any = None) -> Dict[str, Any]
         else:
             result["has_token_pagination"] = False
             result["pagination_type"] = "page_number"
+    if wp_ajax_sale_country:
+        result["detected_type"] = "single_call"
+        result["confidence"] = max(float(result.get("confidence") or 0), 0.9)
+        result["expansion_strategy"] = "direct_fetch"
+        result["complexity"] = "low"
+        result["can_expand_to_world"] = True
+        result["is_region_specific"] = False
+        result["matched_indicators"] = list(
+            dict.fromkeys(
+                (result.get("matched_indicators") or [])
+                + ["wordpress_admin_ajax", "sale_country"]
+            )
+        )
     estimates = get_scraping_estimates(result["detected_type"])
     result["estimated_calls_world"] = estimates["calls"]
     result["estimated_time_min"] = estimates["time_min"]

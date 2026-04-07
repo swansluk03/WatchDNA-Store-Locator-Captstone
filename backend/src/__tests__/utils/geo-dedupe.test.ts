@@ -5,6 +5,7 @@ import {
   haversineDistanceMeters,
   isUnusableScraperCoordinate,
   metersToLatitudeDelta,
+  namesSimilarForDedupe,
   pickNearestWithin,
   PROXIMITY_MERGE_MAX_METERS,
 } from '../../utils/geo-dedupe';
@@ -63,8 +64,26 @@ describe('geo-dedupe', () => {
     expect(countriesMatchForDedupe('France', 'Germany')).toBe(false);
   });
 
-  it('PROXIMITY_MERGE_MAX_METERS is a reasonable mall / geocode-drift radius', () => {
-    expect(PROXIMITY_MERGE_MAX_METERS).toBeGreaterThanOrEqual(150);
-    expect(PROXIMITY_MERGE_MAX_METERS).toBeLessThanOrEqual(800);
+  it('PROXIMITY_MERGE_MAX_METERS stays tight; wider merges use name / similar-name passes', () => {
+    expect(PROXIMITY_MERGE_MAX_METERS).toBeGreaterThanOrEqual(50);
+    expect(PROXIMITY_MERGE_MAX_METERS).toBeLessThanOrEqual(150);
+  });
+
+  it('namesSimilarForDedupe handles Inc. suffix and long shared retailer prefixes', () => {
+    expect(namesSimilarForDedupe('ABT Electronics', 'ABT Electronics Inc.')).toBe(true);
+    expect(namesSimilarForDedupe('Air du Temps', 'AIR DU TEMPS')).toBe(true);
+    expect(
+      namesSimilarForDedupe(
+        'ABENO HARUKAS KINTETSU HONTEN',
+        'Abeno Harukas Kintetsu Dept Main Store Watch Salon'
+      )
+    ).toBe(true);
+    expect(namesSimilarForDedupe('Omega Boutique', 'Breitling Store')).toBe(false);
+  });
+
+  it('namesSimilarForDedupe matches number-prefixed retailer variants (13 Secrets …)', () => {
+    expect(
+      namesSimilarForDedupe('13 SECRETS JEWELRY GALLERY', '13 Secrets Plant Riverside')
+    ).toBe(true);
   });
 });

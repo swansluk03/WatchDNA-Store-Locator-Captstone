@@ -3,13 +3,14 @@
 
 import re
 import csv
+import html
 import os
 import json
 import time
 from typing import Dict, List, Any, Optional, Tuple, Set
 from urllib.parse import urlparse, urljoin
 
-from scraper_utils import resolve_partial_url
+from scraper_utils import resolve_partial_url, dict_get_ci
 from country_normalize import normalize_country
 
 CANONICAL_SCHEMA = [
@@ -53,6 +54,33 @@ def load_canonical_schema():
 
 SCHEMA = load_canonical_schema()
 
+# ISO alpha-2 -> English name from watch_store_countries.json (lazy, for combined-address parsing)
+_ALPHA2_COUNTRY_NAMES: Optional[Dict[str, str]] = None
+
+
+def _alpha2_country_name(code: str) -> Optional[str]:
+    """Resolve a 2-letter country code to the canonical English name, or None."""
+    global _ALPHA2_COUNTRY_NAMES
+    if not code or len(code) != 2:
+        return None
+    c = code.strip().upper()
+    if _ALPHA2_COUNTRY_NAMES is None:
+        _ALPHA2_COUNTRY_NAMES = {}
+        countries_file = os.path.join(os.path.dirname(__file__), "watch_store_countries.json")
+        try:
+            if os.path.exists(countries_file):
+                with open(countries_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                raw = data.get("countries") or {}
+                if isinstance(raw, dict):
+                    for k, v in raw.items():
+                        if isinstance(k, str) and isinstance(v, str) and len(k) == 2:
+                            _ALPHA2_COUNTRY_NAMES[k.upper()] = v.strip()
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    name = _ALPHA2_COUNTRY_NAMES.get(c) if _ALPHA2_COUNTRY_NAMES else None
+    return name or None
+
 
 def _decode_unicode_escapes(text: str) -> str:
     """
@@ -71,22 +99,27 @@ def _decode_unicode_escapes(text: str) -> str:
 
 
 def clean_html_tags(text: Any) -> str:
+    """
+    Plain-text cleanup for any scraped string: Unicode escapes, HTML entities (&#038; &amp; etc.),
+    and tags → spaces, then collapsed whitespace. Used from normalize_field_value and normalize_location.
+    """
     if not text:
         return ""
-    
+
     text_str = str(text).strip()
-    
+
     # Decode literal Unicode escapes (e.g. /u00e3 -> ã) that may appear in scraped data
     text_str = _decode_unicode_escapes(text_str)
-    
-    # Replace <br>, <br/>, <br />, etc. with space
-    text_str = re.sub(r'<br\s*/?>', ' ', text_str, flags=re.IGNORECASE)
-    # Remove any other HTML tags
-    text_str = re.sub(r'<[^>]+>', '', text_str)
-    
-    text_str = re.sub(r'[\u200E\u200F\u202A-\u202E\u2066-\u2069]', '', text_str)
-    text_str = re.sub(r'\s+', ' ', text_str)
-    
+    text_str = html.unescape(text_str)
+
+    # Block/line breaks → space before stripping remaining tags (readable addresses)
+    text_str = re.sub(r"(?i)<\s*br\s*/?\s*>", " ", text_str)
+    text_str = re.sub(r"(?i)</\s*p\s*>", " ", text_str)
+    text_str = re.sub(r"<[^>]+>", " ", text_str)
+
+    text_str = re.sub(r"[\u200E\u200F\u202A-\u202E\u2066-\u2069]", "", text_str)
+    text_str = re.sub(r"\s+", " ", text_str)
+
     return text_str.strip()
 
 
@@ -172,6 +205,21 @@ def parse_combined_address(address_str: str) -> Dict[str, str]:
             return result
         last = parts[-1].strip()
 
+    # Trailing ISO alpha-2 (Storepoint, etc.): "..., City 12345, DE" — only when the
+    # segment before the code looks like it includes postal/city digits (avoids most
+    # US "City, ST" false positives where ST is a state abbreviation).
+    if len(parts) >= 3:
+        tail = parts[-1].strip()
+        penultimate = parts[-2].strip()
+        if re.match(r"^[A-Z]{2}$", tail) and any(ch.isdigit() for ch in penultimate):
+            cname = _alpha2_country_name(tail)
+            if cname:
+                result["country"] = cname
+                parts = parts[:-1]
+                if not parts:
+                    return result
+                last = parts[-1].strip()
+
     # New last part: treat as postal code if it's short and contains a digit
     if re.match(r'^[\w\s\-]{2,10}$', last) and any(c.isdigit() for c in last) and len(last) <= 10:
         result["postal"] = last
@@ -244,7 +292,45 @@ def strip_redundant_address_parts(
             if result.lower().endswith(suffix.lower()) and len(result) > len(suffix):
                 result = result[:-len(suffix)].rstrip().rstrip(',').strip()
                 break
+
+    # 4. Comma-separated tails: drop trailing "City" or "City Province/Governorate/…" when the same
+    # city is already in its own field but API left admin area only in line1 (e.g. FC / Google route).
+    result = _dedupe_trailing_address_segments(result, city)
     return result
+
+
+def _dedupe_trailing_address_segments(addr1: str, city: str) -> str:
+    """
+    Remove rightmost comma segments that only repeat the City field or spell "{City} Province" etc.
+    Avoids "…, Tehran, Tehran Province" when City is already Tehran and State was not populated.
+    """
+    if not addr1 or not (city or "").strip():
+        return addr1
+    parts = [p.strip() for p in addr1.split(",") if p.strip()]
+    if len(parts) <= 1:
+        return addr1
+    c_low = city.strip().lower()
+    admin_endings = (
+        "province",
+        "governorate",
+        "region",
+        "prefecture",
+        "municipality",
+        "oblast",
+        "krai",
+        "voivodeship",
+        "county",
+    )
+    while len(parts) >= 2:
+        last = parts[-1].strip().lower()
+        if last == c_low:
+            parts.pop()
+            continue
+        if last.startswith(c_low + " ") and any(last.endswith(adm) for adm in admin_endings):
+            parts.pop()
+            continue
+        break
+    return ", ".join(parts)
 
 
 def validate_coordinate(value: Any, coord_type: str = "latitude") -> str:
@@ -549,8 +635,22 @@ def generate_handle(name: str, city: str = "", existing_handles: Optional[Set[st
 
 # Canonical field aliases for fuzzy key matching (when explicit mapping is missing/empty)
 FIELD_MAPPING_ALIASES = {
-    "Name": ["name", "title", "storeName", "store_name", "establishment_name", "nameTranslated", "shortName"],
-    "Address Line 1": ["address", "address1", "streetAddress", "street_address", "line1", "adr", "shortAddress", "full_address", "address_line_1"],
+    "Name": [
+        "name",
+        "Name",
+        "title",
+        "label",
+        "storeName",
+        "store_name",
+        "displayName",
+        "establishment_name",
+        "nameTranslated",
+        "shortName",
+        "properties.name",
+        "store.name",
+        "pos.name",
+    ],
+    "Address Line 1": ["address", "address1", "streetAddress", "street_address", "streetaddress", "line1", "adr", "shortAddress", "full_address", "address_line_1"],
     "Address Line 2": ["address2", "address_line_2", "street2", "line2"],
     "City": ["city", "cityName", "city_name", "locality"],
     "State/Province/Region": ["state", "region", "stateName", "regionName", "province", "stateCode", "isoRegionCode"],
@@ -559,8 +659,8 @@ FIELD_MAPPING_ALIASES = {
     "Phone": ["phone", "phone1", "phone2", "mainPhone", "telephone", "tel", "mobile", "dealerPhone"],
     "Email": ["email", "emails", "contact_email", "mail"],
     "Website": ["website", "url", "websiteUrl", "permalink", "dealerSiteUrl"],
-    "Latitude": ["lat", "latitude", "y"],
-    "Longitude": ["lng", "lon", "longitude", "x"],
+    "Latitude": ["lat", "latitude", "loc_lat", "y"],
+    "Longitude": ["lng", "lon", "longitude", "loc_long", "x"],
     "Handle": ["id", "handle", "store_id", "dealerId", "meta.id"],
 }
 
@@ -569,11 +669,12 @@ def normalize_field_value(value: Any) -> str:
     """
     Convert extracted field value to string, handling arrays and objects.
     Used for APIs that return emails as ['x@y.com'] or phone as {display: "..."}.
+    All string output runs through clean_html_tags (entities + tags + whitespace).
     """
     if value is None:
         return ""
     if isinstance(value, str):
-        return value.strip()
+        return clean_html_tags(value)
     if isinstance(value, list):
         # Take first non-empty element, or join if multiple
         non_empty = [normalize_field_value(v) for v in value if v is not None]
@@ -591,9 +692,9 @@ def normalize_field_value(value: Any) -> str:
         # Fallback: first non-empty value
         for v in value.values():
             if v and isinstance(v, str):
-                return v.strip()
+                return normalize_field_value(v)
         return ""
-    return str(value).strip()
+    return clean_html_tags(str(value).strip())
 
 
 def get_nested_value(obj: Dict, path: str) -> Any:
@@ -615,7 +716,7 @@ def get_nested_value(obj: Dict, path: str) -> Any:
     
     for key in keys:
         if isinstance(value, dict):
-            value = value.get(key)
+            value = dict_get_ci(value, key)
             if value is None:
                 return None
         else:
@@ -633,7 +734,7 @@ def _extract_value_by_path(raw_data: Dict, path: str) -> Any:
             if value is None:
                 return None
             if isinstance(value, dict):
-                value = value.get(part)
+                value = dict_get_ci(value, part)
             elif isinstance(value, list):
                 try:
                     idx = int(part)
@@ -646,7 +747,7 @@ def _extract_value_by_path(raw_data: Dict, path: str) -> Any:
             else:
                 return None
         return value
-    return raw_data.get(path)
+    return dict_get_ci(raw_data, path)
 
 
 def _fuzzy_extract(raw_data: Dict, canonical_field: str) -> str:
@@ -666,7 +767,12 @@ def _fuzzy_extract(raw_data: Dict, canonical_field: str) -> str:
                     return normalize_field_value(val)
                 if canonical_field == "Address Line 1" and any(p in key_lower for p in ["address", "street", "line1"]):
                     return normalize_field_value(val)
-            if isinstance(val, dict) and canonical_field in ["Phone", "Email", "Address Line 1"]:
+            if isinstance(val, dict) and canonical_field in [
+                "Phone",
+                "Email",
+                "Address Line 1",
+                "Name",
+            ]:
                 nested = _fuzzy_extract(val, canonical_field)
                 if nested:
                     return nested
@@ -686,18 +792,39 @@ def extract_field(raw_data: Dict, field_config: Any, canonical_field: str = "", 
         value = _extract_value_by_path(raw_data, field_config)
     elif isinstance(field_config, list):
         for key in field_config:
-            value = get_nested_value(raw_data, key) if '.' in key else raw_data.get(key)
+            value = get_nested_value(raw_data, key) if key else None
             if value is not None and value != "":
                 break
     elif isinstance(field_config, dict):
-        key = field_config.get("key", "")
-        default = field_config.get("default", "")
-        value = get_nested_value(raw_data, key) if '.' in key else raw_data.get(key, default)
-        if value is None:
-            value = default
-        transform = field_config.get("transform")
-        if transform and callable(transform):
-            value = transform(value)
+        join_paths = field_config.get("join")
+        if join_paths and isinstance(join_paths, list):
+            sep = str(field_config.get("separator", " "))
+            skip_tokens = field_config.get("skip_tokens", ["n/a", "na", "-", "—"])
+            skip_l = {str(t).strip().lower() for t in skip_tokens if str(t).strip()}
+            parts: List[str] = []
+            for p in join_paths:
+                if not p:
+                    continue
+                v = _extract_value_by_path(raw_data, str(p))
+                if v is None:
+                    continue
+                s = str(v).strip()
+                if not s or s.lower() in skip_l:
+                    continue
+                sl = s.lower()
+                if any(sl in ex.lower() or ex.lower() in sl for ex in parts):
+                    continue
+                parts.append(s)
+            value = sep.join(parts) if parts else None
+        else:
+            key = field_config.get("key", "")
+            default = field_config.get("default", "")
+            value = get_nested_value(raw_data, key) if key else None
+            if value is None:
+                value = default
+            transform = field_config.get("transform")
+            if transform and callable(transform):
+                value = transform(value)
     
     result = normalize_field_value(value) if value is not None else ""
     if not result and use_fuzzy_fallback and canonical_field:
@@ -1120,7 +1247,8 @@ def batch_normalize(
     raw_data_list: List[Dict[str, Any]],
     field_mapping: Optional[Dict[str, Any]] = None,
     deduplicate: bool = True,
-    geocode_missing: bool = True
+    geocode_missing: bool = True,
+    allow_missing_coordinates: bool = False,
 ) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
     """
     Normalize a batch of locations with comprehensive deduplication.
@@ -1131,6 +1259,8 @@ def batch_normalize(
         field_mapping: Optional field mapping
         deduplicate: If True, ensures unique handles and removes duplicates by name+address+city
         geocode_missing: If True, attempt to geocode stores missing coordinates (default: True)
+        allow_missing_coordinates: If True, keep rows with empty Latitude/Longitude (e.g. dry-run text QA;
+            production exports should leave this False so only mappable stores ship).
     
     Returns:
         Tuple of (normalized_list, excluded_stores).
@@ -1167,7 +1297,7 @@ def batch_normalize(
                     lat = normalized["Latitude"]
                     lon = normalized["Longitude"]
         
-        # If still no coordinates after geocoding attempt, exclude the store
+        # If still no coordinates after geocoding attempt, exclude the store (unless dry-run / QA mode)
         if not lat or not lon:
             store_name = normalized.get("Name", "Unknown").strip()
             store_address = normalized.get("Address Line 1", "").strip()
@@ -1180,12 +1310,13 @@ def batch_normalize(
             if not address_str:
                 address_str = "Address not available"
             
-            excluded_stores.append({
-                "name": store_name,
-                "address": address_str,
-                "reason": "Missing coordinates (Latitude/Longitude) - geocoding failed or insufficient address data"
-            })
-            continue  # Skip this store - exclude from output
+            if not allow_missing_coordinates:
+                excluded_stores.append({
+                    "name": store_name,
+                    "address": address_str,
+                    "reason": "Missing coordinates (Latitude/Longitude) - geocoding failed or insufficient address data"
+                })
+                continue  # Skip this store - exclude from output
         
         # Additional deduplication by name+address+city (even if handles differ)
         if deduplicate:
