@@ -83,6 +83,10 @@
           <span>Accessory brands</span>
         </label>
       </div>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="clearFiltersBtn" type="button" title="Clear all filters" style="padding:6px 10px; cursor:pointer;">Clear filters</button>
+        <span style="font-size:0.85rem; opacity:0.8;">Clears search, brands, types, and area filter</span>
+      </div>
     </div>
 
     <!-- Store detail panel (hidden by default)-->
@@ -1398,6 +1402,36 @@
         userCheckedStores.clear();
         applyFilter();
         storeInput.focus();
+      });
+    }
+
+    // Clear all filters button handler
+    const clearFiltersBtn = document.getElementById('clearFiltersBtn');
+    function clearAllFilters() {
+      // Reset text search
+      if (storeInput) storeInput.value = '';
+      if (clearBtn) clearBtn.style.display = 'none';
+
+      // Clear user-selected store checkboxes
+      userCheckedStores.clear();
+      document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => cb.checked = false);
+
+      // Clear brand checkboxes
+      document.querySelectorAll('#brandCheckboxes input[type="checkbox"]').forEach(cb => cb.checked = false);
+
+      // Clear type checkboxes
+      document.querySelectorAll('#typeCheckboxes input[type="checkbox"]').forEach(cb => cb.checked = false);
+
+      // Rebuild filters/UI
+      applyFilter();
+      if (storeInput) storeInput.focus();
+      setNearMeStatus('Filters cleared.');
+    }
+
+    if (clearFiltersBtn) {
+      clearFiltersBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        clearAllFilters();
       });
     }
 
