@@ -709,5 +709,31 @@
       "Longitude": ["lng", "longitude"]
     },
     "_note": "Confirmed working: 255 US dealers from a single US-bbox call. Field names identical to Rolex (nameTranslated, streetAddress, etc). Viewport expansion will walk the rest of the world."
+  },
+  "tissot_stores": {
+    "type": "json",
+    "url": "https://www.tissotwatches.com/en-us/stores?countryCode=US",
+    "method": "GET",
+    "description": "Tissot — Salesforce Commerce Cloud (SFCC) backend. GET /en-us/stores?countryCode=<ISO2> returns ALL stores for that country in one call (no pagination). Set worldwide_country_pagination to iterate countries. Verified: 1330 US stores in a single call.",
+    "display_name": "TISSOT",
+    "url_base": "https://www.tissotwatches.com",
+    "data_path": "stores.stores",
+    "worldwide_country_pagination": true,
+    "use_watch_store_countries": true,
+    "field_mapping": {
+      "Handle": "ID",
+      "Name": "name",
+      "Address Line 1": "address1",
+      "Address Line 2": "address2",
+      "City": "city",
+      "Postal/ZIP Code": "postalCode",
+      "Country": "countryCodeDisplayValue",
+      "Phone": "phone",
+      "Email": "email",
+      "Latitude": "latitude",
+      "Longitude": "longitude",
+      "Service Type": "storeType"
+    },
+    "_note": "Same SFCC pattern likely shared with other Swatch Group brands (Longines, Mido, Hamilton, Rado). When testing those, swap the host + locale in the URL."
   }
 }
