@@ -735,5 +735,42 @@
       "Service Type": "storeType"
     },
     "_note": "Same SFCC pattern likely shared with other Swatch Group brands (Longines, Mido, Hamilton, Rado). When testing those, swap the host + locale in the URL."
+  },
+  "tagheuer_stores": {
+    "type": "json",
+    "url": "https://6obga4vjki-dsn.algolia.net/1/indexes/stores/query",
+    "method": "POST",
+    "description": "TAG Heuer — Algolia 'stores' index. POST one query per country with a filter string. Reuses post_per_country strategy. Algolia search-only API key is public (embedded in every visitor's browser).",
+    "display_name": "TAG HEUER",
+    "url_base": "https://www.tagheuer.com",
+    "data_path": "hits",
+    "post_per_country": {
+      "body_template": {
+        "params": "filters=products.mechanicalWatches:true AND (type:TAGSTORE OR type:FRANCHISE OR type:OUTLET OR type:WHOLESALER OR type:PRIORITY_WHOLESALER OR type:OPTICIAN) AND country:{country}&attributesToRetrieve=address,zip,country,phone,type,id,address2,email,name,city,_geoloc,sfccUrl&hitsPerPage=1000&getRankingInfo=1"
+      },
+      "data_path": "hits",
+      "delay": 0.2
+    },
+    "custom_headers": {
+      "X-Algolia-Application-Id": "6OBGA4VJKI",
+      "X-Algolia-Api-Key": "8cf40864df513111d39148923f754024",
+      "Origin": "https://www.tagheuer.com",
+      "Referer": "https://www.tagheuer.com/"
+    },
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "name",
+      "Address Line 1": "address",
+      "Address Line 2": "address2",
+      "City": "city",
+      "Postal/ZIP Code": "zip",
+      "Country": "country",
+      "Phone": "phone",
+      "Email": "email",
+      "Latitude": "_geoloc.lat",
+      "Longitude": "_geoloc.lng",
+      "Service Type": "type"
+    },
+    "_note": "Algolia POST body is {params: '<query string>'}. Filter templated as country:{country}. Search-only API key is public — fine to commit. ~96 US stores observed; expect a few thousand worldwide."
   }
 }
