@@ -35,6 +35,12 @@
       "config_key": "tagheuer_stores",
       "rows": 2001,
       "notes": "Algolia stores index. Reused post_per_country with {country} templated inside the params filter string. Search-only API key is public."
+    },
+    {
+      "brand": "SEIKO",
+      "config_key": "seiko_stores",
+      "rows": 10463,
+      "notes": "Custom country UUIDs (mapped via country_id_map). Required new inject_country_field engine option. unit=99999 returns all stores per country in one call."
     }
   ],
   "blocked": [
@@ -58,7 +64,7 @@
     }
   ],
   "queue_remaining_excludes": ["SWAROVSKI"], "queue_remaining": [ "SWATCH", "SWAROVSKI",
-    "SEIKO", "ROGER DUBUIS", "RAYMOND WEIL", "RADO",
+    "ROGER DUBUIS", "RAYMOND WEIL", "RADO",
     "PILO & CO", "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
     "MONTBLANC", "MONDAINE", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
     "LONGINES", "LACOSTE", "JACOB & CO", "IWC", "HUBLOT", "HAMILTON",
