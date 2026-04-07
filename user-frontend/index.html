@@ -749,15 +749,8 @@
     function resetFocusedStore() {
       setDetailPanelVisible(false);
 
-      // if (originalCenter && originalZoom !== undefined) {
-      //   map.flyTo(originalCenter, originalZoom, {
-      //     animate: true,
-      //     duration: 2.5
-      //   });
-      // }
-
-      // Final zoom out level should be to the snapshot of when the "Search this area" button was clicked
-      centerOnUserLocation(); // Testing out a different zoom out level until I know where that snapshot is
+      // lastSearchAreaBounds is the snapshot of the map bounds when "Search this area" was clicked
+      map.fitBounds(lastSearchAreaBounds, { animate: true }); 
     }
 
     // When the close store detail button is clicked, it will close itself, the popup, and zoom the map back out to full view
