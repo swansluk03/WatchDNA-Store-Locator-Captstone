@@ -1,0 +1,37 @@
+{
+  "_README": "Tracking state for the brand sweep on the brand-discovery branch. Updated as each brand is processed.",
+  "branch": "brand-discovery",
+  "source": "https://watchdna.com/tools/storelocator (Thomas's filter list)",
+  "order": "bottom-up",
+  "completed": [
+    {
+      "brand": "ZENITH",
+      "config_key": "zenith_stores",
+      "commit": "02ea134",
+      "rows": 450,
+      "notes": "POST per country. Required new post_per_country engine strategy."
+    }
+  ],
+  "blocked": [
+    {
+      "brand": "VERSACE",
+      "reason": "ASP.NET WebForms postback. Store data is rendered into HTML by Storelocator.aspx after __doPostBack on country/city dropdowns. No JSON XHR feed (the GetViewportInfo XHRs are Google Maps tile metadata, not store data). Would require __VIEWSTATE/__EVENTVALIDATION management + per-country + per-city HTML parsing.",
+      "endpoint_seen": "https://www.versace.com/.../Storelocator.aspx?Country=USA&City=NEW+YORK",
+      "fix_estimate": "half-day of engine work; defer until 2+ similar brands surface"
+    }
+  ],
+  "queue_remaining": [
+    "U-BOAT", "TUDOR", "TISSOT", "TAG HEUER", "SWATCH", "SWAROVSKI",
+    "STIL TIMEPIECES", "SEIKO", "ROGER DUBUIS", "RAYMOND WEIL", "RADO",
+    "PILO & CO", "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
+    "MONTBLANC", "MONDAINE", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
+    "LONGINES", "LACOSTE", "JACOB & CO", "IWC", "HUBLOT", "HAMILTON",
+    "GUESS", "GUCCI", "GRAND SEIKO", "GLASHÜTTE ORIGINAL", "GIRARD PERREGAUX",
+    "G-SHOCK", "FREDERIQUE CONSTANT", "FORTIS", "ELKA", "EDOX", "DIESEL",
+    "COACH", "CITIZEN", "CHOPARD", "BOSS", "BACKES & STRAUSS", "AEROWATCH"
+  ],
+  "skipped_already_configured": [
+    "ROLEX", "OMEGA", "BAUME & MERCIER", "BELL & ROSS", "BREITLING",
+    "BULOVA", "CALVIN KLEIN", "CASIO", "ACCUTRON", "BALL"
+  ]
+}
