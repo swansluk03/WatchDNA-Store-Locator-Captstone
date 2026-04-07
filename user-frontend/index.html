@@ -218,17 +218,83 @@
     console.log('[proto] initial filters:', INITIAL);
 
     // --- CSV loader (with cache-busting to avoid stale results) ---
-    function loadCSV(path) {
-      const url = `${path}?v=${Date.now()}`;
-      return new Promise((resolve, reject) => {
-        Papa.parse(url, {
-          download: true,
-          header: true,
-          skipEmptyLines: true,
-          complete: res => resolve(res.data),
-          error: err => reject(err)
-        });
-      });
+    //function loadCSV(path) {
+      //const url = `${path}?v=${Date.now()}`;
+      //return new Promise((resolve, reject) => {
+        //Papa.parse(url, {
+          //download: true,
+          //header: true,
+          //skipEmptyLines: true,
+          //complete: res => resolve(res.data),
+          //error: err => reject(err)
+        //});
+      //});
+    //}
+
+    const API_LOCATIONS_URL = 'https://backend-production-033e.up.railway.app/api/locations';
+    const BACKEND_BASE_URL = 'https://backend-production-033e.up.railway.app';
+
+    function normalizeApiLocation(loc) {
+      return {
+        'Handle': loc.handle || '',
+        'Name': loc.name || '',
+        'Status': String(loc.status ?? ''),
+        'Address Line 1': loc.addressLine1 || '',
+        'Address Line 2': loc.addressLine2 || '',
+        'Zip/Postal Code': loc.postalCode || '',
+        'City': loc.city || '',
+        'State/Province/Region': loc.stateProvinceRegion || '',
+        'Country': loc.country || '',
+        'Phone': loc.phone || '',
+        'Email': loc.email || '',
+        'Website': loc.website || '',
+        'Image URL': loc.imageUrl || '',
+        'Monday': loc.monday || '',
+        'Tuesday': loc.tuesday || '',
+        'Wednesday': loc.wednesday || '',
+        'Thursday': loc.thursday || '',
+        'Friday': loc.friday || '',
+        'Saturday': loc.saturday || '',
+        'Sunday': loc.sunday || '',
+        'Latitude': loc.latitude ?? '',
+        'Longitude': loc.longitude ?? '',
+        'Page Title': loc.pageTitle || '',
+        'Page Description': loc.pageDescription || '',
+        'Meta Title': loc.metaTitle || '',
+        'Meta Description': loc.metaDescription || '',
+        'Priority': loc.priority || '',
+        'Tags': loc.tags || '',
+        'Brands': loc.brands || '',
+        'Custom Brands': loc.customBrands || '',
+        'Name - FR': loc.nameFr || '',
+        'Page Title - FR': loc.pageTitleFr || '',
+        'Page Description - FR': loc.pageDescriptionFr || '',
+        'Custom Brands - FR': loc.customBrandsFr || '',
+        'Name - ZH-CN': loc.nameZhCn || '',
+        'Page Title - ZH-CN': loc.pageTitleZhCn || '',
+        'Page Description - ZH-CN': loc.pageDescriptionZhCn || '',
+        'Custom Brands - ZH-CN': loc.customBrandsZhCn || '',
+        'Name - ES': loc.nameEs || '',
+        'Page Title - ES': loc.pageTitleEs || '',
+        'Page Description - ES': loc.pageDescriptionEs || '',
+        'Custom Brands - ES': loc.customBrandsEs || '',
+        'Custom Button title 1': loc.customButton1Title || '',
+        'Custom Button URL 1': loc.customButton1Url || '',
+        'Custom Button title 2': loc.customButton2Title || '',
+        'Custom Button URL 2': loc.customButton2Url || '',
+        '_isPremium': !!loc.isPremium
+      };
+    }
+
+    async function loadLocationsFromApi() {
+      const res = await fetch(`${API_LOCATIONS_URL}?limit=10000&v=${Date.now()}`);
+      if (!res.ok) {
+        throw new Error(`API request failed with status ${res.status}`);
+      }
+
+      const payload = await res.json();
+      const locations = Array.isArray(payload?.data) ? payload.data : [];
+      return locations.map(normalizeApiLocation);
     }
 
     // --- small hamburger toggle (left) ---
@@ -646,22 +712,26 @@
       }
       const isVerified = !!row._isPremium;
 
-      const aboutText =
-        "We are building a vibrant community where watch enthusiasts can discover new brands and connect with passionate jewellers who value both timepieces and the stories behind them. As your trusted directory for brands and authorized dealers, we make it easy to find and reach out to reputable retailers. Feel free to contact your authorized dealer for any questions regarding the brands they carry.";
+      const aboutText = (row['Page Description'] || '').trim();
 
       if (aboutSectionEl) {
-        aboutSectionEl.style.display = isVerified ? "" : "none";
+        aboutSectionEl.style.display = (isVerified && aboutText) ? "" : "none";
       }
 
       if (aboutEl) {
-        aboutEl.textContent = isVerified ? aboutText : "";
+        aboutEl.textContent = (isVerified && aboutText) ? aboutText : "";
       }
 
       // Image: show only for premium/verified
       if (imageEl) {
         if (isVerified) {
           imageEl.style.display = '';
-          const imageUrl = (row['Image URL'] || '').trim();
+          const rawImageUrl = (row['Image URL'] || '').trim();
+          const imageUrl = rawImageUrl.startsWith('http')
+            ? rawImageUrl
+            : rawImageUrl
+              ? `${BACKEND_BASE_URL}${rawImageUrl}`
+              : '';
 
           if (imageUrl) {
             imageEl.style.backgroundImage = `url('${imageUrl}')`;
@@ -750,7 +820,7 @@
       setDetailPanelVisible(false);
 
       // lastSearchAreaBounds is the snapshot of the map bounds when "Search this area" was clicked
-      map.fitBounds(lastSearchAreaBounds, { animate: true }); 
+      map.fitBounds(lastSearchAreaBounds, { animate: true });
     }
 
     // When the close store detail button is clicked, it will close itself, the popup, and zoom the map back out to full view
@@ -1398,9 +1468,9 @@
     }
 
     // --- Load data & render (with helpful logs) ---
-    loadCSV('/backend/uploads/master_stores.csv')
+    loadLocationsFromApi()
       .then(rows => {
-        console.log('CSV rows (raw):', rows.length);
+        console.log('API rows (raw):', rows.length);
         const brandSet = new Set();
 
         // Keep only rows that *have something* in lat/lon
@@ -1432,7 +1502,7 @@
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-          row._isPremium = isValidEmail(row['Email']);
+          row._isPremium = !!row._isPremium;
           row._isServiceCenter = isServiceCenterRow(row);
           row._isPremiumBrandOnly = isPremiumBrandOnlyRow(row);
 
@@ -1496,12 +1566,12 @@
 
         console.log('Markers added:', allMarkers.length);
         if (allMarkers.length === 0) {
-          showBanner('No markers loaded — check that master_stores.csv has data rows with numeric Latitude/Longitude.');
+          showBanner('No markers loaded — check that the backend returned rows with numeric Latitude/Longitude.');
         }
       })
       .catch(err => {
-        console.error('Error loading CSV:', err);
-        alert('Failed to load master_stores.csv. Serve via http://localhost and ensure the CSV file exists at backend/uploads/master_stores.csv.');
+        console.error('Error loading locations API:', err);
+        alert('Failed to load locations from the Railway API.');
       });
   </script>
 </body>
