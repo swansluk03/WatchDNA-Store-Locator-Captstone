@@ -51,41 +51,42 @@
     <button id="hamburger" aria-expanded="false" aria-controls="filtersPanel" title="Show filters">
       ☰ Filter
     </button>
-    <span id="nearMeStatus" style="font-size:.9rem; opacity:.8;"></span>
+    <span id="nearMeStatus"></span>
     <div id="filtersPanel" class="filters-panel" hidden>
       <label for="storeFilter"><strong>Filter by store:</strong></label>
-      <div style="position:relative; display:flex; align-items:center;">
-        <input id="storeFilter" type="search" placeholder="Search by store, city, brand, zip, etc."
-          style="width:100%; padding-right:28px;" />
-        <button id="clearSearch" title="Clear search" style="position:absolute; right:6px; background:none; border:none; 
-           cursor:pointer; font-size:1rem; opacity:0.5; display:none;">✕</button>
+      <div class="store-filter-wrapper">
+        <input id="storeFilter" type="search" placeholder="Search by store, city, brand, zip, etc." />
+        <button id="clearSearch" title="Clear search">✕</button>
       </div>
-      <div id="searchResultCount" style="font-size:0.8rem; opacity:0.7; margin-top:4px; min-height:1em;"></div>
+      <div id="searchResultCount"></div>
       <div id="storeCheckboxes">
         <!-- Store name checkboxes (hidden until user searches) -->
       </div>
+      <label><strong>Filter by Type:</strong></label>
+      <div id="typeCheckboxes">
+
+        <!-- Watch / Accessory toggle -->
+        <div class="type-toggle-row">
+          <span class="type-toggle-label" id="toggleLabelWatch">Watch Brands</span>
+          <button type="button" id="typeToggle" class="type-toggle" role="switch" aria-checked="false"
+            title="Switch between Watch Brands and Accessory Brands"></button>
+          <span class="type-toggle-label" id="toggleLabelAccessory">Accessory Brands</span>
+        </div>
+
+        <!-- Services Center stays as a standalone checkbox -->
+        <label class="type-checkbox-label">
+          <input type="checkbox" id="serviceCenterCheckbox" value="services-center" />
+          <span>Services Center</span>
+        </label>
+
+      </div>
+
       <label for="brandCheckboxes"><strong>Filter by Brand:</strong></label>
       <div id="brandCheckboxes">
         <!-- Brand checkboxes inserted here -->
       </div>
-      <label for="typeCheckboxes"><strong>Filter By Type:</strong></label>
-      <div id="typeCheckboxes">
-        <label>
-          <input type="checkbox" value="watch-brands" />
-          <span>Watch Brands</span>
-        </label>
-        <label>
-          <input type="checkbox" value="services-center" />
-          <span>Services Center</span>
-        </label>
-        <label>
-          <input type="checkbox" value="accessory-brands" />
-          <span>Accessory brands</span>
-        </label>
-      </div>
-      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
-        <button id="clearFiltersBtn" type="button" title="Clear all filters" style="padding:6px 10px; cursor:pointer;">Clear filters</button>
-        <span style="font-size:0.85rem; opacity:0.8;">Clears search, brands, types, and area filter</span>
+      <div class="filters-actions">
+        <button id="clearFiltersBtn" type="button" title="Clear all filters">Clear filters</button>
       </div>
     </div>
 
@@ -964,9 +965,21 @@
           }
         }
 
-        const selectedTypes = Array.from(document.querySelectorAll('#typeCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value);
-        if (passes && selectedTypes.length > 0) {
-          passes = selectedTypes.includes(row._type);
+        const toggleEl = document.getElementById('typeToggle');
+        const activeWatchType = toggleEl
+          ? (toggleEl.getAttribute('aria-checked') === 'true' ? 'accessory-brands' : 'watch-brands')
+          : 'watch-brands';
+        const serviceCenterChecked = document.getElementById('serviceCenterCheckbox')?.checked;
+
+        if (passes) {
+          const isServiceCenter = row._type === 'services-center';
+          if (isServiceCenter) {
+            // only show service centers if that checkbox is ticked
+            passes = !!serviceCenterChecked;
+          } else {
+            // non-service-center rows must match the toggle's active type
+            passes = row._type === activeWatchType;
+          }
         }
 
         if (passes && premiumOnly) {
@@ -1286,7 +1299,7 @@
         let distanceLine = '';
         if (cachedLatLng) {
           const km = (map.distance(cachedLatLng, marker.getLatLng()) / 1000).toFixed(1);
-          distanceLine = `<div style="margin-top:4px; font-size:0.95rem; opacity:0.75;">${km} km away</div>`;
+            distanceLine = `<div class="store-distance">${km} km away</div>`;
         }
 
         item.innerHTML = `
@@ -1421,6 +1434,14 @@
 
       // Clear type checkboxes
       document.querySelectorAll('#typeCheckboxes input[type="checkbox"]').forEach(cb => cb.checked = false);
+
+      const toggleEl = document.getElementById('typeToggle');
+      if (toggleEl) {
+        toggleEl.setAttribute('aria-checked', 'false'); // reset to Watch Brands
+        updateToggleLabels();
+      }
+      const scCb = document.getElementById('serviceCenterCheckbox');
+      if (scCb) scCb.checked = false;
 
       // Rebuild filters/UI
       applyFilter();
@@ -1590,12 +1611,28 @@
 
 
         populateBrandSelect(brandSet);
-        // Wire type checkboxes to applyFilter
-        document.querySelectorAll('#typeCheckboxes input[type="checkbox"]').forEach(cb => {
-          cb.addEventListener('change', () => applyFilter());
+
+        const typeToggle = document.getElementById('typeToggle');
+        const labelWatch = document.getElementById('toggleLabelWatch');
+        const labelAccessory = document.getElementById('toggleLabelAccessory');
+
+        function updateToggleLabels() {
+          const isAccessory = typeToggle.getAttribute('aria-checked') === 'true';
+          labelWatch.classList.toggle('inactive', isAccessory);
+          labelAccessory.classList.toggle('inactive', !isAccessory);
+        }
+
+        typeToggle.addEventListener('click', () => {
+          const isAccessory = typeToggle.getAttribute('aria-checked') === 'true';
+          typeToggle.setAttribute('aria-checked', isAccessory ? 'false' : 'true');
+          updateToggleLabels();
+          applyFilter();
         });
+
+        updateToggleLabels(); // set initial label opacity
+
+        document.getElementById('serviceCenterCheckbox').addEventListener('change', () => applyFilter());
         rebuildStoreCheckboxes(allRows);
-        // Premium-only filter UI removed; no toggle listener required.
 
         // Preload filters from URL, then apply once
         document.getElementById('storeFilter').value = INITIAL.store;
