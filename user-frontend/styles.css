@@ -268,6 +268,32 @@ header::-webkit-scrollbar-thumb {
   box-sizing: border-box;
 }
 
+.filters-panel label[for="storeFilter"],
+.filters-panel > label {
+  margin-top: 8px;
+  margin-bottom: 2px;
+}
+
+#typeCheckboxes {
+  gap: 8px;
+}
+
+.type-divider {
+  margin: 10px 0;
+}
+
+.filters-panel {
+  gap: 8px;
+}
+
+/* Add separator lines between filter sections */
+.filters-panel > label[for="brandCheckboxes"],
+#typeCheckboxes {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
 #storeFilter {
   padding: 8px;
   min-width: 260px;
