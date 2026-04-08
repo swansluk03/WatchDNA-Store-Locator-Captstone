@@ -701,16 +701,42 @@
       const directionsBtn = document.getElementById('detailDirectionsBtn');
       const phoneBtn = document.getElementById('detailPhoneBtn');
       const connectBtn = document.getElementById('detailConnectBtn');
+      const actionsEl = document.querySelector('.store-detail__actions');
       const aboutSectionEl = document.getElementById('detailAboutSection');
       const aboutEl = document.getElementById('detailAbout');
 
       const name = (row['Name'] || 'Unnamed').trim();
       const address = buildFullAddress(row);
       const phone = (row['Phone'] || '').trim();
-      const brandsText = getDisplayBrandsForRow(row);
-      const brandsHTML = getDisplayBrandsHTMLForRow(row);
-      const hasVisibleBrands = !!brandsText;
+      const fullBrandsText = extractBrandsText(row);
+      const fullBrandLinks = extractBrandLinksMap(row);
+      const fullBrandList = fullBrandsText
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const brandsHTML = fullBrandList.length
+        ? fullBrandList.map(b => {
+          const clean = b.trim();
+          const key = clean.toUpperCase();
+          const isVerifiedBrand = VERIFIED_BRANDS.has(key);
+          const check = isVerifiedBrand ? ` <span class="verified-check" title="Verified brand">✓</span>` : "";
+          const href = fullBrandLinks.get(key);
+
+          if (isValidBrandHref(href)) {
+            return `<a class="brand-pill brand-pill--link" href="${escapeHtml(buildBrandHref(href))}" target="_blank" rel="noopener">${escapeHtml(clean)}${check}</a>`;
+          }
+
+          return `<span class="brand-pill">${escapeHtml(clean)}${check}</span>`;
+        }).join(" ")
+        : "";
+
+      const hasVisibleBrands = fullBrandList.length > 0;
       const isVerified = !!row._isPremium;
+
+      if (actionsEl) {
+        actionsEl.style.display = isVerified ? 'flex' : 'none';
+      }
 
 
       if (nameEl) {
@@ -772,13 +798,11 @@
       }
 
       if (brandsSectionEl) {
-        // Verified: show; Unverified: only show if a brand approved visibility
-        brandsSectionEl.style.display = (isVerified || hasVisibleBrands) ? '' : 'none';
+        brandsSectionEl.style.display = hasVisibleBrands ? '' : 'none';
       }
 
       if (brandsEl) {
-        if (isVerified) brandsEl.innerHTML = brandsHTML || 'Not provided';
-        else brandsEl.innerHTML = hasVisibleBrands ? brandsHTML : '';
+        brandsEl.innerHTML = hasVisibleBrands ? brandsHTML : '';
       }
 
 
@@ -789,10 +813,10 @@
       const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
 
       if (directionsBtn) {
-        const q = hasCoords ? `${lat},${lon}` : encodeURIComponent(address.replace(/\n/g, ', '));
-        directionsBtn.href = hasCoords
-          ? `https://www.google.com/maps/search/?api=1&query=${q}`
-          : `https://www.google.com/maps/search/?api=1&query=${q}`;
+        const storeName = (row['Name'] || '').trim();
+        const addressQuery = address.replace(/\n/g, ', ');
+        const mapsQuery = encodeURIComponent(`${storeName}, ${addressQuery}`);
+        directionsBtn.href = `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`;
       }
 
       if (phoneBtn) {
