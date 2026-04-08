@@ -401,6 +401,10 @@ header::-webkit-scrollbar-thumb {
 
 }
 
+.store.verified {
+  border-left: 3px solid #c8a75d;
+}
+
 .hidden {
   display: none !important;
 }
@@ -546,6 +550,43 @@ header::-webkit-scrollbar-thumb {
   font-size: 1rem;
   line-height: 1.3;
   word-break: break-word;
+}
+
+.store-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.store-card-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.store-card-media {
+  flex: 0 0 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.store-card-image {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+  border: 1px solid var(--border);
+}
+
+.store-card-badge {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+  color: #8a6a1f;
+  font-weight: 600;
 }
 
 .store-distance {

@@ -738,7 +738,7 @@
         aboutEl.textContent = (isVerified && aboutText) ? aboutText : "";
       }
 
-      // Image: show only for premium/verified
+      // Image: show only for verified locations
       if (imageEl) {
         if (isVerified) {
           imageEl.style.display = '';
@@ -803,7 +803,7 @@
         }
       }
 
-      // Connect: premium stores go to retailer website
+      // Connect: verified locations go to retailer website
       const website = normalizeWebsiteUrl(row['Website']);
       if (connectBtn) {
         if (isVerified && website) {
@@ -1303,10 +1303,10 @@
           }
         }
 
-        const aPremium = a.row && a.row._isPremium === true ? 1 : 0;
-        const bPremium = b.row && b.row._isPremium === true ? 1 : 0;
+        const aVerified = a.row && a.row._isPremium === true ? 1 : 0;
+        const bVerified = b.row && b.row._isPremium === true ? 1 : 0;
 
-        if (aPremium !== bPremium) return bPremium - aPremium;
+        if (aVerified !== bVerified) return bVerified - aVerified;
 
         const aName = String(a.row?.['Name'] || '').toLowerCase();
         const bName = String(b.row?.['Name'] || '').toLowerCase();
@@ -1315,7 +1315,7 @@
 
       items.forEach(({ row, marker }) => {
         const item = document.createElement('div');
-        item.className = row._isPremium ? 'store premium' : 'store';
+        item.className = row._isPremium ? 'store verified' : 'store';
 
         const addressLine = row['Address Line 1'] || '';
 
@@ -1327,18 +1327,45 @@
 
         const locationLine = locationParts.join(', ');
 
+        const isVerified = !!row._isPremium;
+
+        const rawImageUrl = (row['Image URL'] || '').trim();
+        const imageUrl = rawImageUrl.startsWith('http')
+          ? rawImageUrl
+          : rawImageUrl
+            ? `${BACKEND_BASE_URL}${rawImageUrl}`
+            : '';
+
         let distanceLine = '';
         if (cachedLatLng) {
           const km = (map.distance(cachedLatLng, marker.getLatLng()) / 1000).toFixed(1);
           distanceLine = `<div class="store-distance">${km} km away</div>`;
         }
 
+        const verifiedLabel = isVerified
+          ? `<div class="store-card-badge">Verified</div>`
+          : '';
+
+        const imageHtml = (isVerified && imageUrl)
+          ? `
+      <div class="store-card-media">
+        <img src="${imageUrl}" alt="${escapeHtml(row['Name'] || 'Store image')}" class="store-card-image">
+      </div>
+    `
+          : '';
+
         item.innerHTML = `
-      <strong>${row['Name'] || 'Unnamed'}</strong><br>
-      ${addressLine}<br>
-      ${locationLine}
-      ${distanceLine}
-    `;
+    <div class="store-card-row">
+      <div class="store-card-content">
+        ${verifiedLabel}
+        <strong>${row['Name'] || 'Unnamed'}</strong><br>
+        ${addressLine}<br>
+        ${locationLine}
+        ${distanceLine}
+      </div>
+      ${imageHtml}
+    </div>
+  `;
 
         item.addEventListener('click', () => {
           if (focusedMarker && focusedMarker !== marker) {
