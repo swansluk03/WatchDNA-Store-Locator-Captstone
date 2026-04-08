@@ -710,9 +710,14 @@
       const brandsText = getDisplayBrandsForRow(row);
       const brandsHTML = getDisplayBrandsHTMLForRow(row);
       const hasVisibleBrands = !!brandsText;
+      const isVerified = !!row._isPremium;
 
 
-      if (nameEl) nameEl.textContent = name;
+      if (nameEl) {
+        nameEl.innerHTML = isVerified
+          ? `${escapeHtml(name)} <span class="verified-location-badge" aria-label="Verified location" title="Verified location">✓</span>`
+          : escapeHtml(name);
+      }
 
       if (addressEl) {
         addressEl.textContent = address || 'Not provided';
@@ -726,7 +731,6 @@
           phoneEl.textContent = 'Not provided';
         }
       }
-      const isVerified = !!row._isPremium;
 
       const aboutText = (row['Page Description'] || '').trim();
 
@@ -1343,7 +1347,12 @@
         }
 
         const verifiedLabel = isVerified
-          ? `<div class="store-card-badge">Verified</div>`
+          ? `
+    <div class="store-card-badge-row">
+      <div class="store-card-badge">Verified</div>
+      <span class="verified-location-badge" aria-label="Verified location" title="Verified location">✓</span>
+    </div>
+  `
           : '';
 
         const imageHtml = (isVerified && imageUrl)

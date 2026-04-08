@@ -471,6 +471,9 @@ header::-webkit-scrollbar-thumb {
   font-weight: 700;
   line-height: 1.2;
   text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .store-detail__close {
@@ -587,6 +590,31 @@ header::-webkit-scrollbar-thumb {
   margin-bottom: 6px;
   color: #8a6a1f;
   font-weight: 600;
+}
+
+.store-card-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.verified-location-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid #c8a75d;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: #8a6a1f;
+  background: #fffaf0;
+  vertical-align: middle;
+  margin-left: 2px;
+  flex-shrink: 0;
 }
 
 .store-distance {
