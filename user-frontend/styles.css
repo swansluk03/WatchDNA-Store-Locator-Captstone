@@ -67,6 +67,14 @@ header::-webkit-scrollbar-thumb {
   width: 100%;
 }
 
+.type-divider {
+  text-align: center;
+  color: #aaa;
+  font-size: 0.85em;
+  margin: 6px 0;
+  user-select: none;
+}
+
 #map {
   margin-left: clamp(240px, 28vw, 400px);
   width: calc(100% - clamp(240px, 28vw, 400px));
