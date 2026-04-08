@@ -161,9 +161,9 @@
       style: 'https://tiles.openfreemap.org/styles/bright',
     }).addTo(map);
 
-    setTimeout(() => {
-      map.invalidateSize();
-    }, 500);
+    setTimeout(() => map.invalidateSize({ animate: false }), 300);
+    setTimeout(() => map.invalidateSize({ animate: false }), 1000);
+    window.addEventListener('load', () => map.invalidateSize({ animate: false }));
 
     // Removes 'Leaflet' from the attribution; it's not necessary to include it because the requirements of the MIT License
     // are already fulfilled within the Leaflet source code we are using.
