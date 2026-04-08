@@ -9,6 +9,11 @@
   --link: #3a4a5e;
 }
 
+html {
+  overflow: hidden;
+  height: 100%;
+}
+
 header,
 #footer,
 .banner {
@@ -23,7 +28,10 @@ body {
   font-family: "Cormorant", serif;
   color: var(--text);
   margin: 0;
+  overflow: hidden;
+  height: 100%;
 }
+
 
 /* Layout: left vertical control bar + map content to the right. */
 body {
