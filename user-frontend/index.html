@@ -938,6 +938,17 @@
       });
     }
 
+    function isRowInsideBounds(row, bounds) {
+      const lat = parseFloat(String(row.Latitude || '').trim());
+      const lon = parseFloat(String(row.Longitude || '').trim());
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || !bounds) {
+        return false;
+      }
+
+      return bounds.contains(L.latLng(lat, lon));
+    }
+
     function applyFilter() {
       clusterGroup.clearLayers();
 
@@ -1099,34 +1110,57 @@
       }
     }
 
+    function searchThisArea() {
+      try {
+        const currentBounds = map.getBounds().pad(-0.05);
+
+        areaFilterEnabled = true;
+        areaFilterBounds = currentBounds;
+        lastSearchAreaBounds = currentBounds;
+
+        applyFilter();
+
+        const visible = getVisibleMarkers().length;
+        setNearMeStatus(`Showing ${visible} location${visible !== 1 ? 's' : ''} in this area`);
+      } catch (err) {
+        console.error('Error searching this area:', err);
+        setNearMeStatus('Unable to search this area.');
+      }
+    }
+
     function centerOnUserLocation() {
       if (!navigator.geolocation) {
         setNearMeStatus('Geolocation not supported.');
         return;
       }
 
-      setNearMeStatus('Locating…');
+      setNearMeStatus('Locating...');
 
       getUserLatLng(
         (ll) => {
           showUserMarker(ll);
 
+          map.once('moveend', () => {
+            try {
+              const currentBounds = map.getBounds().pad(-0.05);
+
+              areaFilterEnabled = true;
+              areaFilterBounds = currentBounds;
+              lastSearchAreaBounds = currentBounds;
+
+              applyFilter();
+
+              const visible = getVisibleMarkers().length;
+              setNearMeStatus(`Showing ${visible} location${visible !== 1 ? 's' : ''} near you`);
+            } catch (err) {
+              console.error('Error applying location filter:', err);
+              setNearMeStatus('Unable to filter nearby locations.');
+            }
+          });
+
           map.flyTo(ll, 10, {
             animate: true,
             duration: 1.8
-          });
-
-          map.once('moveend', () => {
-            const currentBounds = map.getBounds().pad(-0.05);
-
-            areaFilterEnabled = true;
-            areaFilterBounds = currentBounds;
-            lastSearchAreaBounds = currentBounds;
-
-            applyFilter();
-
-            const visible = getVisibleMarkers().length;
-            setNearMeStatus(`Showing ${visible} location${visible !== 1 ? 's' : ''} near you`);
           });
         },
         (err) => {
@@ -1307,20 +1341,19 @@
     `;
 
         item.addEventListener('click', () => {
-          const latitude = parseFloat(row.Latitude);
-          const longitude = parseFloat(row.Longitude);
-
-          if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-            map.flyTo([latitude, longitude], 14, { animate: true, duration: 0.8 });
-          }
-
           if (focusedMarker && focusedMarker !== marker) {
             focusedMarker.setZIndexOffset(0);
           }
 
-          focusedMarker = marker;
-          marker.setZIndexOffset(1000);
-          openStoreDetail(row, marker);
+          clusterGroup.zoomToShowLayer(marker, () => {
+            const markerLatLng = marker.getLatLng();
+
+            focusedMarker = marker;
+            marker.setZIndexOffset(1000);
+
+            map.panTo(markerLatLng, { animate: true });
+            openStoreDetail(row, marker);
+          });
         });
 
         storeList.appendChild(item);
@@ -1686,7 +1719,7 @@
           });
         }
         applyFilter();
-        setNearMeStatus('Use the location button to find stores near you, or pan and press Search this area.');
+        centerOnUserLocation();
 
         // Do not pre-check checkboxes from URL params; users must explicitly
         // select stores using the checkbox controls.
