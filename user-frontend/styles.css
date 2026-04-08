@@ -9,6 +9,11 @@
   --link: #3a4a5e;
 }
 
+html {
+  overflow: hidden;
+  height: 100%;
+}
+
 header,
 #footer,
 .banner {
@@ -23,7 +28,10 @@ body {
   font-family: "Cormorant", serif;
   color: var(--text);
   margin: 0;
+  overflow: hidden;
+  height: 100%;
 }
+
 
 /* Layout: left vertical control bar + map content to the right. */
 body {
@@ -33,8 +41,7 @@ body {
 header {
   box-sizing: border-box;
   background: var(--card);
-  width: 400px;
-  /* width of the left control bar */
+  width: clamp(240px, 28vw, 400px);
   min-width: 240px;
   height: 100vh;
   position: fixed;
@@ -68,10 +75,17 @@ header::-webkit-scrollbar-thumb {
   width: 100%;
 }
 
-/* push the map to the right so it doesn't sit underneath the fixed left bar */
+.type-divider {
+  text-align: center;
+  color: #aaa;
+  font-size: 0.85em;
+  margin: 6px 0;
+  user-select: none;
+}
+
 #map {
-  margin-left: 400px;
-  width: calc(100% - 400px);
+  margin-left: clamp(240px, 28vw, 400px);
+  width: calc(100% - clamp(240px, 28vw, 400px));
   height: 100vh;
 }
 
@@ -92,6 +106,16 @@ header::-webkit-scrollbar-thumb {
   padding: 6px 10px;
   border-radius: 6px;
   cursor: pointer
+}
+
+#clearFiltersBtn {
+  font-size: 20px;
+  font-family: "Cormorant", serif;
+  background: var(--card2);
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
 }
 
 #filtersPanel {
@@ -119,14 +143,109 @@ header::-webkit-scrollbar-thumb {
 #brandCheckboxes,
 #typeCheckboxes {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
   margin-bottom: 6px;
+  width: 100%;
 }
 
-#filtersPanel label[for="typeCheckboxes"],
-#filtersPanel label[for="storeFilter"] {
-  margin-left: 12px;
+/* Make the brand list scrollable while keeping alphabet headers visible */
+#brandCheckboxes {
+  max-height: 300px; /* adjust as needed */
+  overflow-y: auto;
+  padding-right: 6px;
+  border: 1px solid transparent;
+}
+
+.brand-letter {
+  font-weight: 700;
+  padding-right: 6px;
+}
+
+/* Sticky alphabet headers inside the scrollable brand list */
+.brand-group-header {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  z-index: 3;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+}
+
+.brand-group {
+  display: block;
+  padding-left: 8px;
+}
+
+/* Watch / Accessory toggle */
+.type-toggle-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  justify-content: flex-start;
+}
+
+.type-toggle-label {
+  font-size: 0.95rem;
+  user-select: none;
+  transition: opacity 0.2s;
+}
+
+.type-toggle-label.inactive {
+  opacity: 0.4;
+}
+
+.type-toggle {
+  position: relative;
+  width: 48px;
+  height: 28px;
+  border-radius: 999px;
+  border: none;
+  background: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.25s ease;
+  padding: 0;
+}
+
+.type-toggle::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+  transition: transform 0.25s ease;
+}
+
+.type-toggle[aria-checked="true"]::after {
+  transform: translateX(20px);
+}
+
+.type-toggle[aria-checked="true"] {
+  background: var(--accent);
+}
+
+.type-toggle[aria-checked="false"] {
+  background: var(--accent);
+}
+
+.type-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.type-checkbox-label input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 #typeCheckboxes label,
@@ -142,9 +261,49 @@ header::-webkit-scrollbar-thumb {
   user-select: none;
 }
 
+.filters-panel label,
+.filters-panel > div {
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
+}
+
 #storeFilter {
   padding: 8px;
   min-width: 260px;
+  width: 100%;
+  padding-right: 28px; /* moved from inline */
+}
+
+.store-filter-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+#clearSearch {
+  position: absolute;
+  right: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  opacity: 0.5;
+  display: none; /* initial state moved from inline */
+}
+
+#searchResultCount {
+  font-size: 0.8rem;
+  opacity: 0.7;
+  margin-top: 4px;
+  min-height: 1em;
+}
+
+.filters-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 #storeCheckboxes {
@@ -157,7 +316,7 @@ header::-webkit-scrollbar-thumb {
   border-radius: 6px;
 }
 
-/* On small screens keep the original top-header behavior: make the header a normal top bar */
+/* On small screens keep the original top-header behavior: make the header a normal top bar
 @media(max-width:899px) {
   body {
     display: block;
@@ -188,7 +347,7 @@ header::-webkit-scrollbar-thumb {
     gap: 12px;
   }
 }
-
+*/
 .banner {
   position: absolute;
   top: 10px;
@@ -240,6 +399,10 @@ header::-webkit-scrollbar-thumb {
   background-color: var(--hover-bg);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
 
+}
+
+.store.verified {
+  border-left: 3px solid #c8a75d;
 }
 
 .hidden {
@@ -308,6 +471,9 @@ header::-webkit-scrollbar-thumb {
   font-weight: 700;
   line-height: 1.2;
   text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .store-detail__close {
@@ -387,6 +553,74 @@ header::-webkit-scrollbar-thumb {
   font-size: 1rem;
   line-height: 1.3;
   word-break: break-word;
+}
+
+.store-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.store-card-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.store-card-media {
+  flex: 0 0 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.store-card-image {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+  border: 1px solid var(--border);
+}
+
+.store-card-badge {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+  color: #8a6a1f;
+  font-weight: 600;
+}
+
+.store-card-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.verified-location-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid #c8a75d;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: #8a6a1f;
+  background: #fffaf0;
+  vertical-align: middle;
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+
+.store-distance {
+  margin-top: 4px;
+  font-size: 0.95rem;
+  opacity: 0.75;
 }
 
 /* Makes it so that when viewing a single store, everything else in the sidebar gets hidden */
@@ -549,9 +783,9 @@ header::-webkit-scrollbar-thumb {
 #nearMeStatus {
   display: block;
   width: 100%;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   line-height: 1.35;
-  opacity: 0.82;
+  opacity: 0.8;
   margin-top: -2px;
 }
 

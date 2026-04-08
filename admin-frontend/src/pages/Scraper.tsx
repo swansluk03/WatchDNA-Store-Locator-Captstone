@@ -733,8 +733,7 @@ const Scraper: React.FC = () => {
                     </small>
                   </div>
 
-                  {/* Only show region selector for viewport-based scraping */}
-                  {selectedBrand.isViewportBased && (
+                  {(selectedBrand.supportsRegionPreset ?? selectedBrand.isViewportBased) && (
                     <div className="form-group">
                       <label>Region</label>
                       <select
@@ -748,7 +747,9 @@ const Scraper: React.FC = () => {
                         <option value="asia">Asia</option>
                       </select>
                       <small className="form-hint">
-                        Region selection affects viewport-based scraping only
+                        Passed to the scraper as <code>--region</code> (viewport grids, multi-center radius
+                        search, country subsets). Use <strong>North America</strong> for US-focused SFCC
+                        locators such as Citizen.
                       </small>
                     </div>
                   )}

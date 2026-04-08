@@ -23,7 +23,7 @@ import json
 from typing import Dict, List, Any, Optional, Tuple
 from urllib.parse import urlparse, urljoin
 
-from scraper_utils import log_debug
+from scraper_utils import log_debug, dict_get_ci
 
 
 # ---------------------------------------------------------------------------
@@ -597,11 +597,105 @@ def extract_stores_from_sfcc_data_locations(html_content: str) -> List[Dict]:
     return list(by_handle.values())
 
 
+def extract_stores_from_sm_block_data_latlng(html_content: str) -> List[Dict]:
+    """
+    WordPress theme fragments (e.g. Edox): .sm-block rows with data-latlng="lat,lng",
+    h4.stitle name, .saddress with address <p> and Tel./Mail./Web. labels.
+    """
+    if "data-latlng" not in html_content or "sm-block" not in html_content:
+        return []
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return []
+
+    soup = BeautifulSoup(html_content, "html.parser")
+    blocks = soup.select(".sm-block[data-latlng]")
+    if not blocks:
+        return []
+
+    def _strip_nbsp(s: str) -> str:
+        return re.sub(r"[\u00a0\xa0\u2007\u202f]+", " ", s or "").strip()
+
+    stores: List[Dict] = []
+    skip_names = re.compile(r"^edox\s+stores$", re.I)
+
+    for block in blocks:
+        raw_ll = (block.get("data-latlng") or "").strip()
+        parts = [p.strip() for p in raw_ll.split(",") if p.strip()]
+        if len(parts) != 2:
+            continue
+        try:
+            lat_f = float(parts[0])
+            lng_f = float(parts[1])
+        except ValueError:
+            continue
+
+        title_el = block.select_one("h4.stitle") or block.find("h4")
+        name = _strip_nbsp(title_el.get_text()) if title_el else ""
+        if not name or skip_names.match(name):
+            continue
+
+        store: Dict[str, Any] = {
+            "Name": name,
+            "Latitude": str(lat_f),
+            "Longitude": str(lng_f),
+        }
+
+        bid = block.get("id") or ""
+        if bid.startswith("store_"):
+            store["Handle"] = bid.replace("store_", "", 1)
+
+        saddr = block.select_one(".saddress") or block.find("address")
+        if saddr:
+            first_p = saddr.find("p")
+            if first_p:
+                store["Address Line 1"] = _strip_nbsp(first_p.get_text())
+
+            for label in saddr.find_all("label"):
+                span = label.find("span")
+                if not span:
+                    continue
+                kind = _strip_nbsp(span.get_text()).lower().rstrip(".")
+                if kind == "tel":
+                    t = _strip_nbsp(label.get_text())
+                    t = re.sub(r"^tel\.?\s*", "", t, flags=re.I).strip()
+                    if t:
+                        store["Phone"] = t
+                elif kind == "mail":
+                    a = label.find("a", href=True)
+                    if a and "mailto:" in (a.get("href") or ""):
+                        store["Email"] = a["href"].split("mailto:", 1)[-1].strip()
+                    else:
+                        t = _strip_nbsp(label.get_text())
+                        t = re.sub(r"^mail\.?\s*", "", t, flags=re.I).strip()
+                        if t:
+                            store["Email"] = t
+                elif kind == "web":
+                    a = label.find("a", href=True)
+                    if a:
+                        href = (a.get("href") or "").strip()
+                        if href.startswith("http"):
+                            store["Website"] = href
+
+        stores.append(store)
+
+    return stores
+
+
 def extract_stores_from_html_js(html_content: str) -> List[Dict]:
     """Extract stores from HTML pages with embedded JavaScript or structured HTML"""
     sfcc_stores = extract_stores_from_sfcc_data_locations(html_content)
     if sfcc_stores:
         return sfcc_stores
+
+    edox_like = extract_stores_from_sm_block_data_latlng(html_content)
+    if edox_like:
+        log_debug(
+            f"Extracted {len(edox_like)} stores from .sm-block[data-latlng] (WordPress/Edox-style)",
+            "SUCCESS",
+        )
+        return edox_like
 
     stores = []
     
@@ -1038,6 +1132,7 @@ def scrape_single_call(
     url: str,
     custom_headers: Optional[Dict] = None,
     compare_techniques: bool = False,
+    brand_config: Optional[Dict] = None,
 ) -> Tuple[List[Dict], Optional[Dict[str, Any]]]:
     """Scrape from single endpoint - handles both JSON and HTML"""
     print("📡 Fetching stores...")
@@ -1052,8 +1147,19 @@ def scrape_single_call(
             return data, None
 
         log_debug(f"Data is object | Searching for store array in keys: {list(data.keys())}", "DEBUG")
+        # Brand data_path + shared fallbacks (Storepoint: results.locations, etc.)
+        if brand_config:
+            extracted = _extract_stores_from_json_for_brand(data, brand_config)
+            if extracted:
+                log_debug(
+                    f"Extracted stores via brand config / nested fallbacks | Length: {len(extracted)}",
+                    "SUCCESS",
+                )
+                return extracted, None
+
         nested_paths = ["response.entities", "response.data", "response.results",
-                       "response.stores", "data.stores", "data.results"]
+                       "response.stores", "data.stores", "data.results",
+                       "results.locations", "results.stores"]
         for path in nested_paths:
             keys = path.split('.')
             value = data
@@ -1099,6 +1205,45 @@ def scrape_single_call(
     return stores, None
 
 
+def _radius_expansion_request_headers(brand_config: Optional[Dict]) -> Dict[str, str]:
+    """Same header merge as country expansion (JSON Accept + custom_headers + legacy headers)."""
+    return _country_expansion_request_headers(brand_config)
+
+
+def _parse_radius_expansion_centers(brand_config: Optional[Dict]) -> Optional[List[Tuple[str, float, float]]]:
+    """
+    Parse brand_config['radius_expansion_centers'] into (label, lat, lng) tuples.
+    Accepts [{ "name": "...", "lat": 1, "lng": 2 }] or [["City", lat, lng], ...].
+    """
+    if not brand_config:
+        return None
+    raw = brand_config.get("radius_expansion_centers")
+    if not isinstance(raw, list) or not raw:
+        return None
+    out: List[Tuple[str, float, float]] = []
+    for item in raw:
+        try:
+            if isinstance(item, dict):
+                name = (
+                    item.get("name")
+                    or item.get("label")
+                    or item.get("city")
+                    or "center"
+                )
+                lat = float(item["lat"])
+                lng = item.get("lng")
+                if lng is None:
+                    lng = item.get("lon")
+                if lng is None:
+                    lng = item.get("long")
+                out.append((str(name), lat, float(lng)))
+            elif isinstance(item, (list, tuple)) and len(item) >= 3:
+                out.append((str(item[0]), float(item[1]), float(item[2])))
+        except (TypeError, ValueError, KeyError):
+            continue
+    return out if out else None
+
+
 def _radius_page_fingerprint(entities: List[Any]) -> Tuple[str, ...]:
     """Stable fingerprint for one API page — detects repeated pages when offset is ignored."""
     keys: List[str] = []
@@ -1115,12 +1260,26 @@ def _radius_page_fingerprint(entities: List[Any]) -> Tuple[str, ...]:
     return tuple(sorted(keys))
 
 
-def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", custom_headers: Optional[Dict] = None) -> List[Dict]:
-    """Expand radius-based API using multiple center points worldwide"""
+def scrape_radius_expansion(
+    url: str,
+    url_params: Dict,
+    region: str = "world",
+    brand_config: Optional[Dict] = None,
+) -> List[Dict]:
+    """Expand radius-based API using multiple center points worldwide."""
     import requests
-    
+
+    req_headers = _radius_expansion_request_headers(brand_config)
+    config_centers = _parse_radius_expansion_centers(brand_config)
+    loop_delay = 0.3
+    if brand_config and brand_config.get("radius_expansion_delay_seconds") is not None:
+        try:
+            loop_delay = max(0.0, float(brand_config["radius_expansion_delay_seconds"]))
+        except (TypeError, ValueError):
+            loop_delay = 0.3
+
     print(f"🌍 Radius-based API detected - expanding to {region} using multiple center points")
-    
+
     # Major cities worldwide for maximum coverage
     # These are strategically placed to cover all continents and ensure complete coverage
     major_cities = [
@@ -1192,15 +1351,19 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
         ("Tel Aviv", 32.0853, 34.7818),
         ("Istanbul", 41.0082, 28.9784),
     ]
-    
-    # Filter by region if specified
-    if region == "north_america":
-        major_cities = [c for c in major_cities if c[0] in ["New York", "Los Angeles", "Chicago", "Toronto", "Miami", "Mexico City"]]
-    elif region == "europe":
-        major_cities = [c for c in major_cities if c[0] in ["Paris", "London", "Berlin", "Madrid", "Rome", "Amsterdam", "Vienna", "Zurich", "Moscow"]]
-    elif region == "asia":
-        major_cities = [c for c in major_cities if c[0] in ["Tokyo", "Shanghai", "Hong Kong", "Singapore", "Bangkok", "Mumbai", "Dubai", "Seoul", "Taipei"]]
-    
+
+    if config_centers:
+        major_cities = config_centers
+        print(f"   📍 Using {len(major_cities)} center point(s) from brand config (radius_expansion_centers)")
+    else:
+        # Filter by region if specified
+        if region == "north_america":
+            major_cities = [c for c in major_cities if c[0] in ["New York", "Los Angeles", "Chicago", "Toronto", "Miami", "Mexico City"]]
+        elif region == "europe":
+            major_cities = [c for c in major_cities if c[0] in ["Paris", "London", "Berlin", "Madrid", "Rome", "Amsterdam", "Vienna", "Zurich", "Moscow"]]
+        elif region == "asia":
+            major_cities = [c for c in major_cities if c[0] in ["Tokyo", "Shanghai", "Hong Kong", "Singapore", "Bangkok", "Mumbai", "Dubai", "Seoul", "Taipei"]]
+
     # Detect center-point format from input URL (Yext: q=lat,lng vs SFCC: lat/long)
     if 'lat' in url_params and ('long' in url_params or 'lng' in url_params):
         center_format = 'lat_long'
@@ -1210,6 +1373,10 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
         center_format = 'lat_long'
         lat_key = 'latitude'
         lng_key = 'longitude' if 'longitude' in url_params else 'lng'
+    elif brand_config and brand_config.get("radius_expansion_centers"):
+        center_format = 'lat_long'
+        lat_key = str(brand_config.get("radius_lat_param", "lat"))
+        lng_key = str(brand_config.get("radius_lng_param", "long"))
     else:
         center_format = 'q'
 
@@ -1225,6 +1392,9 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
             _rv = url_params[_rk]
             radius = _rv[0] if isinstance(_rv, list) else _rv
             break
+    if brand_config and brand_config.get("radius_expansion_radius") is not None:
+        _rr = brand_config.get("radius_expansion_radius")
+        radius = str(_rr).strip() if _rr is not None else radius
     if radius_key in ('max_distance', 'maxdistance'):
         try:
             _rv_num = float(radius)
@@ -1261,6 +1431,9 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
         'q', 'qp', 'lat', 'long', 'lng', 'latitude', 'longitude',
         'r', 'radius', 'distance', 'max_distance', 'maxdistance', 'start',
     }
+    if center_format == 'lat_long':
+        _strip.add(lat_key)
+        _strip.add(lng_key)
     if offset_key:
         _strip.add(offset_key)
     if per_key:
@@ -1312,7 +1485,9 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
                 params['l'] = lang
 
             try:
-                response = requests.get(url.split('?')[0], params=params, timeout=15, headers=custom_headers or {})
+                response = requests.get(
+                    url.split('?')[0], params=params, timeout=15, headers=req_headers
+                )
                 response.raise_for_status()
                 data = response.json()
 
@@ -1442,7 +1617,7 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
                     if page > 500:
                         log_debug(f"Reached page limit (500) for {city_name}, stopping", "WARN")
                         break
-                    time.sleep(0.3)
+                    time.sleep(loop_delay)
                     continue
 
                 count = data.get('response', {}).get('count', len(entities)) if isinstance(data, dict) else len(entities)
@@ -1458,7 +1633,7 @@ def scrape_radius_expansion(url: str, url_params: Dict, region: str = "world", c
                     log_debug(f"Reached page limit (100) for {city_name}, stopping", "WARN")
                     break
 
-                time.sleep(0.3)
+                time.sleep(loop_delay)
             except Exception as e:
                 log_debug(f"Error fetching from {city_name}: {e}", "WARN")
                 break
@@ -2023,6 +2198,308 @@ def scrape_post_per_country(base_url: str, brand_config: Optional[Dict] = None) 
     return all_stores
 
 
+def _flatten_grouped_stores_list(
+    data: Dict[str, Any], brand_config: Optional[Dict]
+) -> Optional[List[Dict]]:
+    """
+    Walk ``flatten_grouped_stores.path`` to a list of group objects, then concatenate
+    each group's ``list_key`` array (default ``retailers``) into one flat store list.
+    Returns None if the option is not set or navigation fails (caller uses normal logic).
+    """
+    cfg = (brand_config or {}).get("flatten_grouped_stores")
+    if not isinstance(cfg, dict):
+        return None
+    path = str(cfg.get("path", "")).strip()
+    list_key = str(cfg.get("list_key", "retailers")).strip() or "retailers"
+    if not path:
+        return None
+    cur: Any = data
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = dict_get_ci(cur, part)
+        if cur is None:
+            return None
+    if not isinstance(cur, list):
+        return None
+    out: List[Dict] = []
+    for group in cur:
+        if not isinstance(group, dict):
+            continue
+        chunk = dict_get_ci(group, list_key)
+        if isinstance(chunk, list):
+            for row in chunk:
+                if isinstance(row, dict):
+                    out.append(row)
+    return out
+
+
+def _extract_stores_from_json_for_brand(
+    data: Any, brand_config: Optional[Dict] = None
+) -> List[Dict]:
+    """
+    Resolve the store list from a JSON response using data_path (if set) and the
+    same fallbacks as scrape_single_call / country expansion.
+    """
+    stores: List[Dict] = []
+    if isinstance(data, dict) and brand_config:
+        grouped = _flatten_grouped_stores_list(data, brand_config)
+        if grouped is not None:
+            return grouped
+    if isinstance(data, list):
+        stores = [x for x in data if isinstance(x, dict)]
+    elif isinstance(data, dict):
+        if brand_config and brand_config.get("data_path"):
+            parts = str(brand_config["data_path"]).strip().split(".")
+            cur: Any = data
+            for key in parts:
+                if isinstance(cur, dict):
+                    cur = dict_get_ci(cur, key)
+                else:
+                    cur = None
+                    break
+            if isinstance(cur, list):
+                stores = [x for x in cur if isinstance(x, dict)]
+        if not stores:
+            nested_paths = [
+                "response.entities",
+                "response.data",
+                "response.results",
+                "response.stores",
+                "data.stores",
+                "data.results",
+                "results.locations",
+                "results.stores",
+            ]
+            for path in nested_paths:
+                keys = path.split(".")
+                value: Any = data
+                ok = True
+                for k in keys:
+                    if isinstance(value, dict):
+                        value = dict_get_ci(value, k)
+                        if value is None:
+                            ok = False
+                            break
+                    else:
+                        ok = False
+                        break
+                if ok and isinstance(value, list):
+                    stores = [x for x in value if isinstance(x, dict)]
+                    break
+        if not stores:
+            for key in (
+                "entities",
+                "data",
+                "results",
+                "items",
+                "stores",
+                "hits",
+                "locations",
+                "dealers",
+                "retailers",
+            ):
+                bucket = dict_get_ci(data, key)
+                if isinstance(bucket, list):
+                    stores = [x for x in bucket if isinstance(x, dict)]
+                    break
+    # Yext-style vertical search rows
+    if stores and isinstance(stores[0], dict):
+        first_wrap = dict_get_ci(stores[0], "data")
+        if isinstance(first_wrap, dict) and all(
+            isinstance(x, dict) and isinstance(dict_get_ci(x, "data"), dict)
+            for x in stores
+        ):
+            stores = [dict_get_ci(x, "data") for x in stores]
+    return stores
+
+
+def _walk_json_path(obj: Any, path: str) -> Any:
+    """Traverse dict/list via dot-separated path; numeric segments index into lists."""
+    if obj is None:
+        return None
+    path = (path or "").strip()
+    if not path:
+        return obj
+    cur: Any = obj
+    for part in path.split("."):
+        part = part.strip()
+        if cur is None:
+            return None
+        if isinstance(cur, dict):
+            cur = dict_get_ci(cur, part)
+        elif isinstance(cur, list):
+            try:
+                idx = int(part)
+            except ValueError:
+                return None
+            cur = cur[idx] if 0 <= idx < len(cur) else None
+        else:
+            return None
+    return cur
+
+
+def scrape_stores_by_api_country_catalog(brand_config: Dict) -> List[Dict]:
+    """
+    Fetch a JSON country catalog, then request store lists once per country ID.
+
+    Brand config key ``stores_by_api_countries`` (object):
+      - countries_url: GET JSON with a list of countries
+      - countries_list_path: dot path to the array (default \"countries\")
+      - country_id_field: field on each country row (default \"id\")
+      - country_name_field: optional display name for logging / injection (default \"name\")
+      - stores_url_template: URL with ``{country_id}`` placeholder
+      - inject_country_name_field: if set, each store dict gets this key with the
+        catalog country name (default \"_api_country_name\"; use \"\" to disable)
+    """
+    cfg = brand_config.get("stores_by_api_countries") or {}
+    countries_url = str(cfg.get("countries_url", "")).strip()
+    template = str(cfg.get("stores_url_template", "")).strip()
+    list_path = str(cfg.get("countries_list_path", "countries")).strip() or "countries"
+    id_field = str(cfg.get("country_id_field", "id")).strip() or "id"
+    name_field = str(cfg.get("country_name_field", "name")).strip() or "name"
+    inject_key = str(cfg.get("inject_country_name_field", "_api_country_name")).strip()
+
+    if not countries_url:
+        raise ValueError("stores_by_api_countries.countries_url is required")
+    if "{country_id}" not in template:
+        raise ValueError(
+            "stores_by_api_countries.stores_url_template must contain {country_id}"
+        )
+
+    custom_headers = _get_custom_headers(brand_config)
+    delay = 0.3
+    if brand_config.get("radius_expansion_delay_seconds") is not None:
+        try:
+            delay = max(0.0, float(brand_config["radius_expansion_delay_seconds"]))
+        except (TypeError, ValueError):
+            delay = 0.3
+
+    raw = fetch_data(countries_url, headers=custom_headers)
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"Country catalog response must be a JSON object, got {type(raw).__name__}"
+        )
+
+    bucket = _walk_json_path(raw, list_path)
+    if not isinstance(bucket, list):
+        raise ValueError(
+            f"Country list at path {list_path!r} must be a JSON array, got {type(bucket).__name__}"
+        )
+
+    pairs: List[Tuple[str, str]] = []
+    for row in bucket:
+        if not isinstance(row, dict):
+            continue
+        cid = row.get(id_field)
+        if cid is None:
+            cid = dict_get_ci(row, id_field)
+        if cid is None or str(cid).strip() == "":
+            continue
+        cname_val = row.get(name_field)
+        if cname_val is None:
+            cname_val = dict_get_ci(row, name_field)
+        cname_s = str(cname_val).strip() if cname_val is not None else ""
+        pairs.append((str(cid), cname_s))
+
+    if not pairs:
+        log_debug("stores_by_api_countries: no country IDs in catalog", "WARN")
+        return []
+
+    seen_ids: set = set()
+    all_stores: List[Dict] = []
+
+    print(
+        f"🌐 API country catalog: {len(pairs)} countries — fetching stores per country"
+    )
+    for i, (cid, cname) in enumerate(pairs):
+        page_url = template.format(country_id=cid)
+        try:
+            data = fetch_data(page_url, headers=custom_headers)
+            stores = _extract_stores_from_json_for_brand(data, brand_config)
+            new_count = 0
+            for store in stores:
+                if inject_key and isinstance(store, dict) and cname:
+                    store[inject_key] = cname
+                sid = None
+                if isinstance(store, dict):
+                    sid = store.get("ID") or store.get("id") or store.get("storeID")
+                    if not sid and isinstance(store.get("profile"), dict):
+                        meta = store["profile"].get("meta") or {}
+                        if isinstance(meta, dict):
+                            sid = meta.get("id")
+                    if sid is None:
+                        sid = store.get("identifier")
+                key = str(sid) if sid is not None else None
+                if key and key in seen_ids:
+                    continue
+                if key:
+                    seen_ids.add(key)
+                all_stores.append(store)
+                new_count += 1
+            label = cname or cid
+            print(
+                f"  Country {i + 1}/{len(pairs)} ({label}): +{new_count} stores "
+                f"(total: {len(all_stores)})"
+            )
+        except Exception as e:
+            log_debug(
+                f"stores_by_api_countries error for country {cid}: {e}",
+                "WARN",
+            )
+        time.sleep(delay)
+
+    return all_stores
+
+
+def scrape_pagination_fetch_urls(
+    urls: List[str], brand_config: Optional[Dict] = None
+) -> List[Dict]:
+    """
+    Fetch each URL (same JSON shape), extract store rows, merge and dedupe.
+    Use when offset/per pagination is split across explicit endpoints or the API
+    omits reliable total counts.
+    """
+    custom_headers = _get_custom_headers(brand_config)
+    seen_ids: set = set()
+    all_stores: List[Dict] = []
+    delay = 0.3
+    if brand_config and brand_config.get("radius_expansion_delay_seconds") is not None:
+        try:
+            delay = max(0.0, float(brand_config["radius_expansion_delay_seconds"]))
+        except (TypeError, ValueError):
+            delay = 0.3
+
+    for i, page_url in enumerate(urls):
+        page_url = (page_url or "").strip()
+        if not page_url:
+            continue
+        try:
+            data = fetch_data(page_url, headers=custom_headers)
+            stores = _extract_stores_from_json_for_brand(data, brand_config)
+            new_count = 0
+            for store in stores:
+                sid = None
+                if isinstance(store, dict):
+                    sid = store.get("ID") or store.get("id") or store.get("storeID")
+                    if not sid and isinstance(store.get("profile"), dict):
+                        meta = store["profile"].get("meta") or {}
+                        if isinstance(meta, dict):
+                            sid = meta.get("id")
+                key = str(sid) if sid is not None else None
+                if key and key in seen_ids:
+                    continue
+                if key:
+                    seen_ids.add(key)
+                all_stores.append(store)
+                new_count += 1
+            print(f"  URL {i + 1}/{len(urls)}: +{new_count} stores (total: {len(all_stores)})")
+        except Exception as e:
+            log_debug(f"pagination_fetch_urls error for {page_url[:80]}: {e}", "WARN")
+        time.sleep(delay)
+    return all_stores
+
+
 def scrape_paginated(url: str, url_params: Dict, is_token_based: bool = False, custom_headers: Optional[Dict] = None) -> List[Dict]:
     """Expand paginated API by following all pages (supports both page numbers, tokens, and offset)"""
     import requests
@@ -2234,6 +2711,7 @@ def universal_scrape(
     validate_output: bool = True,
     brand_config: Optional[Dict] = None,
     compare_techniques: bool = False,
+    dry_run: bool = False,
 ) -> Dict[str, Any]:
     """
     Universal scraper - auto-detects and handles everything
@@ -2244,10 +2722,14 @@ def universal_scrape(
         region: Region to scrape if expansion needed
         force_type: Force specific type (viewport, country, pagination, single)
         validate_output: Validate output CSV
+        dry_run: If True, skip geocoding, keep rows without coordinates, and skip CSV validation
     
     Returns:
         Dict with results
     """
+    if dry_run:
+        validate_output = False
+
     results = {
         "success": False,
         "url": url,
@@ -2258,6 +2740,7 @@ def universal_scrape(
         "stores_normalized": 0,
         "output_file": output_file,
         "technique_metrics": None,  # Populated when compare_techniques=True
+        "dry_run": dry_run,
     }
     
     print("=" * 80)
@@ -2350,15 +2833,74 @@ def universal_scrape(
         or "maxdistance" in url_params
     )
     has_center = "q" in url_params or "lat" in url_params or "latitude" in url_params
-    
+    has_radius_cfg = bool(
+        brand_config
+        and brand_config.get("radius_expansion_radius") is not None
+        and str(brand_config.get("radius_expansion_radius", "")).strip() != ""
+    )
+    has_custom_radius_centers = bool(
+        brand_config
+        and isinstance(brand_config.get("radius_expansion_centers"), list)
+        and len(brand_config["radius_expansion_centers"]) > 0
+    )
+    force_radius_multi = bool(brand_config and brand_config.get("force_radius_multi_point"))
+
     try:
+        _api_cc = (
+            brand_config.get("stores_by_api_countries")
+            if brand_config
+            else None
+        )
+        _api_cc_ok = (
+            isinstance(_api_cc, dict)
+            and str(_api_cc.get("countries_url", "")).strip()
+            and "{country_id}" in str(_api_cc.get("stores_url_template", ""))
+        )
+        _pag_urls = (
+            brand_config.get("pagination_fetch_urls")
+            if brand_config
+            else None
+        )
         if brand_config and brand_config.get("post_per_country"):
             # POST-per-country expansion (e.g. Zenith storeLocator) — checked first
             # because the GET-based detector cannot probe a POST-only endpoint.
             log_debug("Strategy: POST per country", "INFO")
             stores = scrape_post_per_country(url, brand_config=brand_config)
             results["expansion_used"] = True
-
+            results["detected_type"] = "post_per_country"
+        elif brand_config and _api_cc_ok:
+            log_debug(
+                "Strategy: stores_by_api_countries (catalog + per-country store URLs)",
+                "INFO",
+            )
+            print("🌐 Brand config: country catalog → per-country store endpoints")
+            stores = scrape_stores_by_api_country_catalog(brand_config)
+            results["expansion_used"] = True
+            results["detected_type"] = "stores_by_api_countries"
+        elif (
+            brand_config
+            and isinstance(_pag_urls, list)
+            and len(_pag_urls) > 0
+        ):
+            log_debug(
+                "Strategy: pagination_fetch_urls (explicit paginated endpoints)",
+                "INFO",
+            )
+            print("📄 Pagination via brand config: multiple fetch URLs")
+            stores = scrape_pagination_fetch_urls(_pag_urls, brand_config=brand_config)
+            results["expansion_used"] = True
+            results["detected_type"] = "pagination_fetch_urls"
+        elif force_radius_multi and (has_radius or has_radius_cfg) and (
+            has_center or has_custom_radius_centers
+        ):
+            log_debug(
+                "Brand config: force_radius_multi_point — multi-center radius expansion",
+                "INFO",
+            )
+            stores = scrape_radius_expansion(
+                url, url_params, region, brand_config=brand_config
+            )
+            results["expansion_used"] = True
         elif detected_type == "paginated":
             # Pagination (check this first before single_call)
             log_debug("Strategy: Paginated scraping", "INFO")
@@ -2372,8 +2914,9 @@ def universal_scrape(
             if is_radius_based:
                 # Use radius expansion instead of simple pagination
                 log_debug("Radius-based pagination detected - using multi-point expansion", "INFO")
-                custom_headers = _get_custom_headers(brand_config)
-                stores = scrape_radius_expansion(url, url_params, region, custom_headers=custom_headers)
+                stores = scrape_radius_expansion(
+                    url, url_params, region, brand_config=brand_config
+                )
                 results["expansion_used"] = True
             else:
                 # Standard pagination
@@ -2390,28 +2933,18 @@ def universal_scrape(
             log_debug(f"Strategy: Viewport expansion (region={region})", "INFO")
             stores = scrape_viewport_expansion(url, locator_analysis["url_params"], region)
             results["expansion_used"] = True
-        
-        elif (
-            detected_type in ("radius", "radius_search")
-            or (has_radius and has_center)
-        ) and detected_type != "single_call":
-            # Radius-based API - use multi-point expansion (world city grid + dedupe)
-            log_debug("Strategy: Radius-based multi-point expansion", "INFO")
-            custom_headers = _get_custom_headers(brand_config)
-            stores = scrape_radius_expansion(url, url_params, region, custom_headers=custom_headers)
-            results["expansion_used"] = True
-        
+
         elif detected_type == "country_filter":
-            # Country expansion
+            # Country expansion (before geo+radius heuristics — some country APIs also pass map center params)
             log_debug(f"Strategy: Country iteration (region={region})", "INFO")
-            
+
             # Priority order for country list:
             # 1. Brand config with use_watch_store_countries: true -> use comprehensive list
             # 2. Brand config with custom countries -> use custom list
             # 3. Auto-detect: use comprehensive list by default for country-based endpoints
             countries_dict = None
             use_watch_countries = False
-            
+
             if brand_config:
                 # Check if brand config explicitly wants comprehensive list
                 if brand_config.get("use_watch_store_countries", False):
@@ -2421,18 +2954,30 @@ def universal_scrape(
                 elif brand_config.get("countries"):
                     countries_dict = brand_config.get("countries")
                     log_debug(f"Using countries from brand config: {len(countries_dict)} countries", "DEBUG")
-            
+
             # Auto-apply comprehensive list if no brand config preference and country_filter detected
             if not countries_dict and not use_watch_countries:
                 use_watch_countries = True
                 log_debug("Auto-applying comprehensive watch store countries (country_filter detected)", "DEBUG")
                 print("   💡 Auto-detected country-based endpoint - using comprehensive 88-country list")
-            
-            stores = scrape_country_expansion(url, locator_analysis["url_params"], region, 
+
+            stores = scrape_country_expansion(url, locator_analysis["url_params"], region,
                                              countries_dict=countries_dict, brand_config=brand_config,
                                              use_watch_countries=use_watch_countries)
             results["expansion_used"] = True
-        
+
+        elif detected_type in ("radius", "radius_search") or (
+            has_radius and has_center
+        ):
+            # Radius-based API - use multi-point expansion (world city grid + dedupe).
+            # Note: brand configs often force type "json" -> single_call; geo+radius URLs
+            # must still expand, so we do not skip this branch when detected_type is single_call.
+            log_debug("Strategy: Radius-based multi-point expansion", "INFO")
+            stores = scrape_radius_expansion(
+                url, url_params, region, brand_config=brand_config
+            )
+            results["expansion_used"] = True
+
         elif brand_config and brand_config.get("geohash_prefix_expansion"):
             # Geohash prefix expansion (e.g. Casio /api/points/{prefix})
             log_debug("Strategy: Geohash prefix expansion", "INFO")
@@ -2443,7 +2988,12 @@ def universal_scrape(
             # Single call
             log_debug("Strategy: Single API call", "INFO")
             custom_headers = _get_custom_headers(brand_config)
-            stores, tech_metrics = scrape_single_call(url, custom_headers=custom_headers, compare_techniques=compare_techniques)
+            stores, tech_metrics = scrape_single_call(
+                url,
+                custom_headers=custom_headers,
+                compare_techniques=compare_techniques,
+                brand_config=brand_config,
+            )
             results["technique_metrics"] = tech_metrics
             results["expansion_used"] = False
 
@@ -2451,7 +3001,12 @@ def universal_scrape(
             # Default to single call
             log_debug("Strategy: Default single call", "INFO")
             custom_headers = _get_custom_headers(brand_config)
-            stores, tech_metrics = scrape_single_call(url, custom_headers=custom_headers, compare_techniques=compare_techniques)
+            stores, tech_metrics = scrape_single_call(
+                url,
+                custom_headers=custom_headers,
+                compare_techniques=compare_techniques,
+                brand_config=brand_config,
+            )
             results["technique_metrics"] = tech_metrics
             results["expansion_used"] = False
         
@@ -2497,7 +3052,12 @@ def universal_scrape(
     if brand_config and brand_config.get("url_base"):
         field_mapping["_url_base"] = brand_config["url_base"]
     
-    normalized, excluded_stores = batch_normalize(stores, field_mapping)
+    normalized, excluded_stores = batch_normalize(
+        stores,
+        field_mapping,
+        geocode_missing=not dry_run,
+        allow_missing_coordinates=dry_run,
+    )
     results["stores_normalized"] = len(normalized)
     results["excluded_stores"] = excluded_stores
     norm_time = time.time() - norm_start
@@ -2626,7 +3186,11 @@ def universal_scrape(
     log_debug("=" * 60, "INFO")
     log_debug(f"Status: SUCCESS", "SUCCESS")
     log_debug(f"Total Time: {total_time:.2f}s", "INFO")
-    log_debug(f"Strategy: {detected_type} (expansion={results['expansion_used']})", "INFO")
+    log_debug(
+        f"Strategy: {results.get('detected_type', detected_type)} "
+        f"(expansion={results['expansion_used']})",
+        "INFO",
+    )
     log_debug(f"Records: {results['stores_found']} found → {results['stores_normalized']} normalized", "INFO")
     log_debug(f"Output: {output_file} ({file_size:.1f} KB)", "INFO")
     if warnings_summary:
@@ -2677,6 +3241,8 @@ Auto-detects everything and uses the right strategy!
     parser.add_argument('--brand-config', help='Brand configuration JSON string (for field mapping)')
     parser.add_argument('--compare-techniques', action='store_true',
                         help='Run multiple extraction techniques and compare data quality (HTML pages only)')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='No geocoding; keep rows without lat/lon; skip validation (address/text QA)')
     args = parser.parse_args()
     
     # Parse brand config if provided
@@ -2719,6 +3285,7 @@ Auto-detects everything and uses the right strategy!
         validate_output=not args.no_validate,
         brand_config=brand_config,
         compare_techniques=args.compare_techniques,
+        dry_run=args.dry_run,
     )
     
     # Summary

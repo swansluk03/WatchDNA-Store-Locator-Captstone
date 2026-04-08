@@ -12,7 +12,18 @@
       "worldwide_country_pagination": "If true and type is json: force country_filter strategy — iterate countries (watch_store_countries or countries) and follow offset/per pagination per country. Does not affect brands without this flag.",
       "geohash_prefix_expansion": "If set (object), enables geohash-prefix sharding strategy. The scraper enumerates all prefixes of prefix_length (default 2) over the geohash alphabet and fetches {url}/{prefix} for each. Keys: prefix_length (int, default 2), alphabet (str, default standard 32-char geohash), items_key (str, default 'items'), delay (float seconds between requests, default 0.15). Example: Casio locator.",
       "post_per_country": "If set (object), enables POST-per-country expansion for endpoints that accept POST with a JSON body and return one country's stores per call. The scraper iterates the global watch_store_countries list (or 'countries' override) and POSTs body_template with {country} interpolated to the ISO2 code. Keys: body_template (dict, default {country:'{country}'}), data_path (str, dot-path into response, e.g. 'result'), delay (float, default 0.2), countries (list[str], optional override). Example: Zenith storeLocator.",
+      "inject_country_field": "If set (string), country_filter expansion writes the iterated country name into this key on each store record so field_mapping can read it. Use for APIs that only return an internal country id (numeric/UUID) and no country name. Example: Seiko (\"_country_name\").",
+      "stores_by_api_countries": "Object for APIs that publish a country catalog JSON, then one store list per country id. Keys: countries_url (GET), countries_list_path (dot path to array, default \"countries\"), country_id_field (default \"id\"), country_name_field (default \"name\", injected on each store), stores_url_template (must include {country_id}), inject_country_name_field (default \"_api_country_name\"; empty string to disable). Optional radius_expansion_delay_seconds between country requests.",
+      "pagination_fetch_urls": "Optional list of full URLs. When non-empty, the scraper GETs each URL in order, extracts the store array (data_path + standard fallbacks), merges results, and dedupes by id. Use for offset/per APIs where pages are fixed or total metadata is missing. Works with type json (runs before single_call). Optional radius_expansion_delay_seconds sets pause between requests (default 0.3s).",
       "row_filters": "Optional list of filter rules applied to raw store records after collection, before normalization. Each rule: { field (dot-notation path, e.g. 'extra_fields.Rank'), op (eq|in|not_in|contains, default eq), value or values }. All rules are ANDed. Absent or empty = no filtering (all other brands unaffected).",
+      "force_radius_multi_point": "If true, always runs multi-center radius expansion when the URL (or radius_expansion_radius) supplies a distance and the URL or radius_expansion_centers supplies centers. Use when auto-detection or type=json would otherwise take a single-call path but the API is actually region-scoped.",
+      "radius_expansion_centers": "Optional list of search centers instead of the built-in world/region city grid. Each entry: { \"name\": \"City\", \"lat\": 40.1, \"lng\": -74.0 } or [ \"City\", 40.1, -74.0 ]. When set, region presets do not filter this list.",
+      "radius_expansion_radius": "Optional string or number override for the distance parameter (same units the API expects, e.g. miles).",
+      "radius_expansion_delay_seconds": "Optional pause between pagination/radius requests (default 0.3).",
+      "radius_lat_param": "Optional query key for latitude when using radius_expansion_centers without lat/long in the template URL (default \"lat\").",
+      "radius_lng_param": "Optional query key for longitude in the same situation (default \"long\").",
+      "field_mapping_join": "Per-field object form: {\"join\": [\"data.street\", \"data.number\"], \"separator\": \" \", \"skip_tokens\": [\"N/A\"]}. Concatenates dot-path values; skips empty/N/A and drops a segment if it is a substring of an already-kept segment (avoids duplicate street lines).",
+      "flatten_grouped_stores": "When the API returns country/region groups each holding an array of stores: {\"path\": \"retailers.items\", \"list_key\": \"retailers\"}. The scraper flattens every group's list into one array before field mapping (WordPress / grouped JSON).",
       "see": "COUNTRY_CONFIG_GUIDE.md for details on country configuration"
     }
   },
@@ -111,6 +122,31 @@
     "method": "GET",
     "display_name": "ALPINA",
     "data_path": "stores",
+    "field_mapping": {
+      "Handle": "ID",
+      "Name": "name",
+      "Address Line 1": "address1",
+      "Address Line 2": "address2",
+      "City": "city",
+      "State/Province/Region": "stateCode",
+      "Country": "countryCode",
+      "Postal/ZIP Code": "postalCode",
+      "Phone": "phone",
+      "Latitude": "latitude",
+      "Longitude": "longitude"
+    }
+  },
+  "citizen_watch_stores": {
+    "type": "json",
+    "url": "https://www.citizenwatch.com/on/demandware.store/Sites-citizen_US-Site/en_US/Stores-FindStores?showMap=false&radius=150&address1=&lat=40.7127753&long=-74.0059728&postalCode=",
+    "description": "Citizen Watch US — Demandware Stores-FindStores. Multi-point radius expansion runs automatically; set scraper region (e.g. north_america, world) for coverage. Optional: radius_expansion_centers / radius_expansion_radius in config.",
+    "method": "GET",
+    "display_name": "CITIZEN",
+    "custom_headers": {
+      "Accept": "application/json"
+    },
+    "data_path": "stores",
+    "radius_expansion_radius": 150,
     "field_mapping": {
       "Handle": "ID",
       "Name": "name",
@@ -316,6 +352,18 @@
     "description": "Blancpain Store Locator - HTML page with structured store information ✅",
     "method": "GET",
     "display_name": "BLANCPAIN"
+  },
+  "edox_stores": {
+    "type": "html",
+    "url": "https://www.edox.ch/wp-admin/admin-ajax.php?locationId=-1&action=sale_country&lang=en",
+    "description": "Edox (WordPress): admin-ajax sale_country returns HTML with .sm-block[data-latlng] dealers; locationId=-1 lists all. ✅",
+    "method": "GET",
+    "display_name": "EDOX",
+    "enabled": true,
+    "custom_headers": {
+      "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"
+    },
+    "_note": "Scraper uses extract_stores_from_sm_block_data_latlng() for this markup. Other locationId values filter by city/region on the live site."
   },
   "breitling_stores": {
     "type": "json",
@@ -914,5 +962,236 @@
       "Longitude": "longitude"
     },
     "_note": "Stockist.co is a SaaS used by many smaller brands. The map_vq7vry93 ID is Raymond Weil's Stockist tenant. Field names follow Stockist's standard schema."
+  },
+  "coach_stores": {
+    "type": "json",
+    "url": "https://www.coach.com/stores/store-locator?coachstoretype=5988915&per=50&l=en",
+    "method": "GET",
+    "description": "Coach (Yext): Accept application/json; response.entities with profile.* (same shape as Breitling). pagination_fetch_urls = per=50 offsets 0, 50, 100 (~130 stores). Add URLs if count grows.",
+    "display_name": "COACH",
+    "enabled": true,
+    "custom_headers": {
+      "Accept": "application/json"
+    },
+    "url_base": "https://www.coach.com",
+    "data_path": "response.entities",
+    "pagination_fetch_urls": [
+      "https://www.coach.com/stores/store-locator?coachstoretype=5988915&per=50&l=en",
+      "https://www.coach.com/stores/store-locator?coachstoretype=5988915&l=en&per=50&offset=50",
+      "https://www.coach.com/stores/store-locator?coachstoretype=5988915&l=en&per=50&offset=100"
+    ],
+    "field_mapping": {
+      "Handle": "profile.meta.id",
+      "Name": "profile.name",
+      "Address Line 1": "profile.address.line1",
+      "Address Line 2": "profile.address.line2",
+      "City": "profile.address.city",
+      "State/Province/Region": "profile.address.region",
+      "Country": [
+        "derivedData.address.countryName",
+        "profile.address.countryCode"
+      ],
+      "Postal/ZIP Code": "profile.address.postalCode",
+      "Phone": "profile.mainPhone.display",
+      "Email": "profile.emails.0",
+      "Website": [
+        "profile.websiteUrl.url",
+        "profile.websiteUrl",
+        "profile.googleWebsiteOverride",
+        "profile.c_pagesURLFullPrice"
+      ],
+      "Latitude": "profile.geocodedCoordinate.lat",
+      "Longitude": "profile.geocodedCoordinate.long"
+    }
+  },
+  "fortis_stores": {
+    "type": "json",
+    "url": "https://api.storepoint.co/v1/1673cc408f05f8/locations?rq",
+    "description": "Fortis — Storepoint JSON API (success + results.locations). Single GET returns all dealers/service centers. ✅",
+    "method": "GET",
+    "display_name": "FORTIS",
+    "enabled": true,
+    "custom_headers": {
+      "Accept": "application/json"
+    },
+    "data_path": "results.locations",
+    "field_mapping": {
+      "_parse_combined_address": "streetaddress",
+      "Handle": "id",
+      "Name": "name",
+      "Address Line 1": "streetaddress",
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "website",
+      "Latitude": "loc_lat",
+      "Longitude": "loc_long",
+      "Page Description": "description",
+      "Monday": "monday",
+      "Tuesday": "tuesday",
+      "Wednesday": "wednesday",
+      "Thursday": "thursday",
+      "Friday": "friday",
+      "Saturday": "saturday",
+      "Sunday": "sunday",
+      " Tags": "tags"
+    }
+  },
+  "frederique_constant_stores": {
+    "type": "json",
+    "url": "https://retailers.frederiqueconstant.com/api/maps/fc/retailers",
+    "method": "GET",
+    "description": "Frederique Constant official retailers map API — single GET returns a root JSON array; store fields live under `data.*` (city, route, lat/lng, etc.). ✅",
+    "display_name": "FREDERIQUE CONSTANT",
+    "enabled": true,
+    "custom_headers": {
+      "Accept": "application/json"
+    },
+    "data_path": "",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": [
+        "title",
+        "data.name"
+      ],
+      "Address Line 1": {
+        "join": [
+          "data.street_number",
+          "data.route"
+        ],
+        "separator": " ",
+        "skip_tokens": [
+          "N/A",
+          "n/a"
+        ]
+      },
+      "City": "data.city",
+      "State/Province/Region": "data.state",
+      "Country": [
+        "data.country_name",
+        "data.country"
+      ],
+      "Postal/ZIP Code": "data.zip_code",
+      "Phone": "data.phone",
+      "Email": "data.email",
+      "Website": "data.website",
+      "Latitude": [
+        "data.lat",
+        "data.latitude"
+      ],
+      "Longitude": [
+        "data.lng",
+        "data.longitude"
+      ],
+      " Tags": "categories"
+    }
+  },
+  "glashuette_original_stores": {
+    "type": "json",
+    "url": "https://www.glashuette-original.com/wp/wp-admin/admin-ajax.php?action=get_retailers&locale=en",
+    "method": "GET",
+    "description": "Glashütte Original — WordPress admin-ajax get_retailers JSON; stores are nested under retailers.items[].retailers[]. Opening hours in opening_hours.*; no coordinates (geocoded in pipeline). ✅",
+    "display_name": "GLASHÜTTE ORIGINAL",
+    "enabled": true,
+    "custom_headers": {
+      "Accept": "application/json, text/javascript, */*;q=0.01",
+      "X-Requested-With": "XMLHttpRequest",
+      "Referer": "https://www.glashuette-original.com/en/"
+    },
+    "url_base": "https://www.glashuette-original.com",
+    "flatten_grouped_stores": {
+      "path": "retailers.items",
+      "list_key": "retailers"
+    },
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "name",
+      "Address Line 1": "address",
+      "Address Line 2": "address_locale",
+      "City": "city",
+      "State/Province/Region": "city_slug",
+      "Country": "country",
+      "Postal/ZIP Code": "zipcode",
+      "Phone": "phone",
+      "Email": "email",
+      "Website": [
+        "link",
+        "www"
+      ],
+      "Image URL": "image",
+      "Monday": {
+        "join": [
+          "opening_hours.mo_from",
+          "opening_hours.mo_to",
+          "opening_hours.mo_from_2",
+          "opening_hours.mo_to_2"
+        ],
+        "separator": "-"
+      },
+      "Tuesday": {
+        "join": [
+          "opening_hours.tu_from",
+          "opening_hours.tu_to",
+          "opening_hours.tu_from_2",
+          "opening_hours.tu_to_2"
+        ],
+        "separator": "-"
+      },
+      "Wednesday": {
+        "join": [
+          "opening_hours.we_from",
+          "opening_hours.we_to",
+          "opening_hours.we_from_2",
+          "opening_hours.we_to_2"
+        ],
+        "separator": "-"
+      },
+      "Thursday": {
+        "join": [
+          "opening_hours.th_from",
+          "opening_hours.th_to",
+          "opening_hours.th_from_2",
+          "opening_hours.th_to_2"
+        ],
+        "separator": "-"
+      },
+      "Friday": {
+        "join": [
+          "opening_hours.fr_from",
+          "opening_hours.fr_to",
+          "opening_hours.fr_from_2",
+          "opening_hours.fr_to_2"
+        ],
+        "separator": "-"
+      },
+      "Saturday": {
+        "join": [
+          "opening_hours.sa_from",
+          "opening_hours.sa_to",
+          "opening_hours.sa_from_2",
+          "opening_hours.sa_to_2"
+        ],
+        "separator": "-"
+      },
+      "Sunday": {
+        "join": [
+          "opening_hours.su_from",
+          "opening_hours.su_to",
+          "opening_hours.su_from_2",
+          "opening_hours.su_to_2"
+        ],
+        "separator": "-"
+      },
+      "Page Description": "opening_hours_extras",
+      "Page Title": "prefill_form_country",
+      "Meta Title": "prefill_form_boutique",
+      "Meta Description": "crm_id",
+      " Tags": {
+        "join": [
+          "type",
+          "country_code"
+        ],
+        "separator": ", "
+      }
+    }
   }
 }

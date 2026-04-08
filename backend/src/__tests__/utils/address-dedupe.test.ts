@@ -12,6 +12,25 @@ describe('expandTrailingStreetAbbrevForDedupe / dedupeAddressFingerprint', () =>
     expect(dedupeAddressFingerprint('513 WHITAKER STREET')).toBe('513whitakerstreet');
     expect(dedupeAddressFingerprint('513 Whitaker St')).toBe('513whitakerstreet');
   });
+
+  it('aligns North Milwaukee vs Milwaukee and FR av. vs Avenue with accents', () => {
+    expect(
+      dedupeAddressFingerprint('1200 North Milwaukee Avenue, Glenview')
+    ).toBe(dedupeAddressFingerprint('1200 Milwaukee Avenue, Glenview'));
+    expect(dedupeAddressFingerprint('26 Avenue Jean-Jaurès')).toBe(
+      dedupeAddressFingerprint('26 av Jean JAURES')
+    );
+  });
+
+  it('keeps West in West River St and strips suites/units so same street number merges', () => {
+    expect(dedupeAddressFingerprint('300 WEST RIVER ST, BLDG C, UNIT 4')).toBe(
+      dedupeAddressFingerprint('300, Suite 101 West River Street')
+    );
+  });
+
+  it('strips floor markers and collapses hyphenated lot numbers', () => {
+    expect(dedupeAddressFingerprint('1-1-43 ABENOSUJI')).toBe(dedupeAddressFingerprint('1-1-43 11F ABENOSUJI'));
+  });
 });
 
 describe('safeAddressFingerprintContainment', () => {

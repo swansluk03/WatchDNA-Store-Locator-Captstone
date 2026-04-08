@@ -3,7 +3,22 @@
 
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
+
+
+def dict_get_ci(d: Dict[str, Any], key: str) -> Any:
+    """
+    Dict lookup: exact key first, then case-insensitive match (SFCC / .NET / GeoJSON).
+    """
+    if not isinstance(d, dict) or not key:
+        return None
+    if key in d:
+        return d[key]
+    kl = key.lower()
+    for k, v in d.items():
+        if isinstance(k, str) and k.lower() == kl:
+            return v
+    return None
 
 
 def log_debug(message: str, level: str = "INFO") -> None:
