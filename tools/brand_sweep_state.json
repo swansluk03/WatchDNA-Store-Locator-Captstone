@@ -75,6 +75,12 @@
       "fix_estimate": "n/a"
     },
     {
+      "brand": "RADO",
+      "reason": "Proprietary LPE (Luxury Product Experience) Nuxt SPA on store.rado.com. Algolia only indexes 'subdivisions' (geographic autocomplete), not stores. All curl probes return the same HTML shell. No SSR state (__NUXT__ empty), no data-lat attributes, no discoverable API endpoint. Store data loads dynamically via internal JS mechanisms after user interaction.",
+      "endpoint_seen": "https://store.rado.com (Nuxt SPA), Algolia app 0knemtbxx3 index=subdivisions only",
+      "fix_estimate": "Would need browser automation (Playwright/Puppeteer) to intercept the runtime fetch, or reverse-engineer the LPE platform API from minified JS bundles."
+    },
+    {
       "brand": "SWAROVSKI",
       "reason": "HTML response with .swa-store-view__store divs (data-latitude/data-longitude attrs). Radius-capped at ~150 miles (huge radius returns 0). 12 stores per call. Would need country iteration + multi-point radius grid + HTML parser. ~1-2h engine work, marginal ROI: Swarovski is mostly fashion, watches are a side product.",
       "endpoint_seen": "https://www.swarovski.com/en-US/store-finder/stores/?countryIso=US&allBaseStores=true&radius=150.0&geoPoint.latitude=...",
