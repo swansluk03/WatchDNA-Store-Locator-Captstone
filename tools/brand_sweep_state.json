@@ -75,6 +75,12 @@
       "fix_estimate": "n/a"
     },
     {
+      "brand": "LONGINES",
+      "reason": "Magento 2 GraphQL backend proxied through a frontend mesh (Platform.sh). The /graphql endpoint returns 404 when called from outside — only reachable through the app's server-side proxy with session context. Internal endpoint: magento.longines.com.c.od5p7chjmqn7q.ent.platform.sh/graphql (SSL cert mismatch when called directly).",
+      "endpoint_seen": "https://www.longines.com/graphql (POST, Magento GraphQL with store: en_us header)",
+      "fix_estimate": "Would need browser automation or a way to proxy through the frontend session."
+    },
+    {
       "brand": "RADO",
       "reason": "Proprietary LPE (Luxury Product Experience) Nuxt SPA on store.rado.com. Algolia only indexes 'subdivisions' (geographic autocomplete), not stores. All curl probes return the same HTML shell. No SSR state (__NUXT__ empty), no data-lat attributes, no discoverable API endpoint. Store data loads dynamically via internal JS mechanisms after user interaction.",
       "endpoint_seen": "https://store.rado.com (Nuxt SPA), Algolia app 0knemtbxx3 index=subdivisions only",
