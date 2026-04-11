@@ -661,6 +661,17 @@ header::-webkit-scrollbar-thumb {
   display: none;
 }
 
+#sidebar.filters-open #top {
+  /* This is for making the border-bottom span the entire width of the sidebar */
+  width: 110%;
+  border-bottom: 1px solid var(--border);
+}
+
+#sidebar.filters-open #top #inner h2{
+  /* Deals with the spacing of the new header text */
+  padding-left: 43px;
+}
+
 /* Verfied Brand indicators */
 .brand-pill {
   display: inline-flex;
