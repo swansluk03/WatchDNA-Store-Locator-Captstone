@@ -67,27 +67,13 @@
 
         <!-- Watch / Accessory toggle -->
         <div class="type-toggle-row">
-          <span class="type-toggle-label" id="toggleLabelWatch">Watch Brands</span>
+          <span class="type-toggle-label" id="toggleLabelWatch">Multi-Brand Stores</span>
           <button type="button" id="typeToggle" class="type-toggle" role="switch" aria-checked="false"
-            title="Switch between Watch Brands and Accessory Brands"></button>
-          <span class="type-toggle-label" id="toggleLabelAccessory">Accessory Brands</span>
-        </div>
-
-        <!-- Watch / Accessory checkboxes for further filtering -->
-        <label class="type-checkbox-label">
-          <input type="checkbox" id="multiBrandCheckbox" />
-          <span>Multi-brand stores</span>
-        </label>
-        <label class="type-checkbox-label">
-          <input type="checkbox" id="singularBrandCheckbox" />
-          <span>Singular brand stores</span>
-        </label>
-        <div class="type-divider">---------- or ----------</div>
-        <!-- Services Center stays as a standalone checkbox -->
-        <label class="type-checkbox-label">
+            title="Switch between Multi-Brand and Single Brand stores"></button>
+          <span class="type-toggle-label" id="toggleLabelAccessory">Single Brand Stores</span>
           <input type="checkbox" id="serviceCenterCheckbox" value="services-center" />
           <span>Services Center</span>
-        </label>
+        </div>
 
       </div>
 
@@ -987,34 +973,20 @@
       const premiumOnly = false;
 
       const toggleEl = document.getElementById('typeToggle');
-      const activeWatchType = toggleEl?.getAttribute('aria-checked') === 'true'
-        ? 'accessory-brands'
-        : 'watch-brands';
-
-      const multiBrandChecked = document.getElementById('multiBrandCheckbox')?.checked;
-      const singularBrandChecked = document.getElementById('singularBrandCheckbox')?.checked;
+      const isMultiBrand = toggleEl?.getAttribute('aria-checked') === 'false';
       const serviceCenterChecked = document.getElementById('serviceCenterCheckbox')?.checked;
 
-      let baseRows = [];
+      let brandListRows = [];  // rows for populating the brand checkbox list (ignores toggle + brand filter)
+      let preFilterRows = [];  // rows passing text + type filters (ignores brand filter only)
+      let baseRows = [];       // rows passing ALL filters
 
       allMarkers.forEach(({ row }) => {
-        let passes = true;
-
-        if (brandFilterActive) {
-          const brands = new Set(
-            (row['Brands'] || '')
-              .toUpperCase()
-              .split(',')
-              .map(s => s.trim())
-              .filter(Boolean)
-          );
-          passes = [...brandSet].every(b => brands.has(b));
-        }
-
-        if (passes && storeInput) {
+        // --- Pass 1: text search only ---
+        let passesText = true;
+        if (storeInput) {
           if (storeInput.startsWith('handle:')) {
             const h = storeInput.split(':', 2)[1] || '';
-            passes = (String(row['Handle'] || '') === h);
+            passesText = (String(row['Handle'] || '') === h);
           } else {
             const searchFields = [
               row['Name'] || '',
@@ -1025,49 +997,57 @@
               row['Country'] || '',
               row['Zip/Postal Code'] || '',
             ].map(f => String(f).toLowerCase());
-            passes = searchFields.some(field => field.includes(storeInput));
+            passesText = searchFields.some(field => field.includes(storeInput));
           }
         }
 
-        if (passes) {
-          if (serviceCenterChecked) {
-            // Service center mode — only show service centers, ignore all other type filters
-            passes = row._type === 'services-center';
-          } else {
-            // Normal mode — apply toggle first
-            passes = row._type === activeWatchType;
+        if (!passesText) return;
 
-            // Then apply multi/singular filter if either is checked
-            if (passes && (multiBrandChecked || singularBrandChecked)) {
-              const brandCount = (row['Brands'] || '')
-                .split(',')
-                .map(s => s.trim())
-                .filter(Boolean).length;
-              const isMulti = brandCount > 1;
+        // --- Pass 2: service center / watch-brands split (for brand list, ignore toggle) ---
+        const passesServiceCenter = serviceCenterChecked
+          ? row._type === 'services-center'
+          : row._type === 'watch-brands';
 
-              if (multiBrandChecked && singularBrandChecked) {
-                // both checked = no extra filtering
-              } else if (multiBrandChecked) {
-                passes = isMulti;
-              } else if (singularBrandChecked) {
-                passes = !isMulti;
-              }
-            }
-          }
+        if (passesServiceCenter) brandListRows.push(row);
+
+        // --- Pass 3: apply toggle (multi vs single brand) ---
+        let passesToggle = passesServiceCenter;
+        if (passesToggle && !serviceCenterChecked) {
+          const brandCount = (row['Brands'] || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean).length;
+          passesToggle = isMultiBrand ? brandCount > 1 : brandCount === 1;
         }
 
-        if (passes && premiumOnly) {
-          passes = row._isPremium === true;
+        if (passesToggle) preFilterRows.push(row);
+
+        // --- Pass 4: apply brand filter ---
+        let passesBrand = passesToggle;
+        if (passesBrand && brandFilterActive) {
+          const brands = new Set(
+            (row['Brands'] || '')
+              .toUpperCase()
+              .split(',')
+              .map(s => s.trim())
+              .filter(Boolean)
+          );
+          passesBrand = [...brandSet].every(b => brands.has(b));
         }
 
-        if (passes) baseRows.push(row);
+        if (passesBrand && premiumOnly && !row._isPremium) return;
+
+        if (passesBrand) baseRows.push(row);
       });
 
+      // Apply area filter to all three row sets
       if (areaFilterEnabled && areaFilterBounds) {
+        brandListRows = brandListRows.filter(row => isRowInsideBounds(row, areaFilterBounds));
+        preFilterRows = preFilterRows.filter(row => isRowInsideBounds(row, areaFilterBounds));
         baseRows = baseRows.filter(row => isRowInsideBounds(row, areaFilterBounds));
       }
 
-      // Update brand list to reflect only brands present in the current filtered set
+      // Rebuild brand list from brandListRows (reacts to search + service center, not toggle or brand filter)
       try {
         const prevCheckedBrands = new Set(
           Array.from(document.querySelectorAll('#brandCheckboxes input[type="checkbox"]:checked'))
@@ -1075,7 +1055,7 @@
         );
 
         const visibleBrandSet = new Set();
-        baseRows.forEach(row => {
+        brandListRows.forEach(row => {
           (extractBrandsText(row) || '')
             .split(',')
             .map(s => s.trim())
@@ -1111,12 +1091,10 @@
 
       allMarkers.forEach(({ row, marker }) => {
         let show = baseRowSet.has(row);
-
         if (show && checkedStores.length > 0) {
           const nameLower = (row['Name'] || '').trim().toLowerCase();
           show = checkedStores.includes(nameLower);
         }
-
         if (show) clusterGroup.addLayer(marker);
       });
 
@@ -1518,12 +1496,6 @@
       // Clear brand checkboxes
       document.querySelectorAll('#brandCheckboxes input[type="checkbox"]').forEach(cb => cb.checked = false);
 
-      // Clear type checkboxes and re-enable any that were disabled
-      document.querySelectorAll('#typeCheckboxes input[type="checkbox"]').forEach(cb => {
-        cb.checked = false;
-        cb.disabled = false;
-      });
-
       // Reset and re-enable toggle
       const toggleEl = document.getElementById('typeToggle');
       if (toggleEl) {
@@ -1654,12 +1626,8 @@
 
           if (isServiceCenterRow(row)) {
             row._type = 'services-center';
-          } else if (/boutique|authorized dealer|retailer|store/.test(descFields)) {
-            row._type = 'watch-brands';
-          } else if (/mall|shopping center|plaza/.test(descFields)) {
-            row._type = 'accessory-brands';
           } else {
-            row._type = 'accessory-brands';
+            row._type = 'watch-brands';
           }
           const lat = parseFloat(String(row.Latitude).trim());
           const lon = parseFloat(String(row.Longitude).trim());
@@ -1709,9 +1677,9 @@
         const labelAccessory = document.getElementById('toggleLabelAccessory');
 
         function updateToggleLabels() {
-          const isAccessory = typeToggle.getAttribute('aria-checked') === 'true';
-          labelWatch.classList.toggle('inactive', isAccessory);
-          labelAccessory.classList.toggle('inactive', !isAccessory);
+          const isSingle = typeToggle.getAttribute('aria-checked') === 'true';
+          labelWatch.classList.toggle('inactive', isSingle);      // Multi-Brand label
+          labelAccessory.classList.toggle('inactive', !isSingle); // Single Brand label
         }
 
         typeToggle.addEventListener('click', () => {
@@ -1723,39 +1691,17 @@
 
         updateToggleLabels(); // set initial label opacity
 
-        document.getElementById('multiBrandCheckbox').addEventListener('change', () => {
-          if (document.getElementById('multiBrandCheckbox').checked) {
-            document.getElementById('singularBrandCheckbox').checked = false;
-          }
-          applyFilter();
-        });
-
-        document.getElementById('singularBrandCheckbox').addEventListener('change', () => {
-          if (document.getElementById('singularBrandCheckbox').checked) {
-            document.getElementById('multiBrandCheckbox').checked = false;
-          }
-          applyFilter();
-        });
-
         document.getElementById('serviceCenterCheckbox').addEventListener('change', () => {
           const isChecked = document.getElementById('serviceCenterCheckbox').checked;
           const toggleEl = document.getElementById('typeToggle');
-          const multiBrand = document.getElementById('multiBrandCheckbox');
-          const singularBrand = document.getElementById('singularBrandCheckbox');
 
           if (isChecked) {
             // Disable and uncheck the other type filters
-            multiBrand.checked = false;
-            multiBrand.disabled = true;
-            singularBrand.checked = false;
-            singularBrand.disabled = true;
             toggleEl.disabled = true;
             toggleEl.style.opacity = '0.4';
             toggleEl.style.pointerEvents = 'none';
           } else {
             // Re-enable the other type filters
-            multiBrand.disabled = false;
-            singularBrand.disabled = false;
             toggleEl.disabled = false;
             toggleEl.style.opacity = '';
             toggleEl.style.pointerEvents = '';
@@ -1774,9 +1720,6 @@
         }
         if (INITIAL.type) {
           const t = INITIAL.type.toLowerCase();
-          document.querySelectorAll('#typeCheckboxes input[type="checkbox"]').forEach(cb => {
-            if ((cb.value || '').toLowerCase() === t) cb.checked = true;
-          });
         }
         applyFilter();
         centerOnUserLocation();
