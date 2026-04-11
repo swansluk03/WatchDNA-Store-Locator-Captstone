@@ -722,6 +722,13 @@
     "display_name": "U-BOAT",
     "url_base": "https://uboatwatch.com",
     "data_path": "",
+    "custom_headers": {
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "Accept": "application/json, text/javascript, */*; q=0.01",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Referer": "https://uboatwatch.com/stores/",
+      "X-Requested-With": "XMLHttpRequest"
+    },
     "field_mapping": {
       "Handle": "id",
       "Name": "title",
@@ -729,7 +736,7 @@
       "Latitude": "lat",
       "Longitude": "lng"
     },
-    "_note": "Markers API returns a flat array (no wrapper). data_path empty. City/Country/Phone are not present as discrete fields; rely on infer_country_from_address."
+    "_note": "Markers API returns a flat array (no wrapper). data_path empty. City/Country/Phone are not present as discrete fields; rely on infer_country_from_address. WAF requires browser-like headers — without custom_headers the WordPress security plugin returns 403."
   },
   "tudor_retailers": {
     "type": "viewport",
