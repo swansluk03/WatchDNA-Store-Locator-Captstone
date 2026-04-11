@@ -53,7 +53,7 @@
     </button>
     <span id="nearMeStatus"></span>
     <div id="filtersPanel" class="filters-panel" hidden>
-      <label for="storeFilter"><strong>Filter by store:</strong></label>
+      <!-- <label for="storeFilter"><strong>Filter by store:</strong></label> -->
       <div class="store-filter-wrapper">
         <input id="storeFilter" type="search" placeholder="Search by store, city, brand, zip, etc." />
         <button id="clearSearch" title="Clear search">✕</button>
@@ -62,7 +62,7 @@
       <div id="storeCheckboxes">
         <!-- Store name checkboxes (hidden until user searches) -->
       </div>
-      <label><strong>Filter by Type:</strong></label>
+      <!-- <label><strong>Filter by Type:</strong></label> -->
       <div id="typeCheckboxes">
 
         <!-- Watch / Accessory toggle -->
@@ -318,11 +318,17 @@
       const btn = document.getElementById('hamburger');
       const panel = document.getElementById('filtersPanel');
       const storeListContainer = document.getElementById('storeListContainer');
+      const sidebar = document.getElementById('sidebar');
+      const headerText = document.querySelector('#top h2'); // For changing the bold header text at top of sidebar
+      const paragraph = document.querySelector('#top p'); // For changing the paragraph in the sidebar under the header
 
-      if (!btn || !panel || !storeListContainer) {
+      if (!btn || !panel || !storeListContainer || !sidebar) {
         console.warn('Toggle init aborted, missing elements:', { btn, panel, storeListContainer });
         return;
       }
+
+      const defaultHeaderText = headerText ? headerText.textContent : "";
+      const defaultParagraph = paragraph ? paragraph.textContent : "";
 
       function setStoreListHidden(hidden) {
         // keep a class for CSS transitions or style hooks
@@ -346,12 +352,30 @@
           panel.removeAttribute('hidden');
           btn.setAttribute('aria-expanded', 'true');
           setStoreListHidden(true); //hide the store list
+
+          sidebar.classList.add('filters-open');
+          // Changing the header and paragraph text when the filter panel is open
+          if(headerText) {
+            headerText.textContent = "Find Jewellers In Your Area";
+          }
+          if(paragraph) {
+            paragraph.textContent = "Please note only select verified authorized dealers will be featured."
+          }
         }
         else {
           //closing the Filters panel
           panel.setAttribute('hidden', '');
           btn.setAttribute('aria-expanded', 'false');
           setStoreListHidden(false); //show the store list
+
+          sidebar.classList.remove('filters-open');
+          // Setting the header and parapraph text back to default
+          if(headerText) {
+            headerText.textContent = defaultHeaderText;
+          }
+          if(paragraph) {
+            paragraph.textContent = defaultParagraph;
+          }
           // Do not clear the store search here; preserve user input when they close the panel.
         }
         e.stopPropagation();
@@ -361,6 +385,15 @@
           panel.setAttribute('hidden', '');
           btn.setAttribute('aria-expanded', 'false');
           setStoreListHidden(false);
+
+          sidebar.classList.remove('filters-open');
+          if(headerText) {
+            headerText.textContent = defaultHeaderText;
+          }
+          if(paragraph) {
+            paragraph.textContent = defaultParagraph;
+          }
+
           // Clear the store search when closing the panel by clicking outside
           const storeInput = document.getElementById('storeFilter');
           // Leave the store search value intact when closing the panel by clicking outside.
