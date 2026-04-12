@@ -125,6 +125,7 @@
     </div>
 
     <div id="storeListContainer">
+      <div id="viewportCount"></div>
       <div id="storeListings"></div>
     </div>
 
@@ -706,6 +707,8 @@
         panel.setAttribute('aria-hidden', 'true');
         //listContainer.classList.remove('hidden');
         //listContainer.style.display = '';
+        // Refresh sidebar list with current viewport stores
+        if (typeof updateSidebarForViewport === 'function') updateSidebarForViewport();
       }
     }
 
@@ -1121,7 +1124,7 @@
         if (show) clusterGroup.addLayer(marker);
       });
 
-      renderStoreListingsFromLayers(getVisibleMarkers());
+      updateSidebarForViewport();
 
       const countEl = document.getElementById('searchResultCount');
       if (countEl) {
@@ -1468,6 +1471,45 @@
         container.appendChild(group);
       });
     }
+
+    // --- Viewport-aware sidebar list ---
+    // Only show stores in the sidebar that are within the current map viewport.
+    // Updates on pan/zoom via the 'moveend' event.
+    let viewportDebounceTimer = null;
+
+    function updateSidebarForViewport() {
+      // Don't update the list when the store detail panel is open
+      const sidebar = document.getElementById('sidebar');
+      if (sidebar && sidebar.classList.contains('store-focused')) return;
+
+      const mapBounds = map.getBounds();
+      const allVisible = getVisibleMarkers(); // markers in clusterGroup (post-filter)
+
+      const inViewport = allVisible.filter(marker => {
+        return mapBounds.contains(marker.getLatLng());
+      });
+
+      renderStoreListingsFromLayers(inViewport);
+
+      // Update the viewport count indicator
+      const countEl = document.getElementById('viewportCount');
+      if (countEl) {
+        const total = allVisible.length;
+        const shown = inViewport.length;
+        if (total === 0) {
+          countEl.textContent = '';
+        } else if (shown === total) {
+          countEl.textContent = `${total} store${total !== 1 ? 's' : ''}`;
+        } else {
+          countEl.textContent = `${shown} of ${total} stores in view`;
+        }
+      }
+    }
+
+    map.on('moveend', () => {
+      clearTimeout(viewportDebounceTimer);
+      viewportDebounceTimer = setTimeout(updateSidebarForViewport, 80);
+    });
 
     // wire store filter input (debounced)
     const storeInput = document.getElementById('storeFilter');

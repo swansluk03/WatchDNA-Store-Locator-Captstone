@@ -407,6 +407,13 @@ header::-webkit-scrollbar-thumb {
   padding-bottom: 0.5rem;
 }
 
+#viewportCount {
+  font-size: 0.78rem;
+  color: var(--text-muted, #888);
+  padding: 6px 18px 2px;
+  letter-spacing: 0.02em;
+}
+
 .store {
   /* Will change colors if necessary */
   background-color: var(--card2);
