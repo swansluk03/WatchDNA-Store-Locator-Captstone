@@ -1,5 +1,5 @@
 /**
- * Report how brand data is stored: repeated legacy CSV vs normalized Brand rows.
+ * Report how brand data is stored on Location (legacy string columns).
  *
  *   npx ts-node src/scripts/verify-brand-storage-stats.ts
  */
@@ -8,12 +8,9 @@ import 'dotenv/config';
 import prisma from '../lib/prisma';
 
 async function main() {
-  const [locWithBrandsCol, locWithLinks, brandCount, topRepeated] = await Promise.all([
+  const [locWithBrandsCol, locWithCustomBrands, topRepeated] = await Promise.all([
     prisma.location.count({ where: { brands: { not: null } } }),
-    prisma.location.count({
-      where: { locationBrands: { some: {} } },
-    }),
-    prisma.brand.count(),
+    prisma.location.count({ where: { customBrands: { not: null } } }),
     prisma.$queryRaw<{ brands: string; cnt: bigint }[]>`
       SELECT "brands", COUNT(*)::bigint AS cnt
       FROM "Location"
@@ -24,17 +21,16 @@ async function main() {
     `,
   ]);
 
-  console.log('--- Brand storage snapshot ---');
-  console.log(`Location rows with non-null legacy "brands" column: ${locWithBrandsCol}`);
-  console.log(`Location rows with at least one LocationBrand link: ${locWithLinks}`);
-  console.log(`Distinct Brand rows (canonical display names): ${brandCount}`);
+  console.log('--- Brand storage snapshot (legacy columns) ---');
+  console.log(`Location rows with non-null "brands" column: ${locWithBrandsCol}`);
+  console.log(`Location rows with non-null "customBrands" column: ${locWithCustomBrands}`);
   if (topRepeated.length > 0) {
-    console.log('\nTop repeated legacy "brands" strings (same text on many rows = redundant storage):');
+    console.log('\nTop repeated "brands" strings (same text on many rows):');
     for (const row of topRepeated) {
       console.log(`  ${row.cnt}x  ${(row.brands ?? '').slice(0, 80)}${(row.brands?.length ?? 0) > 80 ? '…' : ''}`);
     }
   } else {
-    console.log('\nNo non-empty legacy brands column values (already migrated or empty DB).');
+    console.log('\nNo non-empty legacy brands column values (empty DB or cleared).');
   }
 }
 

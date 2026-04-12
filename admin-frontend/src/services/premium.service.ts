@@ -1,5 +1,7 @@
 import api from './api';
 
+export type PremiumRetailKind = 'boutique' | 'multi_brand';
+
 export interface StoreRecord {
   handle: string;
   name: string;
@@ -23,6 +25,8 @@ export interface StoreRecord {
   saturday: string | null;
   sunday: string | null;
   storeType: string | null;
+  isServiceCenter: boolean;
+  premiumRetailKind: PremiumRetailKind | null;
 }
 
 /** Body for PATCH /premium-stores/stores/:handle — all fields optional on wire; we send a full snapshot on save. */
@@ -46,7 +50,15 @@ export type StoreUpdatePayload = Partial<{
   sunday: string | null;
   isPremium: boolean;
   storeType: string | null;
+  isServiceCenter: boolean;
+  premiumRetailKind: PremiumRetailKind | null;
 }>;
+
+export type MarkPremiumEntryPayload = {
+  handle: string;
+  isServiceCenter: boolean;
+  premiumRetailKind: PremiumRetailKind;
+};
 
 export async function fetchAllStores(): Promise<StoreRecord[]> {
   const res = await api.get<{ stores: StoreRecord[]; totalCount: number }>('/premium-stores/stores');
@@ -77,8 +89,8 @@ export async function uploadStoreImage(handle: string, file: File): Promise<Stor
   return res.data.store;
 }
 
-export async function markStoresPremium(handles: string[]): Promise<{ marked: number }> {
-  const res = await api.post<{ marked: number }>('/premium-stores/stores', { handles });
+export async function markStoresPremium(entries: MarkPremiumEntryPayload[]): Promise<{ marked: number }> {
+  const res = await api.post<{ marked: number }>('/premium-stores/stores', { entries });
   return res.data;
 }
 

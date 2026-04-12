@@ -1047,7 +1047,8 @@
         }
 
         if (!passesText) return;
-        const brandCount = (row['Brands'] || '')
+        const effectiveBrands = (extractBrandsText(row) || '').trim();
+        const brandCount = effectiveBrands
           .split(',').map(s => s.trim()).filter(Boolean).length;
 
         const passesToggle = isMultiBrand ? brandCount > 1 : brandCount === 1;
@@ -1062,7 +1063,7 @@
         let passesBrand = passesToggle;
         if (passesBrand && brandFilterActive) {
           const brands = new Set(
-            (row['Brands'] || '')
+            (extractBrandsText(row) || '')
               .toUpperCase()
               .split(',')
               .map(s => s.trim())
@@ -1560,7 +1561,7 @@
       // Reset brand list to show all brands
       const brandSet = new Set();
       allMarkers.forEach(({ row }) => {
-        (row['Brands'] || '')
+        (extractBrandsText(row) || '')
           .split(',').map(s => s.trim()).filter(Boolean)
           .forEach(b => brandSet.add(b));
       });
@@ -1727,8 +1728,8 @@
           clusterGroup.addLayer(marker);
           bounds.extend([lat, lon]);
 
-          // Extract brands from Brands column (plain text, comma-separated)
-          (row['Brands'] || '')
+          // Brands column + Custom Brands HTML (same as extractBrandsText / popups)
+          (extractBrandsText(row) || '')
             .split(',')
             .map(s => s.trim())
             .filter(Boolean)

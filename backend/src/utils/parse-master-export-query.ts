@@ -21,3 +21,20 @@ export function masterExportFiltersFromQuery(req: Request): MasterExportFilters 
     ...(premiumOnly ? { premiumOnly: true } : {}),
   };
 }
+
+/**
+ * Same `brand` / `premium` parsing as master export, but ignores `country`.
+ * Use when the query must not be narrowed by a country filter (e.g. distinct country list for a dropdown).
+ */
+export function masterBrandPremiumScopeFromQuery(req: Request):
+  | { brand?: string; premiumOnly?: boolean }
+  | undefined {
+  const brand = firstQueryString(req.query.brand).trim();
+  const premiumStr = firstQueryString(req.query.premium).toLowerCase();
+  const premiumOnly = ['1', 'true', 'yes'].includes(premiumStr);
+  if (!brand && !premiumOnly) return undefined;
+  return {
+    ...(brand ? { brand } : {}),
+    ...(premiumOnly ? { premiumOnly: true } : {}),
+  };
+}

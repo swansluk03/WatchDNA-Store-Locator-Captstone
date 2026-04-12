@@ -1,5 +1,10 @@
 // This is your Prisma schema file
 // Learn more: https://pris.ly/d/prisma-schema
+//
+// Migration note: 20260408120000 adds optional "Brand" / "LocationBrand" tables; 20260408130000
+// adds optional coordinate-verification columns on "Location". This Prisma schema targets the
+// legacy string columns (brands, customBrands) only. If those migrations ran, extra DB objects may
+// exist and are ignored until normalized storage is restored.
 
 generator client {
   provider = "prisma-client-js"
@@ -179,10 +184,12 @@ model User {
 }
 
 model PremiumStore {
-  handle    String   @id
-  addedAt   DateTime @default(now())
-  notes     String?
-  storeType String?
+  handle              String   @id
+  addedAt             DateTime @default(now())
+  notes               String?
+  storeType           String?
+  isServiceCenter     Boolean  @default(false)
+  premiumRetailKind   String? // boutique | multi_brand when in premium program
 }
 
 /// Per-brand scraper config; merged over backend/brand_configs.json for persistence on Railway.

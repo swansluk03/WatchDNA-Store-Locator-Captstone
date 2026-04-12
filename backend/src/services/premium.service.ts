@@ -16,6 +16,15 @@ import {
   removeStoreImageFile,
 } from '../utils/store-premium-image';
 
+export type PremiumRetailKind = 'boutique' | 'multi_brand';
+
+export function isValidPremiumRetailKind(v: unknown): v is PremiumRetailKind {
+  return v === 'boutique' || v === 'multi_brand';
+}
+
+/** Thrown when `isPremium: true` without valid `premiumRetailKind`. */
+export const ERR_PREMIUM_MARK_METADATA = 'PREMIUM_MARK_METADATA_REQUIRED';
+
 export interface PremiumStoreRecord {
   handle: string;
   name: string;
@@ -39,6 +48,8 @@ export interface PremiumStoreRecord {
   saturday: string | null;
   sunday: string | null;
   storeType: string | null;
+  isServiceCenter: boolean;
+  premiumRetailKind: PremiumRetailKind | null;
 }
 
 const premiumStoreSelect = {
@@ -92,6 +103,28 @@ function toPremiumRecord(loc: {
     ...loc,
     country: normalizeCountry(loc.country ?? '') || '',
     storeType: null,
+    isServiceCenter: false,
+    premiumRetailKind: null,
+  };
+}
+
+function mergePremiumRegistry(
+  base: PremiumStoreRecord,
+  row: {
+    storeType: string | null;
+    isServiceCenter: boolean;
+    premiumRetailKind: string | null;
+  } | null
+): PremiumStoreRecord {
+  if (!row) {
+    return { ...base, storeType: null, isServiceCenter: false, premiumRetailKind: null };
+  }
+  const kind = isValidPremiumRetailKind(row.premiumRetailKind) ? row.premiumRetailKind : null;
+  return {
+    ...base,
+    storeType: row.storeType ?? null,
+    isServiceCenter: row.isServiceCenter,
+    premiumRetailKind: kind,
   };
 }
 
@@ -116,7 +149,15 @@ export type PremiumStoreUpdateInput = Partial<{
   sunday: string | null;
   isPremium: boolean;
   storeType: string | null;
+  isServiceCenter: boolean;
+  premiumRetailKind: PremiumRetailKind | null;
 }>;
+
+export type MarkPremiumEntry = {
+  handle: string;
+  isServiceCenter: boolean;
+  premiumRetailKind: PremiumRetailKind;
+};
 
 function emptyToNull(s: string | null | undefined): string | null {
   if (s === undefined || s === null) return null;
@@ -136,14 +177,25 @@ export const premiumService = {
         orderBy: { name: 'asc' },
       }),
       prisma.premiumStore.findMany({
-        select: { handle: true, storeType: true },
+        select: {
+          handle: true,
+          storeType: true,
+          isServiceCenter: true,
+          premiumRetailKind: true,
+        },
       }),
     ]);
-    const storeTypeMap = new Map(premiumRows.map((p) => [p.handle, p.storeType]));
-    return rows.map((loc) => ({
-      ...toPremiumRecord(loc),
-      storeType: storeTypeMap.get(loc.handle) ?? null,
-    }));
+    const regMap = new Map(
+      premiumRows.map((p) => [
+        p.handle,
+        {
+          storeType: p.storeType,
+          isServiceCenter: p.isServiceCenter,
+          premiumRetailKind: p.premiumRetailKind,
+        },
+      ])
+    );
+    return rows.map((loc) => mergePremiumRegistry(toPremiumRecord(loc), regMap.get(loc.handle) ?? null));
   },
 
   /**
@@ -214,10 +266,15 @@ export const premiumService = {
           ? ('mark' as const)
           : ('unmark' as const);
 
-    const storeTypeUpdate =
-      body.storeType !== undefined ? { storeType: body.storeType } : {};
+    const registryPatch: Prisma.PremiumStoreUpdateInput = {};
+    if (body.storeType !== undefined) registryPatch.storeType = body.storeType;
+    if (body.isServiceCenter !== undefined) registryPatch.isServiceCenter = body.isServiceCenter;
+    if (body.premiumRetailKind !== undefined) {
+      registryPatch.premiumRetailKind = body.premiumRetailKind;
+    }
+    const hasRegistryPatch = Object.keys(registryPatch).length > 0;
 
-    if (Object.keys(storeTypeUpdate).length > 0 && premiumOp === null) {
+    if (hasRegistryPatch && premiumOp === null) {
       const reg = await prisma.premiumStore.findUnique({
         where: { handle: h },
         select: { handle: true },
@@ -227,22 +284,42 @@ export const premiumService = {
       }
     }
 
+    if (premiumOp === 'mark' && !isValidPremiumRetailKind(body.premiumRetailKind)) {
+      throw new Error(ERR_PREMIUM_MARK_METADATA);
+    }
+
+    const premiumRowSelect = {
+      storeType: true,
+      isServiceCenter: true,
+      premiumRetailKind: true,
+    } as const;
+
     await prisma.$transaction(async (tx) => {
       if (premiumOp === 'mark') {
+        const markData: Prisma.PremiumStoreCreateInput = {
+          handle: h,
+          isServiceCenter: body.isServiceCenter ?? false,
+          premiumRetailKind: body.premiumRetailKind as PremiumRetailKind,
+          ...(body.storeType !== undefined ? { storeType: body.storeType } : {}),
+        };
         await tx.premiumStore.upsert({
           where: { handle: h },
-          update: { addedAt: new Date(), ...storeTypeUpdate },
-          create: { handle: h, ...storeTypeUpdate },
+          update: {
+            addedAt: new Date(),
+            isServiceCenter: body.isServiceCenter ?? false,
+            premiumRetailKind: body.premiumRetailKind as PremiumRetailKind,
+            ...(body.storeType !== undefined ? { storeType: body.storeType } : {}),
+          },
+          create: markData,
         });
         data.isPremium = true;
       } else if (premiumOp === 'unmark') {
         await tx.premiumStore.deleteMany({ where: { handle: h } });
         data.isPremium = false;
-      } else if (Object.keys(storeTypeUpdate).length > 0) {
-        // Update storeType without changing premium status
+      } else if (hasRegistryPatch) {
         await tx.premiumStore.updateMany({
           where: { handle: h },
-          data: storeTypeUpdate,
+          data: registryPatch,
         });
       }
 
@@ -256,7 +333,7 @@ export const premiumService = {
 
     const [updated, premiumRow] = await Promise.all([
       prisma.location.findUnique({ where: { handle: h }, select: premiumStoreSelect }),
-      prisma.premiumStore.findUnique({ where: { handle: h }, select: { storeType: true } }),
+      prisma.premiumStore.findUnique({ where: { handle: h }, select: premiumRowSelect }),
     ]);
     if (!updated) return null;
 
@@ -269,7 +346,7 @@ export const premiumService = {
       }
     }
 
-    return { ...toPremiumRecord(updated), storeType: premiumRow?.storeType ?? null };
+    return mergePremiumRegistry(toPremiumRecord(updated), premiumRow);
   },
 
   /**
@@ -300,25 +377,44 @@ export const premiumService = {
 
     const [updated, premiumRow] = await Promise.all([
       prisma.location.findUnique({ where: { handle: h }, select: premiumStoreSelect }),
-      prisma.premiumStore.findUnique({ where: { handle: h }, select: { storeType: true } }),
+      prisma.premiumStore.findUnique({
+        where: { handle: h },
+        select: { storeType: true, isServiceCenter: true, premiumRetailKind: true },
+      }),
     ]);
     if (!updated) return null;
-    return { ...toPremiumRecord(updated), storeType: premiumRow?.storeType ?? null };
+    return mergePremiumRegistry(toPremiumRecord(updated), premiumRow);
   },
 
   /**
    * Mark a batch of stores as premium.
    * Upserts each handle into PremiumStore and sets Location.isPremium = true.
    */
-  async batchMarkPremium(handles: string[]): Promise<{ marked: number }> {
-    if (handles.length === 0) return { marked: 0 };
+  async batchMarkPremium(entries: MarkPremiumEntry[]): Promise<{ marked: number }> {
+    if (entries.length === 0) return { marked: 0 };
+
+    for (const e of entries) {
+      if (!e.handle?.trim() || typeof e.isServiceCenter !== 'boolean' || !isValidPremiumRetailKind(e.premiumRetailKind)) {
+        throw new Error('INVALID_MARK_PREMIUM_ENTRIES');
+      }
+    }
+
+    const handles = entries.map((e) => e.handle.trim());
 
     await prisma.$transaction([
-      ...handles.map((handle) =>
+      ...entries.map((e) =>
         prisma.premiumStore.upsert({
-          where: { handle },
-          update: { addedAt: new Date() },
-          create: { handle },
+          where: { handle: e.handle },
+          update: {
+            addedAt: new Date(),
+            isServiceCenter: e.isServiceCenter,
+            premiumRetailKind: e.premiumRetailKind,
+          },
+          create: {
+            handle: e.handle,
+            isServiceCenter: e.isServiceCenter,
+            premiumRetailKind: e.premiumRetailKind,
+          },
         })
       ),
       prisma.location.updateMany({
@@ -327,7 +423,7 @@ export const premiumService = {
       }),
     ]);
 
-    return { marked: handles.length };
+    return { marked: entries.length };
   },
 
   /**

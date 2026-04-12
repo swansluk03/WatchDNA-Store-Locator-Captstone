@@ -17,7 +17,8 @@ router.get('/jobs/:id/dropped-records', scraperController.getJobDroppedRecords);
 router.post('/jobs/:id/cancel', scraperController.cancelJob);
 router.delete('/jobs/:id', scraperController.deleteJob);
 
-// Master CSV - get records (with optional brand filter), update, and remove
+// Master CSV - distinct countries (optional brand / premium), records, update, remove
+router.get('/master-csv/countries', scraperController.getMasterCsvCountries);
 router.get('/master-csv/records', scraperController.getMasterCsvRecords);
 router.patch('/master-csv', scraperController.updateMasterCsvRows);
 router.delete('/master-csv/records', scraperController.deleteMasterRecord);

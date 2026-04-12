@@ -64,10 +64,16 @@ const baseRow = {
   sunday: null as string | null,
 };
 
+const emptyPremiumRow = {
+  storeType: null as string | null,
+  isServiceCenter: false,
+  premiumRetailKind: null as string | null,
+};
+
 describe('premiumService.updateStoreByHandle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    premiumFindUnique.mockResolvedValue({ storeType: null });
+    premiumFindUnique.mockResolvedValue({ ...emptyPremiumRow });
   });
 
   it('returns null for blank handle', async () => {
@@ -87,6 +93,12 @@ describe('premiumService.updateStoreByHandle', () => {
   });
 
   it('runs transaction with premium upsert and location update when marking premium', async () => {
+    premiumFindUnique.mockResolvedValue({
+      storeType: null,
+      isServiceCenter: false,
+      premiumRetailKind: 'boutique',
+    });
+
     const txPremiumUpsert = vi.fn().mockResolvedValue(undefined);
     const txLocationUpdate = vi.fn().mockResolvedValue(undefined);
 
@@ -104,12 +116,20 @@ describe('premiumService.updateStoreByHandle', () => {
       });
     });
 
-    const result = await premiumService.updateStoreByHandle('h1', { isPremium: true });
+    const result = await premiumService.updateStoreByHandle('h1', {
+      isPremium: true,
+      isServiceCenter: false,
+      premiumRetailKind: 'boutique',
+    });
 
     expect(txPremiumUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { handle: 'h1' },
-        create: { handle: 'h1' },
+        create: expect.objectContaining({
+          handle: 'h1',
+          isServiceCenter: false,
+          premiumRetailKind: 'boutique',
+        }),
       })
     );
     expect(txLocationUpdate).toHaveBeenCalledWith({
@@ -117,6 +137,16 @@ describe('premiumService.updateStoreByHandle', () => {
       data: expect.objectContaining({ isPremium: true }),
     });
     expect(result?.isPremium).toBe(true);
+    expect(result?.premiumRetailKind).toBe('boutique');
+  });
+
+  it('throws when marking premium without valid premiumRetailKind', async () => {
+    findUnique.mockResolvedValueOnce({ ...baseRow });
+
+    await expect(
+      premiumService.updateStoreByHandle('h1', { isPremium: true })
+    ).rejects.toThrow('PREMIUM_MARK_METADATA_REQUIRED');
+    expect($transaction).not.toHaveBeenCalled();
   });
 
   it('deletes premium row and sets isPremium false when unmarking', async () => {
@@ -199,14 +229,36 @@ describe('premiumService.batchMarkPremium / batchRemovePremium', () => {
       Array.isArray(arg) ? Promise.all(arg as Promise<unknown>[]) : Promise.resolve()
     );
 
-    const r = await premiumService.batchMarkPremium(['a', 'b']);
+    const r = await premiumService.batchMarkPremium([
+      { handle: 'a', isServiceCenter: true, premiumRetailKind: 'boutique' },
+      { handle: 'b', isServiceCenter: false, premiumRetailKind: 'multi_brand' },
+    ]);
 
     expect(r.marked).toBe(2);
     expect(premiumUpsert).toHaveBeenCalledTimes(2);
+    expect(premiumUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { handle: 'a' },
+        create: expect.objectContaining({
+          handle: 'a',
+          isServiceCenter: true,
+          premiumRetailKind: 'boutique',
+        }),
+      })
+    );
     expect(locationUpdateMany).toHaveBeenCalledWith({
       where: { handle: { in: ['a', 'b'] } },
       data: { isPremium: true },
     });
+  });
+
+  it('batchMarkPremium throws on invalid entry', async () => {
+    await expect(
+      premiumService.batchMarkPremium([
+        // @ts-expect-error exercise runtime validation
+        { handle: 'a', isServiceCenter: false, premiumRetailKind: 'invalid' },
+      ])
+    ).rejects.toThrow('INVALID_MARK_PREMIUM_ENTRIES');
   });
 
   it('batchRemovePremium deletes registry rows and clears isPremium', async () => {

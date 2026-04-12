@@ -40,6 +40,7 @@ export class ValidationService {
     options?: {
       autoFix?: boolean;
       checkUrls?: boolean;
+      dbImportParity?: boolean;
     }
   ): Promise<ValidationResult> {
     return new Promise((resolve, reject) => {
@@ -51,6 +52,7 @@ export class ValidationService {
 
       if (options?.autoFix) args.push('--fix');
       if (options?.checkUrls) args.push('--check-urls');
+      if (options?.dbImportParity) args.push('--db-import-parity');
 
       logger.debug(`[Validation] ${path.basename(filePath)}${options?.autoFix ? ' --fix' : ''}`);
 

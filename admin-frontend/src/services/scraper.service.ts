@@ -43,7 +43,10 @@ export interface ScraperStats {
   runningJobs: number;
   completedJobs: number;
   failedJobs: number;
-  totalRecords: number;
+  /** Rows in the Location table — only changes when stores are inserted or removed, not on sync/update */
+  totalStoresInDatabase: number;
+  /** Same as totalStoresInDatabase; prefer totalStoresInDatabase */
+  totalRecords?: number;
 }
 
 export interface CreateJobRequest {
@@ -153,7 +156,8 @@ export const scraperService = {
   // Save job records: persist to job CSV, append complete records to master
   async saveJobRecords(jobId: string, records: Record<string, string>[]): Promise<{
     savedToJob: number;
-    appendedToMaster: number;
+    /** Rows upserted into Location (replaces legacy “appended to master CSV”). */
+    dbUpserted: number;
     skippedIncomplete: number;
     validationErrors?: number;
   }> {
@@ -170,6 +174,15 @@ export const scraperService = {
   }> {
     const response = await api.get(`/scraper/jobs/${jobId}/dropped-records`);
     return response.data;
+  },
+
+  /** Distinct countries present in Location rows for the given brand / premium scope (ignores country filter). */
+  async getMasterCsvCountries(scope?: { brand?: string; premiumOnly?: boolean }): Promise<string[]> {
+    const params: Record<string, string> = {};
+    if (scope?.brand) params.brand = scope.brand;
+    if (scope?.premiumOnly) params.premium = 'true';
+    const response = await api.get<{ countries: string[] }>('/scraper/master-csv/countries', { params });
+    return response.data.countries;
   },
 
   // Get master CSV records (optional brand, country, premium-only — same query shape as download)

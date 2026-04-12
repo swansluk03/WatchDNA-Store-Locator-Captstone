@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 
-import { brandConfigIdToDisplayName } from './brand-display-name';
+import { legacyBrandTextFilterWhere } from './legacy-brand-filter';
 import { locationCountryEqualsWhere } from './location-country-filter';
 
 export type MasterExportFilters = {
@@ -9,23 +9,6 @@ export type MasterExportFilters = {
   /** When true, only rows with `Location.isPremium`. */
   premiumOnly?: boolean;
 };
-
-/** Brand filter using only `Location.brands` / `customBrands` (no LocationBrand join — matches reverted schema). */
-function legacyBrandTextFilterWhere(brandFilter: string): Prisma.LocationWhereInput {
-  const raw = brandFilter.trim();
-  const display = brandConfigIdToDisplayName(raw);
-  const or: Prisma.LocationWhereInput[] = [
-    { brands: { contains: display, mode: 'insensitive' } },
-    { customBrands: { contains: display, mode: 'insensitive' } },
-  ];
-  if (raw.toLowerCase() !== display.toLowerCase()) {
-    or.push(
-      { brands: { contains: raw, mode: 'insensitive' } },
-      { customBrands: { contains: raw, mode: 'insensitive' } }
-    );
-  }
-  return { OR: or };
-}
 
 export function buildMasterExportWhere(filters?: MasterExportFilters): Prisma.LocationWhereInput {
   const clauses: Prisma.LocationWhereInput[] = [];

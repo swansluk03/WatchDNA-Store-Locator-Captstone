@@ -1,7 +1,10 @@
 import fs from 'fs/promises';
 import { Request, Response } from 'express';
 import {
+  ERR_PREMIUM_MARK_METADATA,
+  isValidPremiumRetailKind,
   premiumService,
+  type MarkPremiumEntry,
   type PremiumStoreUpdateInput,
 } from '../services/premium.service';
 import { logger } from '../utils/logger';
@@ -32,6 +35,8 @@ const PATCH_KEYS: (keyof PremiumStoreUpdateInput)[] = [
   'sunday',
   'isPremium',
   'storeType',
+  'isServiceCenter',
+  'premiumRetailKind',
 ];
 
 function pickPremiumUpdate(body: unknown): PremiumStoreUpdateInput {
@@ -45,6 +50,20 @@ function pickPremiumUpdate(body: unknown): PremiumStoreUpdateInput {
     const v = src[key];
     if (key === 'isPremium') {
       if (typeof v === 'boolean') out.isPremium = v;
+      continue;
+    }
+    if (key === 'isServiceCenter') {
+      if (typeof v === 'boolean') out.isServiceCenter = v;
+      continue;
+    }
+    if (key === 'premiumRetailKind') {
+      if (v === null) {
+        out.premiumRetailKind = null;
+        continue;
+      }
+      if (typeof v === 'string' && isValidPremiumRetailKind(v)) {
+        out.premiumRetailKind = v;
+      }
       continue;
     }
     if (v === null) {
@@ -85,23 +104,44 @@ export const premiumController = {
   },
 
   async markPremium(req: Request, res: Response): Promise<void> {
-    const { handles } = req.body as { handles?: unknown };
+    const { entries } = req.body as { entries?: unknown };
 
-    if (!Array.isArray(handles) || handles.length === 0) {
-      res.status(400).json({ error: 'handles must be a non-empty array of strings' });
+    if (!Array.isArray(entries) || entries.length === 0) {
+      res.status(400).json({ error: 'entries must be a non-empty array' });
       return;
     }
 
-    const validHandles = handles.filter((h): h is string => typeof h === 'string' && h.trim() !== '');
-    if (validHandles.length === 0) {
-      res.status(400).json({ error: 'No valid handles provided' });
+    const parsed: MarkPremiumEntry[] = [];
+    for (const raw of entries) {
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
+      const o = raw as Record<string, unknown>;
+      const handle = typeof o.handle === 'string' ? o.handle.trim() : '';
+      if (!handle) continue;
+      if (typeof o.isServiceCenter !== 'boolean') continue;
+      if (!isValidPremiumRetailKind(o.premiumRetailKind)) continue;
+      parsed.push({
+        handle,
+        isServiceCenter: o.isServiceCenter,
+        premiumRetailKind: o.premiumRetailKind,
+      });
+    }
+
+    if (parsed.length === 0 || parsed.length !== entries.length) {
+      res.status(400).json({
+        error:
+          'Each entry must include handle (string), isServiceCenter (boolean), and premiumRetailKind ("boutique" | "multi_brand")',
+      });
       return;
     }
 
     try {
-      const result = await premiumService.batchMarkPremium(validHandles);
+      const result = await premiumService.batchMarkPremium(parsed);
       res.json(result);
-    } catch (err) {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message === 'INVALID_MARK_PREMIUM_ENTRIES') {
+        res.status(400).json({ error: 'Invalid handle in entries' });
+        return;
+      }
       logger.error('premiumController.markPremium error:', err);
       res.status(500).json({ error: 'Failed to mark stores as premium' });
     }
@@ -180,7 +220,14 @@ export const premiumController = {
     } catch (err: unknown) {
       if (err instanceof Error && err.message === 'STORE_TYPE_REQUIRES_PREMIUM') {
         res.status(400).json({
-          error: 'Mark the store as premium before setting store type.',
+          error: 'Mark the store as premium before changing premium-only fields.',
+        });
+        return;
+      }
+      if (err instanceof Error && err.message === ERR_PREMIUM_MARK_METADATA) {
+        res.status(400).json({
+          error:
+            'When marking as premium, premiumRetailKind is required and must be "boutique" or "multi_brand".',
         });
         return;
       }

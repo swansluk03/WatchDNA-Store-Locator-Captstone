@@ -835,3 +835,128 @@
     gap: 0.75rem;
   }
 }
+
+/* Bulk mark premium modal */
+.bulk-premium-overlay {
+  z-index: 1220;
+}
+
+.bulk-premium-modal {
+  max-width: 52rem;
+}
+
+.bulk-premium-modal__body {
+  padding-top: 0.5rem;
+}
+
+.bulk-premium-hint {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.bulk-premium-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--gray-200);
+  border-radius: 0.375rem;
+}
+
+.bulk-premium-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.bulk-premium-table th,
+.bulk-premium-table td {
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--gray-200);
+  vertical-align: middle;
+}
+
+.bulk-premium-table th {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gray-600);
+  background: var(--gray-50, #f9fafb);
+}
+
+.bulk-premium-table tr:last-child td {
+  border-bottom: none;
+}
+
+.bulk-premium-store-name {
+  font-weight: 600;
+  color: var(--gray-900);
+}
+
+.bulk-premium-store-handle {
+  font-size: 0.75rem;
+  color: var(--gray-500);
+  margin-top: 0.125rem;
+}
+
+.bulk-premium-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bulk-premium-radios {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.bulk-premium-radios label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+/* Edit modal — premium metadata */
+.store-edit-premium-meta {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.store-edit-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--gray-800);
+  cursor: pointer;
+}
+
+.store-edit-fieldset {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--gray-200);
+  border-radius: 0.375rem;
+}
+
+.store-edit-fieldset .store-edit-label {
+  padding: 0 0.25rem;
+}
+
+.store-edit-radio-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  font-size: 0.875rem;
+  color: var(--gray-800);
+  cursor: pointer;
+}
+
+.store-edit-radio-row:first-of-type {
+  margin-top: 0.25rem;
+}

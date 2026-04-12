@@ -26,6 +26,7 @@ spec.loader.exec_module(validator_module)
 # Re-export for imports (universal_scraper does: from validate_csv import CSVValidator, DEFAULT_REQUIRED)
 CSVValidator = validator_module.CSVValidator
 DEFAULT_REQUIRED = validator_module.DEFAULT_REQUIRED
+DEFAULT_REQUIRED_DB_IMPORT = validator_module.DEFAULT_REQUIRED_DB_IMPORT
 validate_csv = validator_module.validate_csv
 ValidationError = validator_module.ValidationError
 ValidationWarning = validator_module.ValidationWarning

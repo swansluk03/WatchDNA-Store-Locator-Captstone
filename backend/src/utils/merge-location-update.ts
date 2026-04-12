@@ -47,3 +47,19 @@ export function mergeLocationDataForUpdate(
     phone: existing.phone,
   };
 }
+
+/**
+ * Admin CSV import into an existing Location: union brands like scraper saves, but allow
+ * the spreadsheet to correct phone when the cell is non-empty (validated imports require phone).
+ */
+export function mergeLocationDataForManualImport(
+  existing: ExistingSnapshot,
+  incoming: LocationData
+): LocationData {
+  const merged = mergeLocationDataForUpdate(existing, incoming);
+  const incomingPhone = (incoming.phone ?? '').trim();
+  return {
+    ...merged,
+    phone: incomingPhone ? incoming.phone : existing.phone,
+  };
+}

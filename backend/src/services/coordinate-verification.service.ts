@@ -16,7 +16,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export type VerifyHandlesOptions = {
   dryRun?: boolean;
-  /** Re-run Nominatim even when address key matches a prior verification */
+  /** Re-run geocode even when a prior verification stamp matches the address key (only when DB columns exist). */
   forceReverify?: boolean;
   /** For tests only — bypasses HTTP when set */
   geocodeFn?: (input: NominatimAddressInput) => Promise<GeocodedPoint | null>;
@@ -30,6 +30,22 @@ export type VerifyHandlesSummary = {
   geocodeFailed: number;
   errors: number;
 };
+
+let cachedHasVerificationColumns: boolean | null = null;
+
+async function locationHasVerificationColumns(): Promise<boolean> {
+  if (cachedHasVerificationColumns !== null) return cachedHasVerificationColumns;
+  const rows = await prisma.$queryRaw<{ present: bigint }[]>`
+    SELECT 1::bigint AS present
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'Location'
+      AND column_name = 'coordinatesVerifiedAt'
+    LIMIT 1
+  `;
+  cachedHasVerificationColumns = rows.length > 0;
+  return cachedHasVerificationColumns;
+}
 
 async function throttleAfterRequest(minIntervalMs: number, lastEnd: { t: number }): Promise<void> {
   const elapsed = Date.now() - lastEnd.t;
@@ -55,9 +71,64 @@ function buildNominatimInput(row: {
   };
 }
 
+type RowForVerify = {
+  handle: string;
+  latitude: number;
+  longitude: number;
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string;
+  stateProvinceRegion: string | null;
+  postalCode: string | null;
+  country: string;
+  coordinatesVerifiedAt: Date | null;
+  coordinatesVerificationAddressKey: string | null;
+};
+
+async function loadRowForVerify(handle: string, hasStampCols: boolean): Promise<RowForVerify | null> {
+  if (!hasStampCols) {
+    const r = await prisma.location.findUnique({
+      where: { handle },
+      select: {
+        handle: true,
+        latitude: true,
+        longitude: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        stateProvinceRegion: true,
+        postalCode: true,
+        country: true,
+      },
+    });
+    if (!r) return null;
+    return { ...r, coordinatesVerifiedAt: null, coordinatesVerificationAddressKey: null };
+  }
+
+  const rows = await prisma.$queryRaw<RowForVerify[]>`
+    SELECT
+      "handle",
+      "latitude",
+      "longitude",
+      "addressLine1",
+      "addressLine2",
+      "city",
+      "stateProvinceRegion",
+      "postalCode",
+      "country",
+      "coordinatesVerifiedAt",
+      "coordinatesVerificationAddressKey"
+    FROM "Location"
+    WHERE "handle" = ${handle}
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
 /**
- * Sequential Nominatim verification for the given handles (rate-limited).
- * Skips rows that are already verified for the same address key.
+ * Sequential geocoder verification for the given handles (rate-limited).
+ * When optional `coordinatesVerifiedAt` / `coordinatesVerificationAddressKey` columns exist,
+ * skips rows already verified for the same address key unless `forceReverify`.
  */
 export async function verifyHandles(
   handles: string[],
@@ -74,6 +145,8 @@ export async function verifyHandles(
 
   const unique = [...new Set(handles.filter((h) => h && h.trim()))];
   if (unique.length === 0) return summary;
+
+  const hasStampCols = await locationHasVerificationColumns();
 
   const config = readGeoVerifyConfig();
   const geocode =
@@ -94,22 +167,7 @@ export async function verifyHandles(
 
   for (const handle of unique) {
     try {
-      const row = await prisma.location.findUnique({
-        where: { handle },
-        select: {
-          handle: true,
-          latitude: true,
-          longitude: true,
-          addressLine1: true,
-          addressLine2: true,
-          city: true,
-          stateProvinceRegion: true,
-          postalCode: true,
-          country: true,
-          coordinatesVerifiedAt: true,
-          coordinatesVerificationAddressKey: true,
-        },
-      });
+      const row = await loadRowForVerify(handle, hasStampCols);
 
       if (!row) {
         summary.errors++;
@@ -120,6 +178,7 @@ export async function verifyHandles(
       const keyNow = addressKeyForGeoVerification(row);
 
       if (
+        hasStampCols &&
         !options?.forceReverify &&
         row.coordinatesVerifiedAt != null &&
         row.coordinatesVerificationAddressKey != null &&
@@ -173,32 +232,43 @@ export async function verifyHandles(
           summary.coordinatesUpdated++;
           continue;
         }
-        await prisma.location.update({
-          where: { handle: row.handle },
-          data: {
-            latitude: point!.lat,
-            longitude: point!.lon,
-            coordinatesVerifiedAt: now,
-            coordinatesVerificationAddressKey: keyNow,
-          },
-        });
+        if (hasStampCols) {
+          await prisma.$executeRaw`
+            UPDATE "Location"
+            SET
+              "latitude" = ${point!.lat},
+              "longitude" = ${point!.lon},
+              "coordinatesVerifiedAt" = ${now},
+              "coordinatesVerificationAddressKey" = ${keyNow}
+            WHERE "handle" = ${row.handle}
+          `;
+        } else {
+          await prisma.location.update({
+            where: { handle: row.handle },
+            data: {
+              latitude: point!.lat,
+              longitude: point!.lon,
+            },
+          });
+        }
         summary.coordinatesUpdated++;
         continue;
       }
 
-      // keep existing coords, stamp verification
       if (options?.dryRun) {
         logger.info(`[coordinateVerification] dry-run: would stamp verified only for ${handle}`);
         summary.verifiedStampOnly++;
         continue;
       }
-      await prisma.location.update({
-        where: { handle: row.handle },
-        data: {
-          coordinatesVerifiedAt: now,
-          coordinatesVerificationAddressKey: keyNow,
-        },
-      });
+      if (hasStampCols) {
+        await prisma.$executeRaw`
+          UPDATE "Location"
+          SET
+            "coordinatesVerifiedAt" = ${now},
+            "coordinatesVerificationAddressKey" = ${keyNow}
+          WHERE "handle" = ${row.handle}
+        `;
+      }
       summary.verifiedStampOnly++;
     } catch (e: unknown) {
       logger.error(`[coordinateVerification] handle ${handle}: ${String(e)}`);

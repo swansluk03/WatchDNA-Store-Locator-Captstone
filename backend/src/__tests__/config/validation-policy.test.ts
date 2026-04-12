@@ -13,4 +13,11 @@ describe('validation-policy', () => {
     expect(VALIDATION_JOB_RECORDS_SAVE.autoFix).toBe(true);
     expect(VALIDATION_REVALIDATE_DEFAULT.autoFix).toBe(true);
   });
+
+  it('requires DB-import parity only for admin upload and revalidate', () => {
+    expect(VALIDATION_MANUAL_UPLOAD.dbImportParity).toBe(true);
+    expect(VALIDATION_REVALIDATE_DEFAULT.dbImportParity).toBe(true);
+    expect(VALIDATION_SCRAPER_JOB_COMPLETION.dbImportParity).toBeUndefined();
+    expect(VALIDATION_JOB_RECORDS_SAVE.dbImportParity).toBeUndefined();
+  });
 });
