@@ -1240,5 +1240,31 @@
         "separator": ", "
       }
     }
+  },
+  "panerai_stores": {
+    "type": "json",
+    "url": "https://www.panerai.com/us/en/network/boutiques.stores-with-hours.internal-external-retailer.json",
+    "method": "GET",
+    "description": "Panerai — static JSON endpoint. Single GET returns all 596 stores worldwide as a flat array. Includes both boutiques and authorized retailers.",
+    "display_name": "PANERAI",
+    "url_base": "https://www.panerai.com",
+    "data_path": "",
+    "field_mapping": {
+      "Handle": "storeId",
+      "Name": "name",
+      "Address Line 1": "address.street",
+      "Address Line 2": "address.street2",
+      "City": "address.city",
+      "State/Province/Region": "address.state",
+      "Postal/ZIP Code": "address.zipCode",
+      "Country": "address.country",
+      "Phone": "phoneNumber",
+      "Email": "email",
+      "Website": "website",
+      "Latitude": "location.latitude",
+      "Longitude": "location.longitude",
+      "Service Type": "type"
+    },
+    "_note": "Richemont brand. Static JSON, no auth needed. Same pattern may work for IWC (also Richemont)."
   }
 }
