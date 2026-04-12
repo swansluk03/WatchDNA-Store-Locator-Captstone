@@ -7,6 +7,7 @@ import type { Prisma } from '@prisma/client';
 
 import prisma from '../lib/prisma';
 import { normalizeCountry } from '../utils/country';
+import { effectiveBrandsCsvFromLocation } from '../utils/location-brands';
 import { normalizePhone } from '../utils/normalize-phone';
 import {
   STORE_IMAGE_PUBLIC_PREFIX,
@@ -62,6 +63,9 @@ const premiumStoreSelect = {
   friday: true,
   saturday: true,
   sunday: true,
+  locationBrands: {
+    select: { brand: { select: { displayName: true } } },
+  },
 } as const;
 
 function toPremiumRecord(loc: {
@@ -75,6 +79,7 @@ function toPremiumRecord(loc: {
   postalCode: string | null;
   phone: string | null;
   brands: string | null;
+  locationBrands?: Array<{ brand: { displayName: string } }>;
   isPremium: boolean;
   website: string | null;
   imageUrl: string | null;
@@ -87,8 +92,10 @@ function toPremiumRecord(loc: {
   saturday: string | null;
   sunday: string | null;
 }): PremiumStoreRecord {
+  const { locationBrands: _lb, ...rest } = loc;
   return {
-    ...loc,
+    ...rest,
+    brands: effectiveBrandsCsvFromLocation(loc),
     country: normalizeCountry(loc.country ?? '') || '',
     storeType: null,
   };

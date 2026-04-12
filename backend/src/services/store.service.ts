@@ -4,9 +4,15 @@
  * The DB is the single source of truth; CSVs are audit/input artifacts only.
  */
 
+import type { Prisma } from '@prisma/client';
 import Papa from 'papaparse';
 import prisma from '../lib/prisma';
-import { parseRowToLocationData, locationToCSVRow, type LocationData } from '../utils/csv-to-location';
+import {
+  parseRowToLocationData,
+  locationToCSVRow,
+  locationToCSVRowWithEffectiveBrands,
+  type LocationData,
+} from '../utils/csv-to-location';
 import { isRowCompleteForDb } from '../utils/row-completeness';
 import { mergeLocationDataForUpdate } from '../utils/merge-location-update';
 import { computeStableHandleFromRow, addressFingerprintLine1 } from '../utils/stable-handle';
@@ -31,9 +37,16 @@ import {
   safeAddressFingerprintContainment,
 } from '../utils/address-dedupe';
 import { logger } from '../utils/logger';
-import { brandConfigIdToDisplayName } from '../utils/brand-display-name';
+import { buildLocationBrandFilterWhere, syncLocationStandardBrands } from '../utils/location-brands';
 
 const BATCH_SIZE = 500;
+
+/** Include for CSV / master-record reads so `Brands` reflects `LocationBrand` + legacy column. */
+const masterCsvBrandInclude = {
+  locationBrands: {
+    select: { brand: { select: { displayName: true } } },
+  },
+} satisfies Prisma.LocationInclude;
 
 /** ~50 metres expressed as degrees of latitude — matches the tolerance in updateMasterRecords. */
 const COORD_TOLERANCE_DEG = 0.00045;
@@ -556,22 +569,6 @@ function classifyLocationChange(
   return { brandsChanged, addressChanged, infoChanged };
 }
 
-function brandFilterWhere(brandFilter: string) {
-  const raw = brandFilter.trim();
-  const display = brandConfigIdToDisplayName(raw);
-  const or: Array<{ brands?: object; customBrands?: object }> = [
-    { brands: { contains: display, mode: 'insensitive' as const } },
-    { customBrands: { contains: display, mode: 'insensitive' as const } },
-  ];
-  if (raw.toLowerCase() !== display.toLowerCase()) {
-    or.push(
-      { brands: { contains: raw, mode: 'insensitive' as const } },
-      { customBrands: { contains: raw, mode: 'insensitive' as const } }
-    );
-  }
-  return { OR: or };
-}
-
 export interface MasterRecordsResult {
   columns: string[];
   records: Record<string, string>[];
@@ -581,14 +578,15 @@ export interface MasterRecordsResult {
 export const storeService = {
   /** Get master store records from the DB, optionally filtered by brand */
   async getMasterRecords(brandFilter?: string): Promise<MasterRecordsResult> {
-    const where = brandFilter?.trim() ? brandFilterWhere(brandFilter) : {};
+    const where = brandFilter?.trim() ? buildLocationBrandFilterWhere(brandFilter) : {};
 
     const locations = await prisma.location.findMany({
       where,
       orderBy: { name: 'asc' },
+      include: masterCsvBrandInclude,
     });
 
-    const records = locations.map(locationToCSVRow);
+    const records = locations.map(locationToCSVRowWithEffectiveBrands);
     const columns = records.length > 0 ? Object.keys(records[0]) : [];
     return { columns, records, totalCount: records.length };
   },
@@ -602,8 +600,9 @@ export const storeService = {
     const locations = await prisma.location.findMany({
       where: { uploadId },
       orderBy: { name: 'asc' },
+      include: masterCsvBrandInclude,
     });
-    return locations.map(locationToCSVRow);
+    return locations.map(locationToCSVRowWithEffectiveBrands);
   },
 
   /**
@@ -775,6 +774,18 @@ export const storeService = {
         )
       );
 
+      const brandCsvByHandle = new Map<string, string | null>();
+      for (const row of finalBatch) {
+        brandCsvByHandle.set(row.handle, row.brands ?? null);
+      }
+      const savedForBrands = await prisma.location.findMany({
+        where: { handle: { in: uniqueHandles } },
+        select: { id: true, handle: true },
+      });
+      for (const loc of savedForBrands) {
+        await syncLocationStandardBrands(prisma, loc.id, brandCsvByHandle.get(loc.handle) ?? null);
+      }
+
       upserted += batch.length;
     }
 
@@ -852,7 +863,7 @@ export const storeService = {
       for (const row of finalBatch) {
         const preExisting = snapByHandle.get(row.handle);
         try {
-          await prisma.location.upsert({
+          const saved = await prisma.location.upsert({
             where: { handle: row.handle },
             update: {
               ...row,
@@ -863,6 +874,7 @@ export const storeService = {
               ...(uploadId ? { uploadId } : {}),
             },
           });
+          await syncLocationStandardBrands(prisma, saved.id, row.brands ?? null);
           successfulHandles.push(row.handle);
           upserted++;
 
@@ -942,7 +954,7 @@ export const storeService = {
 
       // Primary match: unique handle
       let existing = handle
-        ? await prisma.location.findUnique({ where: { handle } })
+        ? await prisma.location.findUnique({ where: { handle }, include: masterCsvBrandInclude })
         : null;
 
       // Fallback match: coordinate bounding-box proxy for ~50 m radius
@@ -956,6 +968,7 @@ export const storeService = {
               latitude: { gte: lat - COORD_TOLERANCE_DEG, lte: lat + COORD_TOLERANCE_DEG },
               longitude: { gte: lon - lonTol, lte: lon + lonTol },
             },
+            include: masterCsvBrandInclude,
           });
         }
       }
@@ -964,7 +977,7 @@ export const storeService = {
 
       // Merge: convert existing DB record → CSV row, overlay update fields, parse back
       const mergedCsvRow = {
-        ...locationToCSVRow(existing),
+        ...locationToCSVRowWithEffectiveBrands(existing),
         ...update,
         Handle: existing.handle, // handle is immutable
       };
@@ -975,8 +988,10 @@ export const storeService = {
         where: { handle: existing.handle },
         data: rowData,
       });
+      await syncLocationStandardBrands(prisma, existing.id, rowData.brands ?? null);
 
-      changedRows.push(locationToCSVRow({ ...existing, ...rowData }));
+      const { locationBrands: _lb, ...existingFlat } = existing;
+      changedRows.push(locationToCSVRowWithEffectiveBrands({ ...existingFlat, ...rowData }));
       updatedCount++;
     }
 
@@ -1006,18 +1021,19 @@ export const storeService = {
 
   /**
    * Generate a CSV string from the Location table.
-   * Optionally filter by brand (matches against both `brands` and `customBrands` columns).
+   * Optionally filter by brand (legacy columns + `LocationBrand` / `Brand`; see `buildLocationBrandFilterWhere`).
    * The resulting CSV uses the same human-readable column headers as the original master CSV.
    */
   async generateDownloadCSV(brandFilter?: string): Promise<string> {
-    const where = brandFilter?.trim() ? brandFilterWhere(brandFilter) : {};
+    const where = brandFilter?.trim() ? buildLocationBrandFilterWhere(brandFilter) : {};
 
     const locations = await prisma.location.findMany({
       where,
       orderBy: { name: 'asc' },
+      include: masterCsvBrandInclude,
     });
 
-    const rows = locations.map(locationToCSVRow);
+    const rows = locations.map(locationToCSVRowWithEffectiveBrands);
     return Papa.unparse(rows, { header: true });
   },
 };

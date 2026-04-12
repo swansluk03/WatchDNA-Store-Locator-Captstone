@@ -82,6 +82,10 @@ model Location {
   latitude                Float
   longitude               Float
 
+  // Geocode verification (Nominatim drift check; set by verifier only)
+  coordinatesVerifiedAt             DateTime?
+  coordinatesVerificationAddressKey String?
+
   // SEO
   pageTitle               String?
   pageDescription         String?
@@ -138,6 +142,7 @@ model Location {
   updatedAt               DateTime @updatedAt
 
   upload                  Upload?  @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+  locationBrands          LocationBrand[]
 
   @@index([uploadId])
   @@index([city])
@@ -183,6 +188,27 @@ model PremiumStore {
   addedAt   DateTime @default(now())
   notes     String?
   storeType String?
+}
+
+/// Canonical retailer / brand label; linked to locations via LocationBrand (no repeated strings per row).
+model Brand {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  displayName String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  locations LocationBrand[]
+}
+
+model LocationBrand {
+  locationId String
+  brandId    String
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  brand      Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@id([locationId, brandId])
+  @@index([brandId])
 }
 
 /// Per-brand scraper config; merged over backend/brand_configs.json for persistence on Railway.

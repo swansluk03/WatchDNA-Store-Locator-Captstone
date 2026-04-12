@@ -8,10 +8,16 @@ import 'dotenv/config';
 import prisma from '../lib/prisma';
 
 async function main() {
-  const [locWithBrandsCol, locWithLinks, brandCount, topRepeated] = await Promise.all([
+  const [locWithBrandsCol, locWithLinks, linksNormOnly, brandCount, topRepeated] = await Promise.all([
     prisma.location.count({ where: { brands: { not: null } } }),
     prisma.location.count({
       where: { locationBrands: { some: {} } },
+    }),
+    prisma.location.count({
+      where: {
+        locationBrands: { some: {} },
+        OR: [{ brands: null }, { brands: { equals: '' } }],
+      },
     }),
     prisma.brand.count(),
     prisma.$queryRaw<{ brands: string; cnt: bigint }[]>`
@@ -27,6 +33,9 @@ async function main() {
   console.log('--- Brand storage snapshot ---');
   console.log(`Location rows with non-null legacy "brands" column: ${locWithBrandsCol}`);
   console.log(`Location rows with at least one LocationBrand link: ${locWithLinks}`);
+  console.log(
+    `Of those, rows with null/empty legacy "brands" column (normalized-only): ${linksNormOnly}`
+  );
   console.log(`Distinct Brand rows (canonical display names): ${brandCount}`);
   if (topRepeated.length > 0) {
     console.log('\nTop repeated legacy "brands" strings (same text on many rows = redundant storage):');
