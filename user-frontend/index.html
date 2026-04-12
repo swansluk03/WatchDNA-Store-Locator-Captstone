@@ -68,15 +68,15 @@
         <div class="type-toggle-row">
           <span class="type-toggle-label" id="toggleLabelWatch">Multi-Brand Stores</span>
           <button type="button" id="typeToggle" class="type-toggle" role="switch" aria-checked="false"
-            title="Switch between Multi-Brand and Boutiques"></button>
-          <span class="type-toggle-label" id="toggleLabelAccessory">Boutiques</span>
+            title="Switch between Multi-Brand and Single Brand stores"></button>
+          <span class="type-toggle-label" id="toggleLabelAccessory">Single Brand Stores</span>
           <input type="checkbox" id="serviceCenterCheckbox" value="services-center" />
           <span>Services Center</span>
         </div>
 
       </div>
 
-      <label for="brandCheckboxes"><strong>Brands Available:</strong></label>
+      <label for="brandCheckboxes"><strong>Filter by Brand:</strong></label>
       <div id="brandCheckboxes">
         <!-- Brand checkboxes inserted here -->
       </div>
@@ -233,7 +233,6 @@
     //});
     //}
 
-    // Public map: `brands` on each feature must come from this API (LocationBrand-aware merge), not a static CSV.
     const API_LOCATIONS_URL = 'https://backend-production-033e.up.railway.app/api/locations';
     const BACKEND_BASE_URL = 'https://backend-production-033e.up.railway.app';
 
@@ -1431,9 +1430,6 @@
 
       const brands = [...brandSet].sort();
 
-      // Only show the first 3 brands per letter group before collapsing the rest
-      const VISIBLE_COUNT = 3;
-
       // Group by first letter
       const groups = {};
       brands.forEach(b => {
@@ -1452,14 +1448,9 @@
         const group = document.createElement('div');
         group.className = 'brand-group';
 
-        const items = groups[letter];
-
-        items.forEach((b, i) => {
+        groups[letter].forEach(b => {
           const label = document.createElement('label');
           label.style.cssText = 'display:flex; align-items:center; gap:6px; padding:2px 0;';
-
-          // Hide brands beyond the visible limit; they will be revealed by the See more button
-          if (i >= VISIBLE_COUNT) label.style.display = 'none';
 
           const cb = document.createElement('input');
           cb.type = 'checkbox';
@@ -1475,36 +1466,7 @@
           group.appendChild(label);
         });
 
-        // Only render the toggle button if the group has more brands than the visible limit
-        if (items.length > VISIBLE_COUNT) {
-          const seeMoreBtn = document.createElement('button');
-          seeMoreBtn.type = 'button';
-          seeMoreBtn.textContent = `See ${items.length - VISIBLE_COUNT} more`;
-          seeMoreBtn.style.cssText = 'background:none; border:none; cursor:pointer; font-size:12px; color:#666; padding:2px 0; margin-top:2px;';
-
-          // Tracks whether this letter group is currently expanded or collapsed
-          let expanded = false;
-
-          seeMoreBtn.addEventListener('click', () => {
-            expanded = !expanded;
-
-            // Show or hide every label past the visible limit based on toggle state
-            const labels = group.querySelectorAll('label');
-            labels.forEach((lbl, i) => {
-              if (i >= VISIBLE_COUNT) {
-                lbl.style.display = expanded ? 'flex' : 'none';
-              }
-            });
-
-            seeMoreBtn.textContent = expanded
-              ? 'See less'
-              : `See ${items.length - VISIBLE_COUNT} more`;
-          });
-
-          group.appendChild(seeMoreBtn);
-        }
-
-        // Always append header and group (no dropdown behavior)
+        // Always append header and expanded group (no dropdown behavior)
         container.appendChild(header);
         container.appendChild(group);
       });

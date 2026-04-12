@@ -32,5 +32,4 @@ ENV PYTHON_PATH=/app/venv/bin/python3
 
 EXPOSE 8080
 
-# Apply committed migrations so schema matches Prisma client before serving traffic
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
+CMD ["node", "dist/server.js"]

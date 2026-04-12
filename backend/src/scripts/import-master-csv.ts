@@ -21,7 +21,6 @@ import * as path from 'path';
 import Papa from 'papaparse';
 import prisma from '../lib/prisma';
 import { parseRowToLocationData } from '../utils/csv-to-location';
-import { syncLocationStandardBrands } from '../utils/location-brands';
 
 const BATCH_SIZE = 500;
 const CSV_PATH = path.join(__dirname, '..', '..', 'uploads', 'master_stores.csv');
@@ -93,29 +92,6 @@ async function importMasterCSV() {
 
   const finalCount = await prisma.location.count();
   console.log(`\nImport complete: ${finalCount} locations in database`);
-
-  console.log('\nSyncing LocationBrand links from brands column...');
-  const LINK_BATCH = 200;
-  let linkSkip = 0;
-  let linkSynced = 0;
-  for (;;) {
-    const chunk = await prisma.location.findMany({
-      take: LINK_BATCH,
-      skip: linkSkip,
-      select: { id: true, brands: true },
-      orderBy: { id: 'asc' },
-    });
-    if (chunk.length === 0) break;
-    await prisma.$transaction(async (tx) => {
-      for (const loc of chunk) {
-        await syncLocationStandardBrands(tx, loc.id, loc.brands);
-      }
-    });
-    linkSynced += chunk.length;
-    linkSkip += LINK_BATCH;
-    console.log(`  Linked brands for ${linkSynced}/${finalCount} locations...`);
-  }
-  console.log('✅ Brand links synced');
 }
 
 importMasterCSV()

@@ -5,10 +5,6 @@ import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { parseRowToLocationData } from '../utils/csv-to-location';
-import {
-  buildLocationBrandFilterWhere,
-  effectiveBrandsCsvFromLocation,
-} from '../utils/location-brands';
 import { storeService } from './store.service';
 import { normalizeCountry } from '../utils/country';
 
@@ -37,22 +33,6 @@ export interface ImportResult {
   skippedCount: number;
   errorCount: number;
   errors: string[];
-}
-
-const locationBrandLinksInclude = {
-  locationBrands: {
-    select: { brand: { select: { displayName: true } } },
-  },
-} satisfies Prisma.LocationInclude;
-
-type LocationWithBrandLinks = Prisma.LocationGetPayload<{ include: typeof locationBrandLinksInclude }>;
-
-function toApiLocationRow(loc: LocationWithBrandLinks): Omit<LocationWithBrandLinks, 'locationBrands'> {
-  const { locationBrands: _lb, ...rest } = loc;
-  return {
-    ...rest,
-    brands: effectiveBrandsCsvFromLocation(loc),
-  };
 }
 
 class LocationService {
@@ -132,38 +112,37 @@ class LocationService {
       offset = 0
     } = filters;
 
-    const clauses: Prisma.LocationWhereInput[] = [];
+    const where: Prisma.LocationWhereInput = {};
+
     if (brand) {
-      clauses.push(buildLocationBrandFilterWhere(brand));
+      where.brands = { contains: brand, mode: 'insensitive' };
     }
+
     if (country) {
-      clauses.push({ country: normalizeCountry(country) || country });
+      where.country = normalizeCountry(country) || country;
     }
+
     if (city) {
-      clauses.push({ city });
+      where.city = city;
     }
+
     if (status !== undefined) {
-      clauses.push({ status });
+      where.status = status;
     }
+
     if (search) {
-      clauses.push({ name: { contains: search, mode: 'insensitive' } });
+      where.name = { contains: search, mode: 'insensitive' };
     }
 
-    const where: Prisma.LocationWhereInput =
-      clauses.length === 0 ? {} : clauses.length === 1 ? clauses[0]! : { AND: clauses };
-
-    const [rawLocations, total] = await Promise.all([
+    const [locations, total] = await Promise.all([
       prisma.location.findMany({
         where,
         take: limit,
         skip: offset,
-        orderBy: { name: 'asc' },
-        include: locationBrandLinksInclude,
+        orderBy: { name: 'asc' }
       }),
-      prisma.location.count({ where }),
+      prisma.location.count({ where })
     ]);
-
-    const locations = rawLocations.map(toApiLocationRow);
 
     return {
       data: locations,
@@ -207,54 +186,43 @@ class LocationService {
    * Find a single location by ID.
    */
   async findById(id: string) {
-    const loc = await prisma.location.findUnique({
-      where: { id },
-      include: locationBrandLinksInclude,
-    });
-    if (!loc) return null;
-    return toApiLocationRow(loc);
+    return prisma.location.findUnique({ where: { id } });
   }
 
   /**
    * Search locations by name or address (case-insensitive on PostgreSQL).
    */
   async search(query: string, limit: number = 50) {
-    const raw = await prisma.location.findMany({
+    const locations = await prisma.location.findMany({
       where: {
         OR: [
           { name: { contains: query, mode: 'insensitive' } },
           { addressLine1: { contains: query, mode: 'insensitive' } },
-          { city: { contains: query, mode: 'insensitive' } },
-        ],
+          { city: { contains: query, mode: 'insensitive' } }
+        ]
       },
       take: limit,
-      orderBy: { name: 'asc' },
-      include: locationBrandLinksInclude,
+      orderBy: { name: 'asc' }
     });
 
-    const locations = raw.map(toApiLocationRow);
     return { data: locations, total: locations.length, query };
   }
 
   /**
-   * Unique brand labels: canonical `Brand` rows plus legacy `brands` / `customBrands` text on locations.
+   * Get unique list of brands from all locations (both brands and customBrands columns).
    */
   async getBrands() {
-    const [canonicalRows, locations] = await Promise.all([
-      prisma.brand.findMany({ select: { displayName: true }, orderBy: { displayName: 'asc' } }),
-      prisma.location.findMany({
-        select: { brands: true, customBrands: true },
-        where: {
-          OR: [
-            { brands: { not: null } },
-            { customBrands: { not: null } },
-            { locationBrands: { some: {} } },
-          ],
-        },
-      }),
-    ]);
+    const locations = await prisma.location.findMany({
+      select: { brands: true, customBrands: true },
+      where: {
+        OR: [
+          { brands: { not: null } },
+          { customBrands: { not: null } }
+        ]
+      }
+    });
 
-    const brandsSet = new Set<string>(canonicalRows.map((r) => r.displayName).filter(Boolean));
+    const brandsSet = new Set<string>();
 
     for (const loc of locations) {
       // Plain-text comma-separated brands column
@@ -282,7 +250,7 @@ class LocationService {
       }
     }
 
-    return Array.from(brandsSet).sort((a, b) => a.localeCompare(b));
+    return Array.from(brandsSet).sort();
   }
 
   /**

@@ -8,7 +8,6 @@
 import { normalizeCountry } from './country';
 import { normalizePhone } from './normalize-phone';
 import { normalizeBrandsCsvField, normalizeTagsCsvField } from './brand-display-name';
-import { effectiveBrandsCsvFromLocation, type LocationBrandsSource } from './location-brands';
 
 /**
  * Single source of truth for Country + Phone on master-CSV-shaped rows (DB import, scraper job CSV, job editor).
@@ -243,15 +242,4 @@ export function locationToCSVRow(loc: Record<string, any>): Record<string, strin
     'Custom Button title 2 - ES': loc.customButton2TitleEs ?? '',
     'Custom Button URL 2 - ES': loc.customButton2UrlEs ?? '',
   };
-}
-
-/**
- * Same as {@link locationToCSVRow} but sets `Brands` from linked `LocationBrand` rows when present
- * (see {@link effectiveBrandsCsvFromLocation}); use for DB→CSV exports and merge-with-existing flows.
- */
-export function locationToCSVRowWithEffectiveBrands(
-  loc: Record<string, unknown> & LocationBrandsSource
-): Record<string, string> {
-  const brands = effectiveBrandsCsvFromLocation(loc);
-  return locationToCSVRow({ ...loc, brands });
 }
