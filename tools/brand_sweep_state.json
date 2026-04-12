@@ -99,6 +99,12 @@
       "fix_estimate": "Needs DevTools."
     },
     {
+      "brand": "MOVADO",
+      "reason": "POST-only radius API at /api/commerce/SearchStores. 5894 total stores but capped at 200 per call. Offset/pagination params are ignored. Would need POST support in scrape_radius_expansion (currently GET only).",
+      "endpoint_seen": "https://www.movado.com/api/commerce/SearchStores (POST, body: {latitude, longitude, radius})",
+      "fix_estimate": "30-60 min to add POST support to scrape_radius_expansion."
+    },
+    {
       "brand": "HAMILTON",
       "reason": "Swatch Group but NOT on Tissot SFCC pattern. /en-us/stores?countryCode=US returns 404.",
       "endpoint_seen": null,
