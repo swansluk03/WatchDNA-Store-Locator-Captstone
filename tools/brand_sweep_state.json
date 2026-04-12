@@ -53,9 +53,63 @@
       "config_key": "raymond_weil_stores",
       "rows": 1358,
       "notes": "Stockist.co SaaS. Uses radius_search expansion. Stockist is multi-tenant — expect to clone this for several smaller brands by swapping the map_<tenant> ID."
+    },
+    {
+      "brand": "PANERAI",
+      "config_key": "panerai_stores",
+      "rows": 591,
+      "notes": "Richemont brand. Static JSON at /network/boutiques...json. No auth needed."
+    },
+    {
+      "brand": "AEROWATCH",
+      "config_key": "aerowatch_stores",
+      "rows": 282,
+      "notes": "Custom AJAX endpoint /en/stockists/ajax/stores. Single GET."
     }
   ],
   "blocked": [
+    {
+      "brand": "ORIS",
+      "reason": "Nuxt SPA with GraphQL behind query-specific hash (__gqlh). Can't discover the query name + hash without browser. Store data not embedded in SSR HTML.",
+      "endpoint_seen": "https://www.oris.ch/api/nuxt/graphql/query/<unknown>",
+      "fix_estimate": "Would need browser automation or the exact query name + hash from DevTools."
+    },
+    {
+      "brand": "GRAND SEIKO",
+      "reason": "Shares the same Seiko API (same key, same country IDs, same 2507 stores). Grand Seiko dealers are already covered by the seiko_stores config. Would need the Grand Seiko collection_id to filter — low priority since the physical stores overlap completely.",
+      "endpoint_seen": "Same as Seiko",
+      "fix_estimate": "n/a — already covered by seiko_stores"
+    },
+    {
+      "brand": "CHOPARD",
+      "reason": "404 on Panerai-style JSON path. Different Richemont backend.",
+      "endpoint_seen": "https://www.chopard.com/us/en/network/boutiques...json → 404",
+      "fix_estimate": "Needs DevTools to find actual endpoint."
+    },
+    {
+      "brand": "HUBLOT",
+      "reason": "403/404 on direct probe. WAF protected.",
+      "endpoint_seen": null,
+      "fix_estimate": "Needs DevTools."
+    },
+    {
+      "brand": "IWC",
+      "reason": "404 on Panerai-style JSON path. Different Richemont backend.",
+      "endpoint_seen": "https://www.iwc.com/.../boutiques...json → 404",
+      "fix_estimate": "Needs DevTools."
+    },
+    {
+      "brand": "HAMILTON",
+      "reason": "Swatch Group but NOT on Tissot SFCC pattern. /en-us/stores?countryCode=US returns 404.",
+      "endpoint_seen": null,
+      "fix_estimate": "Needs DevTools."
+    },
+    {
+      "brand": "MIDO",
+      "reason": "Swatch Group but NOT on Tissot SFCC pattern. /en-us/stores?countryCode=US returns 404.",
+      "endpoint_seen": null,
+      "fix_estimate": "Needs DevTools."
+    },
     {
       "brand": "VERSACE",
       "reason": "ASP.NET WebForms postback. Store data is rendered into HTML by Storelocator.aspx after __doPostBack on country/city dropdowns. No JSON XHR feed (the GetViewportInfo XHRs are Google Maps tile metadata, not store data). Would require __VIEWSTATE/__EVENTVALIDATION management + per-country + per-city HTML parsing.",
