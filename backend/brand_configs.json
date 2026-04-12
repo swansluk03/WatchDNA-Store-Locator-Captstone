@@ -1266,5 +1266,31 @@
       "Service Type": "type"
     },
     "_note": "Richemont brand. Static JSON, no auth needed. Same pattern may work for IWC (also Richemont)."
+  },
+  "norqain_stores": {
+    "type": "json",
+    "force_single_call": true,
+    "url": "https://storerocket.io/api/user/Or85dW0JNM/locations?lat=20&lng=0&radius=25000&units=kilometers",
+    "method": "GET",
+    "description": "Norqain — StoreRocket SaaS. Single GET with large radius returns all 342 stores worldwide.",
+    "display_name": "NORQAIN",
+    "url_base": "https://www.norqain.com",
+    "data_path": "results.locations",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "name",
+      "Address Line 1": "address_line_1",
+      "Address Line 2": "address_line_2",
+      "City": "city",
+      "State/Province/Region": "state",
+      "Postal/ZIP Code": "postcode",
+      "Country": "country",
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "url",
+      "Latitude": "lat",
+      "Longitude": "lng"
+    },
+    "_note": "StoreRocket SaaS tenant Or85dW0JNM. Large radius (25000km) returns all stores in one call."
   }
 }
