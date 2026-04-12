@@ -53,6 +53,12 @@
       "config_key": "raymond_weil_stores",
       "rows": 1358,
       "notes": "Stockist.co SaaS. Uses radius_search expansion. Stockist is multi-tenant — expect to clone this for several smaller brands by swapping the map_<tenant> ID."
+    },
+    {
+      "brand": "MONDAINE",
+      "config_key": "mondaine_stores",
+      "rows": 1309,
+      "notes": "StoreMapper SaaS tenant 6698. Single GET, all stores in one call."
     }
   ],
   "blocked": [
@@ -75,17 +81,33 @@
       "fix_estimate": "n/a"
     },
     {
+      "brand": "LONGINES",
+      "reason": "Magento 2 GraphQL backend proxied through a frontend mesh (Platform.sh). The /graphql endpoint returns 404 when called from outside.",
+      "endpoint_seen": "https://www.longines.com/graphql",
+      "fix_estimate": "Would need browser automation."
+    },
+    {
+      "brand": "RADO",
+      "reason": "Proprietary LPE Nuxt SPA. Algolia only indexes subdivisions, not stores. No discoverable API.",
+      "endpoint_seen": "https://store.rado.com",
+      "fix_estimate": "Would need browser automation to intercept runtime fetch."
+    },
+    {
+      "brand": "PILO & CO",
+      "reason": "Website unreachable (connection timeout). No store locator.",
+      "endpoint_seen": null,
+      "fix_estimate": "n/a"
+    },
+    {
       "brand": "SWAROVSKI",
       "reason": "HTML response with .swa-store-view__store divs (data-latitude/data-longitude attrs). Radius-capped at ~150 miles (huge radius returns 0). 12 stores per call. Would need country iteration + multi-point radius grid + HTML parser. ~1-2h engine work, marginal ROI: Swarovski is mostly fashion, watches are a side product.",
       "endpoint_seen": "https://www.swarovski.com/en-US/store-finder/stores/?countryIso=US&allBaseStores=true&radius=150.0&geoPoint.latitude=...",
       "fix_estimate": "1-2h; revisit if 2+ similar HTML+radius brands surface"
     }
   ],
-  "queue_remaining_excludes": ["SWAROVSKI"], "queue_remaining": [ "SWAROVSKI",
-    "RADO",
-    "PILO & CO", "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
-    "MONTBLANC", "MONDAINE", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
-    "LONGINES", "LACOSTE", "JACOB & CO", "IWC", "HUBLOT", "HAMILTON",
+  "queue_remaining": [ "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
+    "MONTBLANC", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
+    "LACOSTE", "JACOB & CO", "IWC", "HUBLOT", "HAMILTON",
     "GUESS", "GUCCI", "GRAND SEIKO", "GLASHÜTTE ORIGINAL", "GIRARD PERREGAUX",
     "G-SHOCK", "FREDERIQUE CONSTANT", "FORTIS", "ELKA", "EDOX", "DIESEL",
     "COACH", "CITIZEN", "CHOPARD", "BOSS", "BACKES & STRAUSS", "AEROWATCH"
