@@ -963,6 +963,53 @@
     },
     "_note": "Stockist.co is a SaaS used by many smaller brands. The map_vq7vry93 ID is Raymond Weil's Stockist tenant. Field names follow Stockist's standard schema."
   },
+  "mondaine_stores": {
+    "type": "json",
+    "url": "https://storemapper.co/api/users/6698/stores.json",
+    "method": "GET",
+    "description": "Mondaine — StoreMapper SaaS (Shopify app). Single GET returns all 1311 stores worldwide in one call. No pagination needed.",
+    "display_name": "MONDAINE",
+    "url_base": "https://www.mondaine.com",
+    "data_path": "stores",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "name",
+      "Address Line 1": "address",
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "url",
+      "Latitude": "latitude",
+      "Longitude": "longitude"
+    },
+    "_note": "StoreMapper SaaS tenant 6698. Address is one combined string (like U-Boat); city/country inferred by data_normalizer. storemapper-id found via data-storemapper-id attribute in the Shopify page HTML."
+  },
+  "aerowatch_stores": {
+    "type": "json",
+    "url": "https://www.aerowatch.com/en/stockists/ajax/stores",
+    "method": "GET",
+    "description": "Aerowatch — custom AJAX endpoint. Single GET returns all 282 stores worldwide as a flat JSON array. No pagination needed.",
+    "display_name": "AEROWATCH",
+    "url_base": "https://www.aerowatch.com",
+    "data_path": "",
+    "custom_headers": {
+      "X-Requested-With": "XMLHttpRequest"
+    },
+    "field_mapping": {
+      "Handle": "stockist_id",
+      "Name": "name",
+      "Address Line 1": "address",
+      "City": "city",
+      "State/Province/Region": "region",
+      "Postal/ZIP Code": "postcode",
+      "Country": "country",
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "external_link",
+      "Latitude": "latitude",
+      "Longitude": "longitude"
+    },
+    "_note": "Country field is ISO2 (e.g. 'CH'). Flat array, no wrapper."
+  },
   "coach_stores": {
     "type": "json",
     "url": "https://www.coach.com/stores/store-locator?coachstoretype=5988915&per=50&l=en",
