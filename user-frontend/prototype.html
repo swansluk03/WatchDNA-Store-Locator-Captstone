@@ -7,8 +7,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  
-   
+  <meta name="watchdna-api-origin" content="" />
+
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
@@ -36,6 +36,9 @@
 </head>
 
 <body>
+  <div style="background:#1a202c;color:#e2e8f0;padding:10px 14px;text-align:center;font-size:14px;">
+    Legacy prototype — use <code>index.html</code> for the production store locator. Premium state is matched by <strong>Handle</strong> from the locations API when available.
+  </div>
   <header id="sidebar">
 
     <div id="top">
@@ -216,7 +219,15 @@
     console.log('[proto] initial filters:', INITIAL);
 
     // Premium store names fetched from the admin API
-    let PREMIUM_NAMES = new Set();
+    /** handle (trimmed) -> true when Location.isPremium from API */
+    let PREMIUM_BY_HANDLE = new Map();
+
+    function readApiOrigin() {
+      var m = document.querySelector('meta[name="watchdna-api-origin"]');
+      var c = m && m.getAttribute('content');
+      if (c && String(c).trim()) return String(c).trim().replace(/\/$/, '');
+      return 'https://backend-production-033e.up.railway.app';
+    }
 
     // --- CSV loader (with cache-busting to avoid stale results) ---
     function loadCSV(path) {
@@ -1264,15 +1275,22 @@
       return hasPlus ? `tel:+${digitsOnly}` : `tel:${digitsOnly}`;
     }
 
-    // --- Fetch premium store names from API, then load CSV ---
-    fetch('/api/premium-stores/names')
-      .then(res => res.ok ? res.json() : { names: [] })
-      .then(data => {
-        PREMIUM_NAMES = new Set((data.names || []).map(n => n.trim().toLowerCase()));
-        console.log('[proto] Premium names loaded:', PREMIUM_NAMES.size);
+    // --- Fetch premium flags by handle from locations API, then load CSV ---
+    fetch(readApiOrigin() + '/api/locations?limit=10000&status=true&v=' + Date.now())
+      .then(function (res) { return res.ok ? res.json() : { data: [] }; })
+      .then(function (payload) {
+        var locs = Array.isArray(payload.data) ? payload.data : [];
+        PREMIUM_BY_HANDLE = new Map();
+        locs.forEach(function (loc) {
+          if (loc && loc.handle && loc.isPremium) {
+            PREMIUM_BY_HANDLE.set(String(loc.handle).trim(), true);
+          }
+        });
+        console.log('[proto] Premium handles from API:', PREMIUM_BY_HANDLE.size);
       })
-      .catch(err => {
-        console.warn('[proto] Could not fetch premium names, falling back to empty set:', err);
+      .catch(function (err) {
+        console.warn('[proto] Could not fetch locations for premium flags:', err);
+        PREMIUM_BY_HANDLE = new Map();
       })
       .then(() => loadCSV('/backend/uploads/master_stores.csv'))
       .then(rows => {
@@ -1308,7 +1326,7 @@
           const lon = parseFloat(String(row.Longitude).trim());
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-          row._isPremium = PREMIUM_NAMES.has((row['Name'] || '').trim().toLowerCase());
+          row._isPremium = !!PREMIUM_BY_HANDLE.get(String(row['Handle'] || '').trim());
           row._isServiceCenter = isServiceCenterRow(row);
           row._isPremiumBrandOnly = isPremiumBrandOnlyRow(row);
 

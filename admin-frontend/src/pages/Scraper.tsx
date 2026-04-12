@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { scraperService, type Brand, type ScraperJob, type ScraperStats } from '../services/scraper.service';
+import {
+  scraperService,
+  type Brand,
+  type MasterCsvExportFilters,
+  type ScraperJob,
+  type ScraperStats,
+} from '../services/scraper.service';
 import EndpointDiscovery from '../components/EndpointDiscovery';
 import '../styles/Scraper.css';
 
@@ -22,6 +28,11 @@ function recordsToCsv(columns: string[], records: Record<string, string>[]): str
     columns.map((col) => escapeCsvValue(r[col] ?? '')).join(',')
   );
   return [header, ...rows].join('\r\n');
+}
+
+function slugForFilename(s: string): string {
+  const t = s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return t || 'unknown';
 }
 
 const Scraper: React.FC = () => {
@@ -59,6 +70,8 @@ const Scraper: React.FC = () => {
   const [loadingDroppedRecords, setLoadingDroppedRecords] = useState(false);
   // Master store data tab
   const [masterBrandFilter, setMasterBrandFilter] = useState<string>('');
+  const [masterCountryFilter, setMasterCountryFilter] = useState<string>('');
+  const [masterPremiumOnly, setMasterPremiumOnly] = useState(false);
   const [showMasterRecordsModal, setShowMasterRecordsModal] = useState(false);
   const [masterRecordsData, setMasterRecordsData] = useState<{
     columns: string[];
@@ -68,6 +81,16 @@ const Scraper: React.FC = () => {
   const [editedMasterRecords, setEditedMasterRecords] = useState<Map<number, Record<string, string>>>(new Map());
   const [savingMasterRecords, setSavingMasterRecords] = useState(false);
   const [masterRecordsViewMode, setMasterRecordsViewMode] = useState<'all' | 'incomplete'>('all');
+
+  const masterCsvFilters = (): MasterCsvExportFilters | undefined => {
+    const country = masterCountryFilter.trim();
+    if (!masterBrandFilter && !country && !masterPremiumOnly) return undefined;
+    return {
+      ...(masterBrandFilter ? { brand: masterBrandFilter } : {}),
+      ...(country ? { country } : {}),
+      ...(masterPremiumOnly ? { premiumOnly: true } : {}),
+    };
+  };
 
   const loadJobs = useCallback(async () => {
     try {
@@ -304,7 +327,7 @@ const Scraper: React.FC = () => {
     setMasterRecordsViewMode('all');
     setError(null);
     try {
-      const data = await scraperService.getMasterCsvRecords(masterBrandFilter || undefined);
+      const data = await scraperService.getMasterCsvRecords(masterCsvFilters());
       setMasterRecordsData({ columns: data.columns, records: data.records });
     } catch (err: any) {
       setMasterRecordsData(null);
@@ -317,14 +340,16 @@ const Scraper: React.FC = () => {
   const handleDownloadStoresCsv = async () => {
     setError(null);
     try {
-      const data = await scraperService.getMasterCsvRecords(masterBrandFilter || undefined);
+      const data = await scraperService.getMasterCsvRecords(masterCsvFilters());
       const csv = recordsToCsv(data.columns, data.records);
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      const brandSlug = masterBrandFilter ? masterBrandFilter.replace(/_/g, '-') : 'all';
-      link.download = `stores-${brandSlug}.csv`;
+      const brandSlug = masterBrandFilter ? slugForFilename(masterBrandFilter.replace(/_/g, '-')) : 'all';
+      const countrySlug = masterCountryFilter.trim() ? slugForFilename(masterCountryFilter) : 'all';
+      const prem = masterPremiumOnly ? '-premium' : '';
+      link.download = `stores-${brandSlug}-${countrySlug}${prem}.csv`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (err: any) {
@@ -400,7 +425,7 @@ const Scraper: React.FC = () => {
       const { removed } = await scraperService.deleteMasterRecord(handle);
       if (removed) {
         setEditedMasterRecords(new Map());
-        const data = await scraperService.getMasterCsvRecords(masterBrandFilter || undefined);
+        const data = await scraperService.getMasterCsvRecords(masterCsvFilters());
         setMasterRecordsData({ columns: data.columns, records: data.records });
         loadData();
       } else {
@@ -515,7 +540,7 @@ const Scraper: React.FC = () => {
         <div className="content-section">
           <div className="section-header">
             <h2>Edit Master Store Data</h2>
-            <div className="filter-controls">
+            <div className="filter-controls filter-controls-wrap">
               <select
                 value={masterBrandFilter}
                 onChange={(e) => setMasterBrandFilter(e.target.value)}
@@ -528,6 +553,22 @@ const Scraper: React.FC = () => {
                   </option>
                 ))}
               </select>
+              <input
+                type="text"
+                className="filter-text"
+                placeholder="Country (e.g. US, United Kingdom)"
+                value={masterCountryFilter}
+                onChange={(e) => setMasterCountryFilter(e.target.value)}
+                aria-label="Filter by country"
+              />
+              <label className="filter-checkbox">
+                <input
+                  type="checkbox"
+                  checked={masterPremiumOnly}
+                  onChange={(e) => setMasterPremiumOnly(e.target.checked)}
+                />
+                Premium only
+              </label>
               <button
                 className="btn btn-primary"
                 onClick={handleEditMasterRecords}
@@ -537,14 +578,25 @@ const Scraper: React.FC = () => {
               <button
                 className="btn btn-secondary"
                 onClick={handleDownloadStoresCsv}
-                title={masterBrandFilter ? `Download stores for ${brands.find((b) => b.id === masterBrandFilter)?.name ?? masterBrandFilter}` : 'Download all stores'}
+                title={
+                  [
+                    masterBrandFilter &&
+                      `Brand: ${brands.find((b) => b.id === masterBrandFilter)?.name ?? masterBrandFilter}`,
+                    masterCountryFilter.trim() && `Country: ${masterCountryFilter.trim()}`,
+                    masterPremiumOnly && 'Premium only',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || 'Download all stores (set filters to narrow)'
+                }
               >
                 Download CSV
               </button>
             </div>
           </div>
           <p className="records-hint">
-            Filter by brand to reduce clutter. Stores with multiple brands appear when any of their brands is selected.
+            Filter by brand, country (same rules as the public locations API), and/or premium-only. Stores with
+            multiple brands still appear when a matching brand is selected. If premium counts look wrong after a
+            bulk import, use Reconcile premium flags on the Premium Stores page.
             Click &quot;Load & Edit Master Data&quot; to open the editor, or &quot;Download CSV&quot; to export stores.
           </p>
         </div>
@@ -1042,7 +1094,15 @@ const Scraper: React.FC = () => {
             <div className="modal-header">
               <h2>
                 Edit Master Store Data
-                {masterBrandFilter ? ` – ${brands.find((b) => b.id === masterBrandFilter)?.name ?? masterBrandFilter}` : ' – All brands'}
+                {(() => {
+                  const parts: string[] = [];
+                  if (masterBrandFilter) {
+                    parts.push(brands.find((b) => b.id === masterBrandFilter)?.name ?? masterBrandFilter);
+                  }
+                  if (masterCountryFilter.trim()) parts.push(masterCountryFilter.trim());
+                  if (masterPremiumOnly) parts.push('Premium only');
+                  return parts.length ? ` – ${parts.join(' · ')}` : ' – All stores';
+                })()}
               </h2>
               <button className="modal-close" onClick={() => setShowMasterRecordsModal(false)}>
                 ×

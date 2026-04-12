@@ -142,6 +142,9 @@ const Uploads: React.FC = () => {
       invalid: 'badge-error',
       pending: 'badge-warning',
       validating: 'badge-info',
+      completed: 'badge-success',
+      failed: 'badge-error',
+      processing: 'badge-info',
     };
     return badges[status] || 'badge-default';
   };

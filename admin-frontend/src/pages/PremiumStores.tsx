@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   fetchAllStores,
   markStoresPremium,
+  reconcilePremiumFlags,
   removeStoresPremium,
   updateStore,
   uploadStoreImage,
@@ -245,6 +246,7 @@ const PremiumStores: React.FC = () => {
 
   const [selectedHandles, setSelectedHandles] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
 
   const [showAutocomplete, setShowAutocomplete] = useState(false);
@@ -414,6 +416,23 @@ const PremiumStores: React.FC = () => {
       setToast({ message: 'Failed to remove premium status. Please try again.', type: 'error' });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleReconcilePremium = async () => {
+    setReconciling(true);
+    try {
+      const result = await reconcilePremiumFlags();
+      const storesFresh = await fetchAllStores();
+      setStores(storesFresh);
+      setToast({
+        message: `Premium flags synced: ${result.setTrueCount} set to premium, ${result.setFalseCount} cleared.`,
+        type: 'success',
+      });
+    } catch {
+      setToast({ message: 'Failed to reconcile premium flags.', type: 'error' });
+    } finally {
+      setReconciling(false);
     }
   };
 
@@ -589,6 +608,15 @@ const PremiumStores: React.FC = () => {
           Showing {filteredStores.length} store{filteredStores.length !== 1 ? 's' : ''}
           {selectedHandles.size > 0 && ` · ${selectedHandles.size} selected`}
         </span>
+        <button
+          type="button"
+          className="premium-filter-reset"
+          disabled={reconciling}
+          onClick={handleReconcilePremium}
+          title="Align Location.isPremium with the PremiumStore registry (e.g. after bulk imports)"
+        >
+          {reconciling ? 'Syncing…' : 'Reconcile premium flags'}
+        </button>
       </div>
 
       {/* Store grid */}

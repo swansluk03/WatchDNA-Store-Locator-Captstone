@@ -10,7 +10,6 @@ class LocationController {
     try {
       const {
         brand,
-        type,
         country,
         city,
         status,
@@ -21,7 +20,6 @@ class LocationController {
 
       const filters = {
         brand: brand as string,
-        type: type as string,
         country: country as string,
         city: city as string,
         status: status === 'true' ? true : status === 'false' ? false : undefined,

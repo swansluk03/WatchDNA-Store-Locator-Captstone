@@ -11,6 +11,7 @@ import {
   upsertBrandConfigRow,
   applyBrandRename,
 } from '../services/brand-config.service';
+import { masterExportFiltersFromQuery } from '../utils/parse-master-export-query';
 
 // Helper functions for brand config similarity detection
 function calculateSimilarity(str1: string, str2: string): number {
@@ -589,11 +590,11 @@ export const scraperController = {
     }
   },
 
-  // GET /api/scraper/master-csv/records - Get master store records (optionally filtered by brand)
+  // GET /api/scraper/master-csv/records - Get master store records (optional brand, country, premium)
   async getMasterCsvRecords(req: Request, res: Response) {
     try {
-      const brand = (req.query.brand as string) || undefined;
-      const result = await storeService.getMasterRecords(brand);
+      const filters = masterExportFiltersFromQuery(req);
+      const result = await storeService.getMasterRecords(filters);
       res.json({
         columns: result.columns,
         records: result.records,

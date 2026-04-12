@@ -177,9 +177,25 @@ export const premiumController = {
         return;
       }
       res.json({ store });
-    } catch (err) {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message === 'STORE_TYPE_REQUIRES_PREMIUM') {
+        res.status(400).json({
+          error: 'Mark the store as premium before setting store type.',
+        });
+        return;
+      }
       logger.error('premiumController.updateStore error:', err);
       res.status(500).json({ error: 'Failed to update store' });
+    }
+  },
+
+  async reconcile(req: Request, res: Response): Promise<void> {
+    try {
+      const result = await premiumService.reconcilePremiumLocationFlags();
+      res.json(result);
+    } catch (err) {
+      logger.error('premiumController.reconcile error:', err);
+      res.status(500).json({ error: 'Failed to reconcile premium flags' });
     }
   },
 

@@ -1,5 +1,12 @@
 import api from './api';
 
+/** Query filters for master store export / editor (matches backend `MasterExportFilters`). */
+export type MasterCsvExportFilters = {
+  brand?: string;
+  country?: string;
+  premiumOnly?: boolean;
+};
+
 export interface Brand {
   id: string;
   name: string;
@@ -165,13 +172,16 @@ export const scraperService = {
     return response.data;
   },
 
-  // Get master CSV records (optionally filtered by brand)
-  async getMasterCsvRecords(brandFilter?: string): Promise<{
+  // Get master CSV records (optional brand, country, premium-only — same query shape as download)
+  async getMasterCsvRecords(filters?: MasterCsvExportFilters): Promise<{
     columns: string[];
     records: Record<string, string>[];
     totalCount: number;
   }> {
-    const params = brandFilter ? { brand: brandFilter } : {};
+    const params: Record<string, string> = {};
+    if (filters?.brand) params.brand = filters.brand;
+    if (filters?.country) params.country = filters.country;
+    if (filters?.premiumOnly) params.premium = 'true';
     const response = await api.get('/scraper/master-csv/records', { params });
     return response.data;
   },

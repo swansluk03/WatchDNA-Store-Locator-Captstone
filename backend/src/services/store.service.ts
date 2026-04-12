@@ -31,7 +31,7 @@ import {
   safeAddressFingerprintContainment,
 } from '../utils/address-dedupe';
 import { logger } from '../utils/logger';
-import { brandConfigIdToDisplayName } from '../utils/brand-display-name';
+import { buildMasterExportWhere, type MasterExportFilters } from '../utils/master-export-filters';
 
 const BATCH_SIZE = 500;
 
@@ -556,32 +556,18 @@ function classifyLocationChange(
   return { brandsChanged, addressChanged, infoChanged };
 }
 
-function brandFilterWhere(brandFilter: string) {
-  const raw = brandFilter.trim();
-  const display = brandConfigIdToDisplayName(raw);
-  const or: Array<{ brands?: object; customBrands?: object }> = [
-    { brands: { contains: display, mode: 'insensitive' as const } },
-    { customBrands: { contains: display, mode: 'insensitive' as const } },
-  ];
-  if (raw.toLowerCase() !== display.toLowerCase()) {
-    or.push(
-      { brands: { contains: raw, mode: 'insensitive' as const } },
-      { customBrands: { contains: raw, mode: 'insensitive' as const } }
-    );
-  }
-  return { OR: or };
-}
-
 export interface MasterRecordsResult {
   columns: string[];
   records: Record<string, string>[];
   totalCount: number;
 }
 
+export type { MasterExportFilters };
+
 export const storeService = {
-  /** Get master store records from the DB, optionally filtered by brand */
-  async getMasterRecords(brandFilter?: string): Promise<MasterRecordsResult> {
-    const where = brandFilter?.trim() ? brandFilterWhere(brandFilter) : {};
+  /** Get master store records from the DB, optionally filtered by brand / country / premium. */
+  async getMasterRecords(filters?: MasterExportFilters): Promise<MasterRecordsResult> {
+    const where = buildMasterExportWhere(filters);
 
     const locations = await prisma.location.findMany({
       where,
@@ -1006,11 +992,11 @@ export const storeService = {
 
   /**
    * Generate a CSV string from the Location table.
-   * Optionally filter by brand (matches against both `brands` and `customBrands` columns).
+   * Optional filters: brand, country (same as locations API), premium-only.
    * The resulting CSV uses the same human-readable column headers as the original master CSV.
    */
-  async generateDownloadCSV(brandFilter?: string): Promise<string> {
-    const where = brandFilter?.trim() ? brandFilterWhere(brandFilter) : {};
+  async generateDownloadCSV(filters?: MasterExportFilters): Promise<string> {
+    const where = buildMasterExportWhere(filters);
 
     const locations = await prisma.location.findMany({
       where,

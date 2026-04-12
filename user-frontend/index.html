@@ -7,7 +7,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-
+  <!-- Optional: set content to your API origin (no trailing slash). If empty, production Railway is used. -->
+  <meta name="watchdna-api-origin" content="" />
 
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -233,17 +234,26 @@
     //});
     //}
 
-    const API_LOCATIONS_URL = 'https://backend-production-033e.up.railway.app/api/locations';
-    const BACKEND_BASE_URL = 'https://backend-production-033e.up.railway.app';
+    // Public map: load locations from this API (not a static CSV).
+    function readApiOrigin() {
+      var m = document.querySelector('meta[name="watchdna-api-origin"]');
+      var c = m && m.getAttribute('content');
+      if (c && String(c).trim()) return String(c).trim().replace(/\/$/, '');
+      return 'https://backend-production-033e.up.railway.app';
+    }
+    var BACKEND_BASE_URL = readApiOrigin();
+    var API_LOCATIONS_URL = BACKEND_BASE_URL + '/api/locations';
 
     function normalizeApiLocation(loc) {
+      var pc = loc.postalCode || '';
       return {
         'Handle': loc.handle || '',
         'Name': loc.name || '',
         'Status': String(loc.status ?? ''),
         'Address Line 1': loc.addressLine1 || '',
         'Address Line 2': loc.addressLine2 || '',
-        'Zip/Postal Code': loc.postalCode || '',
+        'Postal/ZIP Code': pc,
+        'Zip/Postal Code': pc,
         'City': loc.city || '',
         'State/Province/Region': loc.stateProvinceRegion || '',
         'Country': loc.country || '',
@@ -289,7 +299,7 @@
     }
 
     async function loadLocationsFromApi() {
-      const res = await fetch(`${API_LOCATIONS_URL}?limit=10000&v=${Date.now()}`);
+      const res = await fetch(`${API_LOCATIONS_URL}?limit=10000&status=true&v=${Date.now()}`);
       if (!res.ok) {
         throw new Error(`API request failed with status ${res.status}`);
       }
@@ -1664,6 +1674,7 @@
           if ((r.Latitude ?? '') === '' || (r.Longitude ?? '') === '') return false;
 
           const key = [
+            String(r['Handle'] || '').trim().toLowerCase(),
             String(r['Name'] || '').trim().toLowerCase(),
             String(r['Address Line 1'] || '').trim().toLowerCase(),
             String(r['City'] || '').trim().toLowerCase(),

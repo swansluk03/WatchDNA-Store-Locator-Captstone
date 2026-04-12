@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import uploadService from '../services/upload.service';
+import { masterExportFiltersFromQuery } from '../utils/parse-master-export-query';
 
 export class UploadController {
 
@@ -184,9 +185,9 @@ export class UploadController {
 
   async downloadMasterCSV(req: Request, res: Response) {
     try {
-      const { brand } = req.query;
       const { storeService } = await import('../services/store.service.js');
-      const csvContent = await storeService.generateDownloadCSV(brand as string | undefined);
+      const filters = masterExportFiltersFromQuery(req);
+      const csvContent = await storeService.generateDownloadCSV(filters);
 
       const contentLength = Buffer.byteLength(csvContent, 'utf-8');
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');

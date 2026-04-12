@@ -1,6 +1,7 @@
 /**
  * Premium store service — manages which stores are marked as premium.
- * Keeps Location.isPremium and the PremiumStore registry in sync.
+ * `PremiumStore` is the registry (source of truth for “in premium program”);
+ * `Location.isPremium` is kept in sync for fast reads — use reconcile after bulk imports if drift is suspected.
  */
 
 import type { Prisma } from '@prisma/client';
@@ -216,6 +217,16 @@ export const premiumService = {
     const storeTypeUpdate =
       body.storeType !== undefined ? { storeType: body.storeType } : {};
 
+    if (Object.keys(storeTypeUpdate).length > 0 && premiumOp === null) {
+      const reg = await prisma.premiumStore.findUnique({
+        where: { handle: h },
+        select: { handle: true },
+      });
+      if (!reg) {
+        throw new Error('STORE_TYPE_REQUIRES_PREMIUM');
+      }
+    }
+
     await prisma.$transaction(async (tx) => {
       if (premiumOp === 'mark') {
         await tx.premiumStore.upsert({
@@ -346,5 +357,28 @@ export const premiumService = {
     ]);
 
     return { removed: handles.length };
+  },
+
+  /**
+   * Set `Location.isPremium` from `PremiumStore` handles (true in registry → true on location;
+   * not in registry → false). Use after bulk imports or manual DB edits that caused drift.
+   */
+  async reconcilePremiumLocationFlags(): Promise<{ setTrueCount: number; setFalseCount: number }> {
+    const setTrueCount = await prisma.$executeRaw`
+      UPDATE "Location" l
+      SET "isPremium" = true
+      FROM "PremiumStore" ps
+      WHERE l.handle = ps.handle AND l."isPremium" = false
+    `;
+    const setFalseCount = await prisma.$executeRaw`
+      UPDATE "Location" l
+      SET "isPremium" = false
+      WHERE l."isPremium" = true
+        AND NOT EXISTS (SELECT 1 FROM "PremiumStore" ps WHERE ps.handle = l.handle)
+    `;
+    return {
+      setTrueCount: Number(setTrueCount),
+      setFalseCount: Number(setFalseCount),
+    };
   },
 };

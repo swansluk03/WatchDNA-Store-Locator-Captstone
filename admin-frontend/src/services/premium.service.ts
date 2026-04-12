@@ -86,3 +86,14 @@ export async function removeStoresPremium(handles: string[]): Promise<{ removed:
   const res = await api.delete<{ removed: number }>('/premium-stores/stores', { data: { handles } });
   return res.data;
 }
+
+/** Sync `Location.isPremium` with the `PremiumStore` registry (after bulk imports / drift). */
+export async function reconcilePremiumFlags(): Promise<{
+  setTrueCount: number;
+  setFalseCount: number;
+}> {
+  const res = await api.post<{ setTrueCount: number; setFalseCount: number }>(
+    '/premium-stores/reconcile'
+  );
+  return res.data;
+}

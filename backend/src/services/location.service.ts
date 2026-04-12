@@ -6,11 +6,10 @@ import prisma from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { parseRowToLocationData } from '../utils/csv-to-location';
 import { storeService } from './store.service';
-import { normalizeCountry } from '../utils/country';
+import { locationCountryEqualsWhere } from '../utils/location-country-filter';
 
 export interface LocationFilters {
   brand?: string;
-  type?: string;
   country?: string;
   city?: string;
   status?: boolean;
@@ -103,7 +102,6 @@ class LocationService {
   async findAll(filters: LocationFilters = {}) {
     const {
       brand,
-      type,
       country,
       city,
       status,
@@ -117,11 +115,8 @@ class LocationService {
     if (brand) {
       where.brands = { contains: brand, mode: 'insensitive' };
     }
-
-    if (country) {
-      where.country = normalizeCountry(country) || country;
-    }
-
+    const countryClause = locationCountryEqualsWhere(country);
+    if (countryClause) Object.assign(where, countryClause);
     if (city) {
       where.city = city;
     }

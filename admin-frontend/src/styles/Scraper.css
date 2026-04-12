@@ -79,6 +79,39 @@
   align-items: center;
 }
 
+.filter-controls-wrap {
+  flex-wrap: wrap;
+}
+
+.filter-text {
+  padding: 0.5rem 1rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  min-width: 12rem;
+  background: white;
+  color: #1a1a1a;
+}
+
+.filter-text:focus {
+  outline: none;
+  border-color: #2563eb;
+}
+
+.filter-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  color: #374151;
+  cursor: pointer;
+  user-select: none;
+}
+
+.filter-checkbox input {
+  cursor: pointer;
+}
+
 .filter-select {
   padding: 0.5rem 1rem;
   border: 1px solid #ddd;
