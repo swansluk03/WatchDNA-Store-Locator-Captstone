@@ -3,6 +3,7 @@ builder = "nixpacks"
 buildCommand = "npx prisma generate && npm run build"
 
 [deploy]
-startCommand = "npm start"
+# Ensures PostgreSQL has Brand / LocationBrand / verification columns before the server queries them
+startCommand = "npx prisma migrate deploy && npm start"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3

@@ -20,6 +20,9 @@ async function resetDatabase() {
     console.log('🗑️  Deleting all data...\n');
 
     // Delete in order (respecting foreign keys)
+    const deletedAnalytics = await prisma.analyticsEvent.deleteMany();
+    console.log(`✅ Deleted ${deletedAnalytics.count} analytics events`);
+
     const deletedLogs = await prisma.validationLog.deleteMany();
     console.log(`✅ Deleted ${deletedLogs.count} validation logs`);
 
@@ -29,11 +32,23 @@ async function resetDatabase() {
     const deletedLocations = await prisma.location.deleteMany();
     console.log(`✅ Deleted ${deletedLocations.count} locations`);
 
+    const deletedBrands = await prisma.brand.deleteMany();
+    console.log(`✅ Deleted ${deletedBrands.count} brand rows`);
+
+    const deletedPremium = await prisma.premiumStore.deleteMany();
+    console.log(`✅ Deleted ${deletedPremium.count} premium store rows`);
+
     const deletedUploads = await prisma.upload.deleteMany();
     console.log(`✅ Deleted ${deletedUploads.count} uploads`);
 
     const deletedUsers = await prisma.user.deleteMany();
     console.log(`✅ Deleted ${deletedUsers.count} users`);
+
+    const deletedBrandCfg = await prisma.brandConfig.deleteMany();
+    console.log(`✅ Deleted ${deletedBrandCfg.count} brand config rows`);
+
+    const deletedBrandCfgEx = await prisma.brandConfigBaselineExclude.deleteMany();
+    console.log(`✅ Deleted ${deletedBrandCfgEx.count} brand config baseline excludes`);
 
     console.log('\n🎉 Database reset complete!');
     console.log('\n📝 Next steps:');

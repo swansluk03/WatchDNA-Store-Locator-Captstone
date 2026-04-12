@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { findUnique, findMany, $transaction, premiumFindUnique } = vi.hoisted(() => ({
+const { findUnique, findMany, $transaction, premiumFindUnique, premiumFindMany, premiumUpsert, locationUpdateMany, premiumDeleteMany } = vi.hoisted(() => ({
   findUnique: vi.fn(),
   findMany: vi.fn(),
   $transaction: vi.fn(),
   premiumFindUnique: vi.fn(),
+  premiumFindMany: vi.fn(),
+  premiumUpsert: vi.fn(),
+  locationUpdateMany: vi.fn(),
+  premiumDeleteMany: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({
@@ -13,10 +17,14 @@ vi.mock('../../lib/prisma', () => ({
     location: {
       findUnique,
       findMany,
+      updateMany: locationUpdateMany,
     },
     $transaction,
     premiumStore: {
       findUnique: premiumFindUnique,
+      findMany: premiumFindMany,
+      upsert: premiumUpsert,
+      deleteMany: premiumDeleteMany,
     },
   },
 }));
@@ -47,10 +55,33 @@ const baseRow = {
   sunday: null as string | null,
 };
 
+describe('premiumService.getStores', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    premiumFindMany.mockResolvedValue([]);
+  });
+
+  it('merges Brands from LocationBrand links when legacy brands column is null', async () => {
+    findMany.mockResolvedValueOnce([
+      {
+        ...baseRow,
+        brands: null,
+        locationBrands: [{ brand: { displayName: 'OMEGA' } }, { brand: { displayName: 'RADO' } }],
+      },
+    ]);
+
+    const stores = await premiumService.getStores();
+
+    expect(stores).toHaveLength(1);
+    expect(stores[0].brands).toBe('OMEGA, RADO');
+  });
+});
+
 describe('premiumService.updateStoreByHandle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     premiumFindUnique.mockResolvedValue({ storeType: null });
+    premiumFindMany.mockResolvedValue([]);
   });
 
   it('returns null for blank handle', async () => {
@@ -155,6 +186,45 @@ describe('premiumService.updateStoreByHandle', () => {
     expect(txLocationUpdate).toHaveBeenCalledWith({
       where: { handle: 'h1' },
       data: expect.objectContaining({ website: 'https://example.com' }),
+    });
+  });
+});
+
+describe('premiumService.batchMarkPremium / batchRemovePremium', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    premiumUpsert.mockResolvedValue({});
+    locationUpdateMany.mockResolvedValue({ count: 2 });
+    premiumDeleteMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('batchMarkPremium runs array transaction with upserts and location updateMany', async () => {
+    $transaction.mockImplementation((arg: unknown) =>
+      Array.isArray(arg) ? Promise.all(arg as Promise<unknown>[]) : Promise.resolve()
+    );
+
+    const r = await premiumService.batchMarkPremium(['a', 'b']);
+
+    expect(r.marked).toBe(2);
+    expect(premiumUpsert).toHaveBeenCalledTimes(2);
+    expect(locationUpdateMany).toHaveBeenCalledWith({
+      where: { handle: { in: ['a', 'b'] } },
+      data: { isPremium: true },
+    });
+  });
+
+  it('batchRemovePremium deletes registry rows and clears isPremium', async () => {
+    $transaction.mockImplementation((arg: unknown) =>
+      Array.isArray(arg) ? Promise.all(arg as Promise<unknown>[]) : Promise.resolve()
+    );
+
+    const r = await premiumService.batchRemovePremium(['x']);
+
+    expect(r.removed).toBe(1);
+    expect(premiumDeleteMany).toHaveBeenCalledWith({ where: { handle: { in: ['x'] } } });
+    expect(locationUpdateMany).toHaveBeenCalledWith({
+      where: { handle: { in: ['x'] } },
+      data: { isPremium: false },
     });
   });
 });

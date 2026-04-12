@@ -36,20 +36,23 @@ describe('Location Routes Integration', () => {
   describe('GET /api/locations', () => {
     it('should return locations list', async () => {
       const mockResult = {
-        locations: [{ id: '1', name: 'Test Store', latitude: 40.7, longitude: -74.0 }],
+        data: [{ id: '1', name: 'Test Store', latitude: 40.7, longitude: -74.0 }],
         total: 1,
+        page: 1,
+        limit: 100,
+        hasMore: false,
       };
       (locationService.findAll as any).mockResolvedValue(mockResult);
 
       const res = await request(app).get('/api/locations');
 
       expect(res.status).toBe(200);
-      expect(res.body.locations).toHaveLength(1);
+      expect(res.body.data).toHaveLength(1);
       expect(res.body.total).toBe(1);
     });
 
     it('should pass query filters to service', async () => {
-      (locationService.findAll as any).mockResolvedValue({ locations: [], total: 0 });
+      (locationService.findAll as any).mockResolvedValue({ data: [], total: 0, page: 1, limit: 10, hasMore: false });
 
       await request(app)
         .get('/api/locations')
@@ -66,7 +69,7 @@ describe('Location Routes Integration', () => {
     });
 
     it('should default limit to 100 and offset to 0', async () => {
-      (locationService.findAll as any).mockResolvedValue({ locations: [], total: 0 });
+      (locationService.findAll as any).mockResolvedValue({ data: [], total: 0, page: 1, limit: 100, hasMore: false });
 
       await request(app).get('/api/locations');
 
@@ -79,7 +82,7 @@ describe('Location Routes Integration', () => {
     });
 
     it('should not require authentication (public endpoint)', async () => {
-      (locationService.findAll as any).mockResolvedValue({ locations: [], total: 0 });
+      (locationService.findAll as any).mockResolvedValue({ data: [], total: 0, page: 1, limit: 100, hasMore: false });
 
       const res = await request(app).get('/api/locations');
 
@@ -126,10 +129,11 @@ describe('Location Routes Integration', () => {
 
     it('should return nearby locations with valid coordinates', async () => {
       const mockResult = {
-        locations: [
-          { id: '1', name: 'Nearby Store', distance: 2.5, latitude: 40.71, longitude: -74.01 },
-        ],
+        data: [{ id: '1', name: 'Nearby Store', distance: 2.5, latitude: 40.71, longitude: -74.01 }],
         total: 1,
+        centerLat: 40.7128,
+        centerLng: -74.006,
+        radius: 10,
       };
       (locationService.findNearby as any).mockResolvedValue(mockResult);
 
@@ -147,7 +151,13 @@ describe('Location Routes Integration', () => {
     });
 
     it('should default radius to 25 miles', async () => {
-      (locationService.findNearby as any).mockResolvedValue({ locations: [], total: 0 });
+      (locationService.findNearby as any).mockResolvedValue({
+        data: [],
+        total: 0,
+        centerLat: 40.7128,
+        centerLng: -74.006,
+        radius: 25,
+      });
 
       await request(app)
         .get('/api/locations/nearby')
@@ -169,8 +179,9 @@ describe('Location Routes Integration', () => {
 
     it('should search locations with query string', async () => {
       const mockResult = {
-        locations: [{ id: '1', name: 'Rolex Boutique' }],
+        data: [{ id: '1', name: 'Rolex Boutique' }],
         total: 1,
+        query: 'Rolex',
       };
       (locationService.search as any).mockResolvedValue(mockResult);
 
@@ -183,7 +194,7 @@ describe('Location Routes Integration', () => {
     });
 
     it('should respect custom limit parameter', async () => {
-      (locationService.search as any).mockResolvedValue({ locations: [], total: 0 });
+      (locationService.search as any).mockResolvedValue({ data: [], total: 0, query: 'test' });
 
       await request(app)
         .get('/api/locations/search')
@@ -208,13 +219,13 @@ describe('Location Routes Integration', () => {
 
   describe('GET /api/locations/stats', () => {
     it('should return location statistics', async () => {
-      const mockStats = { totalLocations: 500, totalBrands: 25, totalCountries: 40 };
+      const mockStats = { total: 500, brands: 25, countries: 40, cities: 10, active: 480, inactive: 20 };
       (locationService.getStats as any).mockResolvedValue(mockStats);
 
       const res = await request(app).get('/api/locations/stats');
 
       expect(res.status).toBe(200);
-      expect(res.body.totalLocations).toBe(500);
+      expect(res.body.total).toBe(500);
     });
   });
 
