@@ -1311,5 +1311,28 @@
       "Longitude": "longitude"
     },
     "_note": "Address not a discrete field — Montblanc only stores city/country/coords. City at city.defaultName (often null). Country at city.country.defaultName."
+  },
+  "lacoste_stores": {
+    "type": "json",
+    "url": "https://www.lacoste.com/us/stores?country=unitedstates&city=sandiego&json=true",
+    "method": "GET",
+    "description": "Lacoste — hierarchical API (continent→country→city→stores). 2599 stores worldwide. Initial scrape done via custom crawl script. For admin re-runs, the scraper would need a hierarchical crawler.",
+    "display_name": "LACOSTE",
+    "url_base": "https://www.lacoste.com",
+    "data_path": "stores",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "name",
+      "Address Line 1": "address",
+      "City": "city",
+      "Postal/ZIP Code": "postalCode",
+      "Country": "_country",
+      "Phone": "phone",
+      "Email": "email",
+      "Latitude": "latitude",
+      "Longitude": "longitude",
+      "Service Type": "type"
+    },
+    "_note": "2599 stores, 0 missing fields. Hierarchical crawl: root→6 continents→~80 countries→~900 cities. CSV at /tmp/lacoste.csv for upload. Top: FR 501, CN 396, KR 219, TH 170, JP 125, MX 103, US 94."
   }
 }
