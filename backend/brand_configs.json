@@ -1292,5 +1292,24 @@
       "Longitude": "lng"
     },
     "_note": "StoreRocket SaaS tenant Or85dW0JNM. Large radius (25000km) returns all stores in one call."
+  },
+  "montblanc_stores": {
+    "type": "json",
+    "url": "https://stores.montblanc.com/api/boutiques",
+    "method": "GET",
+    "description": "Montblanc — dedicated store API. Single GET returns all 2129 boutiques worldwide. No auth needed.",
+    "display_name": "MONTBLANC",
+    "url_base": "https://www.montblanc.com",
+    "data_path": "boutiques.publicBoutiques",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "defaultName",
+      "Phone": "phone",
+      "Email": "email",
+      "Country": "city.country.defaultName",
+      "Latitude": "latitude",
+      "Longitude": "longitude"
+    },
+    "_note": "Address not a discrete field — Montblanc only stores city/country/coords. City at city.defaultName (often null). Country at city.country.defaultName."
   }
 }
