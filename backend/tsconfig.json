@@ -16,5 +16,16 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/**/__tests__/**", "src/**/*.test.ts", "src/**/*.spec.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/__tests__/**",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts",
+    "src/scripts/backfill-location-brands-from-column.ts",
+    "src/scripts/verify-brand-storage-stats.ts",
+    "src/scripts/verify-store-coordinates.ts",
+    "src/services/coordinate-verification.service.ts",
+    "src/utils/location-brands.ts"
+  ]
 }
