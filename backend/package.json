@@ -21,6 +21,7 @@
     "analyze-duplicates": "ts-node src/scripts/analyze-duplicate-locations.ts",
     "cleanup-locations": "ts-node src/scripts/cleanup-locations-db.ts",
     "merge-address-dupes": "ts-node src/scripts/merge-address-duplicate-locations.ts",
+    "verify-store-coordinates": "ts-node src/scripts/verify-store-coordinates.ts",
     "normalize-phones": "ts-node src/scripts/normalize-db-phones.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",

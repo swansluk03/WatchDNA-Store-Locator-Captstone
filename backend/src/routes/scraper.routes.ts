@@ -23,6 +23,10 @@ router.get('/master-csv/records', scraperController.getMasterCsvRecords);
 router.patch('/master-csv', scraperController.updateMasterCsvRows);
 router.delete('/master-csv/records', scraperController.deleteMasterRecord);
 
+// Geo-verify + dedup pipeline for a brand
+router.post('/verify-coordinates', scraperController.startVerifyCoordinates);
+router.get('/verify-coordinates/:taskId', scraperController.getVerifyCoordinatesStatus);
+
 // Statistics
 router.get('/stats', scraperController.getStats);
 

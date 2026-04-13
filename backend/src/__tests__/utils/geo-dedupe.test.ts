@@ -64,7 +64,7 @@ describe('geo-dedupe', () => {
     expect(countriesMatchForDedupe('France', 'Germany')).toBe(false);
   });
 
-  it('PROXIMITY_MERGE_MAX_METERS stays tight; wider merges use name / similar-name passes', () => {
+  it('PROXIMITY_MERGE_MAX_METERS stays tight; name-aware passes require city + address gate', () => {
     expect(PROXIMITY_MERGE_MAX_METERS).toBeGreaterThanOrEqual(50);
     expect(PROXIMITY_MERGE_MAX_METERS).toBeLessThanOrEqual(150);
   });

@@ -1318,16 +1318,26 @@ def batch_normalize(
                 })
                 continue  # Skip this store - exclude from output
         
-        # Additional deduplication by name+address+city (even if handles differ)
+        # Deduplicate by geography (rounded coords + country) or address fingerprint + city + country.
+        # Name is intentionally excluded from the key — two entries for the same physical place under
+        # different names should collapse; two same-named stores at different locations should not.
         if deduplicate:
-            name = normalized.get("Name", "").strip().lower()
-            addr = normalized.get("Address Line 1", "").strip().lower()
-            city = normalized.get("City", "").strip().lower()
-            
-            if name and addr:  # Only deduplicate if we have name and address
-                combo_key = f"{name}|{addr}|{city}"
+            _lat_str = normalized.get("Latitude", "").strip()
+            _lon_str = normalized.get("Longitude", "").strip()
+            _addr_fp = re.sub(r'[^a-z0-9]', '', normalized.get("Address Line 1", "").strip().lower())
+            _city_norm = re.sub(r'[^a-z0-9]', '', normalized.get("City", "").strip().lower())
+            _country_norm = normalized.get("Country", "").strip().lower()
+            try:
+                _lat_r = round(float(_lat_str), 5)
+                _lon_r = round(float(_lon_str), 5)
+                combo_key = f"geo|{_lat_r}|{_lon_r}|{_country_norm}"
+            except (ValueError, TypeError):
+                if _addr_fp and _city_norm:
+                    combo_key = f"addr|{_addr_fp}|{_city_norm}|{_country_norm}"
+                else:
+                    combo_key = None
+            if combo_key:
                 if combo_key in seen_combinations:
-                    # Duplicate found - skip this store
                     continue
                 seen_combinations.add(combo_key)
         

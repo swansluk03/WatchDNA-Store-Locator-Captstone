@@ -7,13 +7,34 @@ import 'dotenv/config';
 
 import prisma from '../lib/prisma';
 
+/** Normalized tables may exist in DB (migration 20260408120000) but are not on the Prisma client. */
+async function countDistinctLocationsWithBrandLinks(): Promise<number> {
+  try {
+    const rows = await prisma.$queryRaw<{ c: bigint }[]>`
+      SELECT COUNT(DISTINCT "locationId")::bigint AS c FROM "LocationBrand"
+    `;
+    return Number(rows[0]?.c ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
+async function countBrandRows(): Promise<number> {
+  try {
+    const rows = await prisma.$queryRaw<{ c: bigint }[]>`
+      SELECT COUNT(*)::bigint AS c FROM "Brand"
+    `;
+    return Number(rows[0]?.c ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
 async function main() {
   const [locWithBrandsCol, locWithLinks, brandCount, topRepeated] = await Promise.all([
     prisma.location.count({ where: { brands: { not: null } } }),
-    prisma.location.count({
-      where: { locationBrands: { some: {} } },
-    }),
-    prisma.brand.count(),
+    countDistinctLocationsWithBrandLinks(),
+    countBrandRows(),
     prisma.$queryRaw<{ brands: string; cnt: bigint }[]>`
       SELECT "brands", COUNT(*)::bigint AS cnt
       FROM "Location"

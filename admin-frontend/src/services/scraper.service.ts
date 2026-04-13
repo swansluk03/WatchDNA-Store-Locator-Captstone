@@ -38,6 +38,26 @@ export interface ScraperJob {
   };
 }
 
+export type GeoVerifyTaskStatus = {
+  taskId: string;
+  brandName: string;
+  status: 'running' | 'done' | 'error';
+  phase: 'geocoding' | 'dedup' | 'done';
+  progress: { checked: number; total: number };
+  log: string[];
+  result?: {
+    coordinatesUpdated: number;
+    verifiedStampOnly: number;
+    geocodeFailed: number;
+    errors: number;
+    dedupMerged: number;
+    locationsRemaining: number;
+    elapsedSec: number;
+  };
+  error?: string;
+  startedAt: string;
+};
+
 export interface ScraperStats {
   totalJobs: number;
   runningJobs: number;
@@ -173,6 +193,18 @@ export const scraperService = {
     count: number;
   }> {
     const response = await api.get(`/scraper/jobs/${jobId}/dropped-records`);
+    return response.data;
+  },
+
+  /** Start a geo-verify + dedup pipeline for a brand. Returns the task ID to poll. */
+  async startGeoVerify(brandName: string): Promise<{ taskId: string }> {
+    const response = await api.post('/scraper/verify-coordinates', { brandName });
+    return response.data;
+  },
+
+  /** Poll the status of a running geo-verify task. */
+  async getGeoVerifyStatus(taskId: string): Promise<GeoVerifyTaskStatus> {
+    const response = await api.get(`/scraper/verify-coordinates/${taskId}`);
     return response.data;
   },
 

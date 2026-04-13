@@ -40,16 +40,21 @@ describe('stable-handle', () => {
     expect(a).toBe(b);
   });
 
-  it('normalizeScraperRowForCsv does not replace handle when incomplete', () => {
-    const incomplete = { ...base, Phone: '' };
+  it('normalizeScraperRowForCsv does not replace handle when address is missing', () => {
+    const incomplete = { ...base, 'Address Line 1': '', 'Address Line 2': '' };
     expect(normalizeScraperRowForCsv(incomplete).Handle).toBe('upstream-999');
   });
 
-  it('normalizeScraperRowForCsv normalizes Country even when incomplete', () => {
-    const incomplete = { ...base, Phone: '', Country: 'Hong Kong SAR' };
+  it('normalizeScraperRowForCsv normalizes Country even when row is incomplete', () => {
+    const incomplete = { ...base, 'Address Line 1': '', 'Address Line 2': '', Country: 'Hong Kong SAR' };
     const out = normalizeScraperRowForCsv(incomplete);
     expect(out.Country).toBe('Hong Kong');
     expect(out.Handle).toBe('upstream-999');
+  });
+
+  it('normalizeScraperRowForCsv replaces handle even when phone is missing (phone is optional)', () => {
+    const noPhone = { ...base, Phone: '' };
+    expect(normalizeScraperRowForCsv(noPhone).Handle).toMatch(/^loc_[a-f0-9]{24}$/);
   });
 
   it('normalizeScraperRowForCsv replaces handle when complete', () => {

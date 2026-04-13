@@ -68,8 +68,9 @@ ALL_HEADERS = [
 DEFAULT_REQUIRED = ["Handle", "Name", "Status", "Address Line 1", "City", "Country", "Latitude", "Longitude"]
 REQUIRED = {"Handle", "Name", "Status", "Address Line 1", "City", "Country", "Latitude", "Longitude"}
 
-# Matches backend `isRowCompleteForDb` (admin CSV → Location): Phone required; Address Line 1 OR 2 non-empty.
-DEFAULT_REQUIRED_DB_IMPORT = ["Handle", "Name", "Status", "City", "Country", "Latitude", "Longitude", "Phone"]
+# Matches backend `isRowCompleteForDb`: name, address (Line 1 or Line 2), and coordinates are required;
+# phone is optional — stores without a phone can be added and updated later.
+DEFAULT_REQUIRED_DB_IMPORT = ["Handle", "Name", "Status", "City", "Country", "Latitude", "Longitude"]
 
 # Default duplicate key fields
 DEFAULT_DUPLICATE_KEY = ["Name", "Address Line 1", "City"]
