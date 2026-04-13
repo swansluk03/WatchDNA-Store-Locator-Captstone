@@ -66,12 +66,12 @@
 
         <!-- Watch / Accessory toggle -->
         <div class="type-toggle-row">
-          <span class="type-toggle-label" id="toggleLabelWatch">Multi-Brand Stores</span>
+          <span class="type-toggle-label" id="toggleLabelWatch">Non-Verified</span>
           <button type="button" id="typeToggle" class="type-toggle" role="switch" aria-checked="false"
-            title="Switch between Multi-Brand and Single Brand stores"></button>
-          <span class="type-toggle-label" id="toggleLabelAccessory">Single Brand Stores</span>
+            title="Switch between Non-Verified and Verified stores"></button>
+          <span class="type-toggle-label" id="toggleLabelAccessory">Verified</span>
           <input type="checkbox" id="serviceCenterCheckbox" value="services-center" />
-          <span>Services Center</span>
+          <span>Service Centers</span>
         </div>
 
       </div>
@@ -349,7 +349,7 @@
             headerText.textContent = "Find Jewellers In Your Area";
           }
           if (paragraph) {
-            paragraph.textContent = "Please note only select verified authorized dealers will be featured."
+            paragraph.textContent = "Explore all retailers, or refine your search to verified authorized dealers only."
           }
         }
         else {
@@ -1024,7 +1024,7 @@
       const premiumOnly = false;
 
       const toggleEl = document.getElementById('typeToggle');
-      const isMultiBrand = toggleEl?.getAttribute('aria-checked') === 'false';
+      const showVerified = toggleEl?.getAttribute('aria-checked') === 'true';
       const serviceCenterChecked = document.getElementById('serviceCenterCheckbox')?.checked;
 
       let brandListRows = [];  // rows for populating the brand checkbox list (ignores toggle + brand filter)
@@ -1056,10 +1056,10 @@
         }
 
         if (!passesText) return;
-        const brandCount = (row['Brands'] || '')
-          .split(',').map(s => s.trim()).filter(Boolean).length;
+        //const brandCount = (row['Brands'] || '')
+          //.split(',').map(s => s.trim()).filter(Boolean).length;
 
-        const passesToggle = isMultiBrand ? brandCount > 1 : brandCount === 1;
+        const passesToggle = showVerified ? row._isPremium === true : row._isPremium !== true;
         const passesServiceCenter = !serviceCenterChecked || row._type === 'services-center';
 
         const passesType = passesToggle && passesServiceCenter;
@@ -1486,8 +1486,8 @@
       container.innerHTML = '';
 
       const brands = [...brandSet].sort();
+      const VISIBLE_COUNT = 3;
 
-      // Group by first letter
       const groups = {};
       brands.forEach(b => {
         const letter = b[0].toUpperCase();
@@ -1496,16 +1496,18 @@
       });
 
       Object.keys(groups).sort().forEach(letter => {
-        // Letter header (always expanded)
         const header = document.createElement('div');
         header.className = 'brand-group-header';
         header.innerHTML = `<span class="brand-letter">${letter}</span>`;
 
-        // Group container (always visible)
         const group = document.createElement('div');
         group.className = 'brand-group';
 
-        groups[letter].forEach(b => {
+        const allBrands = groups[letter];
+        const visibleBrands = allBrands.slice(0, VISIBLE_COUNT);
+        const hiddenBrands = allBrands.slice(VISIBLE_COUNT);
+
+        function makeLabel(b) {
           const label = document.createElement('label');
           label.style.cssText = 'display:flex; align-items:center; gap:6px; padding:2px 0;';
 
@@ -1520,10 +1522,32 @@
 
           label.appendChild(cb);
           label.appendChild(span);
-          group.appendChild(label);
-        });
+          return label;
+        }
 
-        // Always append header and expanded group (no dropdown behavior)
+        visibleBrands.forEach(b => group.appendChild(makeLabel(b)));
+
+        if (hiddenBrands.length > 0) {
+          const hiddenContainer = document.createElement('div');
+          hiddenContainer.style.display = 'none';
+          hiddenBrands.forEach(b => hiddenContainer.appendChild(makeLabel(b)));
+
+          const toggleBtn = document.createElement('button');
+          toggleBtn.type = 'button';
+          toggleBtn.textContent = `See ${hiddenBrands.length} more`;
+          toggleBtn.style.cssText = 'background:none; border:none; padding:2px 0; font-size:12px; color: var(--color-text-secondary); cursor:pointer; text-decoration:underline;';
+
+          let expanded = false;
+          toggleBtn.addEventListener('click', () => {
+            expanded = !expanded;
+            hiddenContainer.style.display = expanded ? 'block' : 'none';
+            toggleBtn.textContent = expanded ? 'See less' : `See ${hiddenBrands.length} more`;
+          });
+
+          group.appendChild(hiddenContainer);
+          group.appendChild(toggleBtn);
+        }
+
         container.appendChild(header);
         container.appendChild(group);
       });
