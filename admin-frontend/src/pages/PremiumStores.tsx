@@ -6,21 +6,12 @@ import {
   removeStoresPremium,
   updateStore,
   uploadStoreImage,
+  type PremiumRetailKind,
   type StoreRecord,
   type StoreUpdatePayload,
 } from '../services/premium.service';
 import '../styles/PremiumStores.css';
 import { parseBrandsForDisplay, storeMatchesBrandFilter } from '../utils/brandDisplay';
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-export const STORE_TYPES = [
-  'Retailer',
-  'Service Center',
-  'Authorized Dealer',
-  'Distributor',
-  'Other',
-] as const;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -84,8 +75,14 @@ function draftToPayload(d: StoreEditDraft, baseline: StoreRecord): StoreUpdatePa
     friday: empty(d.friday),
     saturday: empty(d.saturday),
     sunday: empty(d.sunday),
-    storeType: empty(d.storeType),
   };
+  if (d.isPremium) {
+    out.isServiceCenter = d.isServiceCenter;
+    out.premiumRetailKind =
+      d.premiumRetailKind === 'boutique' || d.premiumRetailKind === 'multi_brand'
+        ? d.premiumRetailKind
+        : null;
+  }
   if (d.isPremium !== baseline.isPremium) {
     out.isPremium = d.isPremium;
   }
@@ -112,7 +109,11 @@ function storeToDraft(s: StoreRecord): StoreEditDraft {
     saturday: n2s(s.saturday),
     sunday: n2s(s.sunday),
     isPremium: s.isPremium,
-    storeType: n2s(s.storeType),
+    isServiceCenter: Boolean(s.isServiceCenter),
+    premiumRetailKind:
+      s.premiumRetailKind === 'boutique' || s.premiumRetailKind === 'multi_brand'
+        ? s.premiumRetailKind
+        : '',
   };
 }
 
@@ -135,7 +136,17 @@ interface StoreEditDraft {
   saturday: string;
   sunday: string;
   isPremium: boolean;
-  storeType: string;
+  isServiceCenter: boolean;
+  /** Empty until user picks Boutique or Multi-brand (required when premium). */
+  premiumRetailKind: PremiumRetailKind | '';
+}
+
+interface BulkPremiumRow {
+  handle: string;
+  name: string;
+  city: string;
+  isServiceCenter: boolean;
+  premiumRetailKind: PremiumRetailKind | '';
 }
 
 const DAY_LABELS: { key: keyof Pick<StoreEditDraft, 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'>; label: string }[] = [
@@ -202,8 +213,14 @@ const StoreCard: React.FC<StoreCardProps> = ({
               Premium
             </span>
           )}
-          {store.storeType && (
-            <span className="badge badge-store-type">{store.storeType}</span>
+          {store.isPremium && store.premiumRetailKind === 'boutique' && (
+            <span className="badge badge-store-type">Boutique</span>
+          )}
+          {store.isPremium && store.premiumRetailKind === 'multi_brand' && (
+            <span className="badge badge-store-type">Multi-brand</span>
+          )}
+          {store.isPremium && store.isServiceCenter && (
+            <span className="badge badge-store-type">Service center</span>
           )}
         </div>
       </div>
@@ -258,6 +275,10 @@ const PremiumStores: React.FC = () => {
   const [editSaving, setEditSaving] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
   const [imagePreviewBroken, setImagePreviewBroken] = useState(false);
+
+  const [bulkPremiumOpen, setBulkPremiumOpen] = useState(false);
+  const [bulkPremiumRows, setBulkPremiumRows] = useState<BulkPremiumRow[]>([]);
+  const [bulkPremiumSubmitting, setBulkPremiumSubmitting] = useState(false);
 
   useEffect(() => {
     if (!editingStore) {
@@ -349,7 +370,8 @@ const PremiumStores: React.FC = () => {
   const toggleHandle = useCallback((handle: string) => {
     setSelectedHandles((prev) => {
       const next = new Set(prev);
-      next.has(handle) ? next.delete(handle) : next.add(handle);
+      if (next.has(handle)) next.delete(handle);
+      else next.add(handle);
       return next;
     });
   }, []);
@@ -383,21 +405,54 @@ const PremiumStores: React.FC = () => {
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
-  const handleMarkPremium = async () => {
-    const handles = nonPremiumSelected.map((s) => s.handle);
-    if (handles.length === 0) return;
-    setSubmitting(true);
+  const openBulkPremiumModal = useCallback(() => {
+    const rows: BulkPremiumRow[] = nonPremiumSelected.map((s) => ({
+      handle: s.handle,
+      name: s.name,
+      city: (s.city ?? '').trim(),
+      isServiceCenter: false,
+      premiumRetailKind: '',
+    }));
+    setBulkPremiumRows(rows);
+    setBulkPremiumOpen(true);
+  }, [nonPremiumSelected]);
+
+  const updateBulkPremiumRow = useCallback((handle: string, patch: Partial<BulkPremiumRow>) => {
+    setBulkPremiumRows((prev) =>
+      prev.map((r) => (r.handle === handle ? { ...r, ...patch } : r))
+    );
+  }, []);
+
+  const handleConfirmBulkPremium = async () => {
+    if (bulkPremiumRows.length === 0) return;
+    const incomplete = bulkPremiumRows.some(
+      (r) => r.premiumRetailKind !== 'boutique' && r.premiumRetailKind !== 'multi_brand'
+    );
+    if (incomplete) {
+      setToast({
+        message: 'Choose Boutique or Multi-brand for every store before confirming.',
+        type: 'error',
+      });
+      return;
+    }
+    setBulkPremiumSubmitting(true);
     try {
-      const result = await markStoresPremium(handles);
-      setStores((prev) =>
-        prev.map((s) => (handles.includes(s.handle) ? { ...s, isPremium: true } : s))
-      );
+      const entries = bulkPremiumRows.map((r) => ({
+        handle: r.handle,
+        isServiceCenter: r.isServiceCenter,
+        premiumRetailKind: r.premiumRetailKind as PremiumRetailKind,
+      }));
+      const result = await markStoresPremium(entries);
+      const storesFresh = await fetchAllStores();
+      setStores(storesFresh);
       setSelectedHandles(new Set());
+      setBulkPremiumOpen(false);
+      setBulkPremiumRows([]);
       setToast({ message: `${result.marked} store(s) marked as premium.`, type: 'success' });
     } catch {
       setToast({ message: 'Failed to mark stores as premium. Please try again.', type: 'error' });
     } finally {
-      setSubmitting(false);
+      setBulkPremiumSubmitting(false);
     }
   };
 
@@ -497,6 +552,15 @@ const PremiumStores: React.FC = () => {
     if (!editDraft.addressLine1.trim() || !editDraft.city.trim() || !editDraft.country.trim()) {
       setToast({ message: 'Address line 1, city, and country are required.', type: 'error' });
       return;
+    }
+    if (editDraft.isPremium) {
+      if (editDraft.premiumRetailKind !== 'boutique' && editDraft.premiumRetailKind !== 'multi_brand') {
+        setToast({
+          message: 'Premium stores must have a retail type: choose Boutique or Multi-brand retailer.',
+          type: 'error',
+        });
+        return;
+      }
     }
     setEditSaving(true);
     try {
@@ -809,18 +873,37 @@ const PremiumStores: React.FC = () => {
                   <span>Premium store</span>
                 </label>
                 {editDraft.isPremium && (
-                  <label className="store-edit-field store-edit-field--store-type">
-                    <span className="store-edit-label">Store type</span>
-                    <select
-                      value={editDraft.storeType}
-                      onChange={(e) => updateDraft({ storeType: e.target.value })}
-                    >
-                      <option value="">— Select type —</option>
-                      {STORE_TYPES.map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
-                  </label>
+                  <div className="store-edit-premium-meta">
+                    <label className="store-edit-checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={editDraft.isServiceCenter}
+                        onChange={(e) => updateDraft({ isServiceCenter: e.target.checked })}
+                      />
+                      <span>Authorized service center</span>
+                    </label>
+                    <fieldset className="store-edit-fieldset">
+                      <legend className="store-edit-label">Retail type (required)</legend>
+                      <label className="store-edit-radio-row">
+                        <input
+                          type="radio"
+                          name="premium-retail-kind"
+                          checked={editDraft.premiumRetailKind === 'boutique'}
+                          onChange={() => updateDraft({ premiumRetailKind: 'boutique' })}
+                        />
+                        <span>Boutique</span>
+                      </label>
+                      <label className="store-edit-radio-row">
+                        <input
+                          type="radio"
+                          name="premium-retail-kind"
+                          checked={editDraft.premiumRetailKind === 'multi_brand'}
+                          onChange={() => updateDraft({ premiumRetailKind: 'multi_brand' })}
+                        />
+                        <span>Retailer (multiple brands)</span>
+                      </label>
+                    </fieldset>
+                  </div>
                 )}
               </section>
             </div>
@@ -841,6 +924,127 @@ const PremiumStores: React.FC = () => {
                 disabled={editSaving || imageUploading}
               >
                 {editSaving ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkPremiumOpen && (
+        <div
+          className="store-edit-overlay bulk-premium-overlay"
+          onClick={() => !bulkPremiumSubmitting && setBulkPremiumOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="store-edit-modal bulk-premium-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bulk-premium-title"
+          >
+            <div className="store-edit-modal__header">
+              <h2 id="bulk-premium-title">Mark stores as premium</h2>
+              <button
+                type="button"
+                className="store-edit-modal__close"
+                onClick={() => !bulkPremiumSubmitting && setBulkPremiumOpen(false)}
+                disabled={bulkPremiumSubmitting}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="store-edit-modal__body bulk-premium-modal__body">
+              <p className="store-edit-hint bulk-premium-hint">
+                For each location, indicate whether it is an authorized service center and choose Boutique or
+                multi-brand retailer. All rows must be completed before confirming.
+              </p>
+              <div className="bulk-premium-table-wrap">
+                <table className="bulk-premium-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Store</th>
+                      <th scope="col">Location</th>
+                      <th scope="col">Service center</th>
+                      <th scope="col">Retail type</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkPremiumRows.map((r) => (
+                      <tr key={r.handle}>
+                        <td>
+                          <div className="bulk-premium-store-name">{r.name}</div>
+                          <div className="bulk-premium-store-handle">{r.handle}</div>
+                        </td>
+                        <td>{r.city || '—'}</td>
+                        <td>
+                          <label className="bulk-premium-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={r.isServiceCenter}
+                              onChange={(e) =>
+                                updateBulkPremiumRow(r.handle, { isServiceCenter: e.target.checked })
+                              }
+                              disabled={bulkPremiumSubmitting}
+                            />
+                            <span>Yes</span>
+                          </label>
+                        </td>
+                        <td>
+                          <div className="bulk-premium-radios">
+                            <label>
+                              <input
+                                type="radio"
+                                name={`bulk-retail-${r.handle}`}
+                                checked={r.premiumRetailKind === 'boutique'}
+                                onChange={() => updateBulkPremiumRow(r.handle, { premiumRetailKind: 'boutique' })}
+                                disabled={bulkPremiumSubmitting}
+                              />
+                              Boutique
+                            </label>
+                            <label>
+                              <input
+                                type="radio"
+                                name={`bulk-retail-${r.handle}`}
+                                checked={r.premiumRetailKind === 'multi_brand'}
+                                onChange={() =>
+                                  updateBulkPremiumRow(r.handle, { premiumRetailKind: 'multi_brand' })
+                                }
+                                disabled={bulkPremiumSubmitting}
+                              />
+                              Multi-brand
+                            </label>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="store-edit-modal__footer">
+              <button
+                type="button"
+                className="store-edit-btn store-edit-btn--secondary"
+                onClick={() => !bulkPremiumSubmitting && setBulkPremiumOpen(false)}
+                disabled={bulkPremiumSubmitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="store-edit-btn store-edit-btn--primary"
+                onClick={handleConfirmBulkPremium}
+                disabled={
+                  bulkPremiumSubmitting ||
+                  bulkPremiumRows.length === 0 ||
+                  bulkPremiumRows.some(
+                    (r) => r.premiumRetailKind !== 'boutique' && r.premiumRetailKind !== 'multi_brand'
+                  )
+                }
+              >
+                {bulkPremiumSubmitting ? 'Saving…' : `Confirm (${bulkPremiumRows.length})`}
               </button>
             </div>
           </div>
@@ -879,11 +1083,12 @@ const PremiumStores: React.FC = () => {
           <div className="review-panel__actions">
             {nonPremiumSelected.length > 0 && (
               <button
+                type="button"
                 className="btn-mark-premium"
-                onClick={handleMarkPremium}
+                onClick={openBulkPremiumModal}
                 disabled={submitting}
               >
-                {submitting ? 'Saving...' : `Mark ${nonPremiumSelected.length} as Premium`}
+                Mark {nonPremiumSelected.length} as Premium…
               </button>
             )}
             {premiumSelected.length > 0 && (

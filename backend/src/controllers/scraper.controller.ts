@@ -11,7 +11,10 @@ import {
   upsertBrandConfigRow,
   applyBrandRename,
 } from '../services/brand-config.service';
-import { masterExportFiltersFromQuery } from '../utils/parse-master-export-query';
+import {
+  masterBrandPremiumScopeFromQuery,
+  masterExportFiltersFromQuery,
+} from '../utils/parse-master-export-query';
 
 // Helper functions for brand config similarity detection
 function calculateSimilarity(str1: string, str2: string): number {
@@ -442,12 +445,12 @@ export const scraperController = {
         prisma.scraperJob.count({ where: { status: 'failed' } })
       ]);
       
-      // Count unique store records directly from the Location table
-      let totalRecords = 0;
+      // Total stores = rows in Location (updates/merges do not change this; only inserts/deletes do)
+      let totalStoresInDatabase = 0;
       try {
-        totalRecords = await prisma.location.count();
+        totalStoresInDatabase = await prisma.location.count();
       } catch (error: any) {
-        console.error('Error counting location records:', error);
+        console.error('Error counting Location rows:', error);
       }
 
       // Get recent jobs
@@ -470,7 +473,9 @@ export const scraperController = {
           runningJobs,
           completedJobs,
           failedJobs,
-          totalRecords
+          totalStoresInDatabase,
+          /** @deprecated same as totalStoresInDatabase; kept for older clients */
+          totalRecords: totalStoresInDatabase,
         },
         recentJobs
       });
@@ -586,6 +591,18 @@ export const scraperController = {
       });
     } catch (error: any) {
       console.error('Error saving job records:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // GET /api/scraper/master-csv/countries - Distinct countries in DB for optional brand / premium scope
+  async getMasterCsvCountries(req: Request, res: Response) {
+    try {
+      const scope = masterBrandPremiumScopeFromQuery(req);
+      const countries = await storeService.listDistinctCountriesForMasterFilter(scope);
+      res.json({ countries });
+    } catch (error: any) {
+      console.error('Error fetching master CSV countries:', error);
       res.status(500).json({ error: error.message });
     }
   },

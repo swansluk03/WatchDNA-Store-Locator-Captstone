@@ -59,14 +59,27 @@ export class UploadService {
         logger.info(`[Upload ${uploadId}] Importing to DB...`);
         try {
           const importResult = await locationService.importFromCSV(filePath, uploadId);
-          logger.info(`[Upload ${uploadId}] Import done — new: ${importResult.newCount}, updated: ${importResult.updatedCount}`);
+          logger.info(
+            `[Upload ${uploadId}] Import done — new: ${importResult.newCount}, updated: ${importResult.updatedCount}, ` +
+              `unchanged: ${importResult.unchangedCount}`
+          );
+          const rowsFailed = importResult.skippedCount + importResult.errorCount;
+          const rowsProcessed =
+            importResult.newCount + importResult.updatedCount + importResult.unchangedCount;
           await prisma.upload.update({
             where: { id: uploadId },
             data: {
               status: 'completed',
-              rowsProcessed: importResult.newCount + importResult.updatedCount
+              rowsProcessed,
+              rowsFailed,
             }
           });
+          if (rowsFailed > 0) {
+            logger.warn(
+              `[Upload ${uploadId}] Import finished with ${rowsFailed} row(s) not written ` +
+                `(skipped incomplete or DB errors); see import logs / errors on upload`
+            );
+          }
         } catch (importError: any) {
           logger.error(`[Upload ${uploadId}] Import failed:`, importError.message);
         }

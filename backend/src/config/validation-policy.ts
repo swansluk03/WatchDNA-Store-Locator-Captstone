@@ -6,12 +6,15 @@
 export type ValidateCsvOptions = {
   autoFix?: boolean;
   checkUrls?: boolean;
+  /** Passes `--db-import-parity` to validate_csv.py (Phone + address line 1 or 2). */
+  dbImportParity?: boolean;
 };
 
 /** Initial processing when an admin uploads a CSV. */
 export const VALIDATION_MANUAL_UPLOAD: ValidateCsvOptions = {
   autoFix: true,
   checkUrls: false,
+  dbImportParity: true,
 };
 
 /**
@@ -33,4 +36,5 @@ export const VALIDATION_JOB_RECORDS_SAVE: ValidateCsvOptions = {
 export const VALIDATION_REVALIDATE_DEFAULT: ValidateCsvOptions = {
   autoFix: true,
   checkUrls: false,
+  dbImportParity: true,
 };

@@ -68,6 +68,9 @@ ALL_HEADERS = [
 DEFAULT_REQUIRED = ["Handle", "Name", "Status", "Address Line 1", "City", "Country", "Latitude", "Longitude"]
 REQUIRED = {"Handle", "Name", "Status", "Address Line 1", "City", "Country", "Latitude", "Longitude"}
 
+# Matches backend `isRowCompleteForDb` (admin CSV → Location): Phone required; Address Line 1 OR 2 non-empty.
+DEFAULT_REQUIRED_DB_IMPORT = ["Handle", "Name", "Status", "City", "Country", "Latitude", "Longitude", "Phone"]
+
 # Default duplicate key fields
 DEFAULT_DUPLICATE_KEY = ["Name", "Address Line 1", "City"]
 
@@ -129,7 +132,8 @@ class CSVValidator:
                  show_bad: bool = False,
                  limit: Optional[int] = None,
                  max_rows: Optional[int] = MAX_ROWS_WARNING,
-                 check_urls: bool = False):
+                 check_urls: bool = False,
+                 db_import_parity: bool = False):
         self.required_headers = required_headers
         self.warn_duplicates = warn_duplicates
         self.fail_duplicates = fail_duplicates
@@ -137,6 +141,7 @@ class CSVValidator:
         self.limit = limit
         self.max_rows = max_rows
         self.check_urls = check_urls  # If True, validate URLs via HTTP requests
+        self.db_import_parity = db_import_parity
 
         self.errors: List[ValidationError] = []
         self.warnings: List[ValidationWarning] = []
@@ -391,6 +396,19 @@ class CSVValidator:
             value = row.get(field, "").strip()
             if not value:
                 self.errors.append(ValidationError(row_num, field, "empty"))
+                has_errors = True
+
+        if self.db_import_parity:
+            a1 = row.get("Address Line 1", "").strip()
+            a2 = row.get("Address Line 2", "").strip()
+            if not a1 and not a2:
+                self.errors.append(
+                    ValidationError(
+                        row_num,
+                        "Address Line 1",
+                        "need_address_line_1_or_2",
+                    )
+                )
                 has_errors = True
 
         # Validate Latitude
@@ -983,6 +1001,13 @@ Examples:
     )
 
     parser.add_argument(
+        "--db-import-parity",
+        action="store_true",
+        default=False,
+        help="Match backend DB import rules: require Phone; at least one of Address Line 1 or 2 (overrides --required)",
+    )
+
+    parser.add_argument(
         "--simple",
         action="store_true",
         default=False,
@@ -1064,9 +1089,12 @@ def batch_validate(directory: str, args):
     total_warnings = 0
     total_rows = 0
     
-    # Parse required headers once
-    required_headers = [h.strip() for h in args.required.split(",") if h.strip()]
-    
+    # Parse required headers once (--db-import-parity overrides --required)
+    if getattr(args, "db_import_parity", False):
+        required_headers = list(DEFAULT_REQUIRED_DB_IMPORT)
+    else:
+        required_headers = [h.strip() for h in args.required.split(",") if h.strip()]
+
     for csv_file in sorted(csv_files):
         print(f"📄 {csv_file.name}")
         print("-" * 70)
@@ -1079,9 +1107,10 @@ def batch_validate(directory: str, args):
             show_bad=False,  # Don't show full rows in batch mode
             limit=args.limit,
             max_rows=args.max_rows,
-            check_urls=args.check_urls
+            check_urls=args.check_urls,
+            db_import_parity=bool(getattr(args, "db_import_parity", False)),
         )
-        
+
         # Validate
         exit_code = validator.validate_file(str(csv_file))
         
@@ -1162,8 +1191,11 @@ def main():
         valid = validate_csv(args.file)
         sys.exit(0 if valid else 2)
 
-    # Parse required headers
-    required_headers = [h.strip() for h in args.required.split(",") if h.strip()]
+    # Parse required headers (--db-import-parity overrides --required)
+    if args.db_import_parity:
+        required_headers = list(DEFAULT_REQUIRED_DB_IMPORT)
+    else:
+        required_headers = [h.strip() for h in args.required.split(",") if h.strip()]
 
     # Create validator
     validator = CSVValidator(
@@ -1173,7 +1205,8 @@ def main():
         show_bad=args.show_bad,
         limit=args.limit,
         max_rows=args.max_rows,
-        check_urls=args.check_urls
+        check_urls=args.check_urls,
+        db_import_parity=args.db_import_parity,
     )
 
     # Validate file (with auto-fix if requested)
@@ -1204,7 +1237,8 @@ def main():
                 show_bad=args.show_bad,
                 limit=args.limit,
                 max_rows=args.max_rows,
-                check_urls=args.check_urls
+                check_urls=args.check_urls,
+                db_import_parity=args.db_import_parity,
             )
             exit_code = validator.validate_file(args.file)
         else:

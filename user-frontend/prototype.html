@@ -892,9 +892,9 @@
       allMarkers.forEach(({ row }) => {
         let passes = true;
 
-        // brand filter - check Brands column (plain text, comma-separated)
+        // Brands column + Custom Brands HTML (parity with extractBrandsText / detail panel)
         if (brandFilterActive) {
-          const brands = (row['Brands'] || '')
+          const brands = (extractBrandsText(row) || '')
             .toUpperCase()
             .split(',')
             .map(s => s.trim())
@@ -1342,8 +1342,7 @@
           clusterGroup.addLayer(marker);
           bounds.extend([lat, lon]);
 
-          // Extract brands from Brands column (plain text, comma-separated)
-          (row['Brands'] || '')
+          (extractBrandsText(row) || '')
             .split(',')
             .map(s => s.trim())
             .filter(Boolean)

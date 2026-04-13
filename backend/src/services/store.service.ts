@@ -4,11 +4,15 @@
  * The DB is the single source of truth; CSVs are audit/input artifacts only.
  */
 
+import type { Prisma } from '@prisma/client';
 import Papa from 'papaparse';
 import prisma from '../lib/prisma';
 import { parseRowToLocationData, locationToCSVRow, type LocationData } from '../utils/csv-to-location';
 import { isRowCompleteForDb } from '../utils/row-completeness';
-import { mergeLocationDataForUpdate } from '../utils/merge-location-update';
+import {
+  mergeLocationDataForManualImport,
+  mergeLocationDataForUpdate,
+} from '../utils/merge-location-update';
 import { computeStableHandleFromRow, addressFingerprintLine1 } from '../utils/stable-handle';
 import {
   boundingBoxForRadiusMeters,
@@ -32,8 +36,21 @@ import {
 } from '../utils/address-dedupe';
 import { logger } from '../utils/logger';
 import { buildMasterExportWhere, type MasterExportFilters } from '../utils/master-export-filters';
+import { legacyBrandTextFilterWhere } from '../utils/legacy-brand-filter';
 
 const BATCH_SIZE = 500;
+
+/** How incoming rows merge with existing DB rows when `mergeOnUpdate` is true. */
+export type BatchUpsertMergeKind = 'scraper' | 'manual';
+
+type MergeRowFn = (
+  existing: {
+    brands: string | null;
+    customBrands: string | null;
+    phone: string | null;
+  },
+  incoming: LocationData
+) => LocationData;
 
 /** ~50 metres expressed as degrees of latitude — matches the tolerance in updateMasterRecords. */
 const COORD_TOLERANCE_DEG = 0.00045;
@@ -439,7 +456,8 @@ async function resolveExistingMatchForRow(
 function collapseBatchRowsByIdentity(
   rows: LocationData[],
   mergeOnUpdate: boolean,
-  inDbHandles: Set<string>
+  inDbHandles: Set<string>,
+  mergeRow: MergeRowFn
 ): LocationData[] {
   if (rows.length <= 1 || !mergeOnUpdate) return rows;
 
@@ -521,7 +539,7 @@ function collapseBatchRowsByIdentity(
       if (k === anchorIdx) continue;
       const r = ordered[k];
       const snap = { brands: folded.brands, customBrands: folded.customBrands, phone: folded.phone };
-      folded = { ...mergeLocationDataForUpdate(snap, r), handle: canonical };
+      folded = { ...mergeRow(snap, r), handle: canonical };
     }
     out.push(folded);
   }
@@ -580,6 +598,31 @@ export const storeService = {
   },
 
   /**
+   * Distinct `Location.country` values for the master-data UI dropdown.
+   * When `brand` is set, uses the same legacy brand text match as exports / public API.
+   * When `premiumOnly`, restricts to premium locations (combines with brand when both set).
+   */
+  async listDistinctCountriesForMasterFilter(filters?: {
+    brand?: string;
+    premiumOnly?: boolean;
+  }): Promise<string[]> {
+    const clauses: Prisma.LocationWhereInput[] = [];
+    const brand = filters?.brand?.trim();
+    if (brand) clauses.push(legacyBrandTextFilterWhere(brand));
+    if (filters?.premiumOnly) clauses.push({ isPremium: true });
+    const where: Prisma.LocationWhereInput =
+      clauses.length === 0 ? {} : clauses.length === 1 ? clauses[0]! : { AND: clauses };
+
+    const rows = await prisma.location.findMany({
+      where,
+      select: { country: true },
+      distinct: ['country'],
+      orderBy: { country: 'asc' },
+    });
+    return rows.map((r) => r.country).filter((c) => typeof c === 'string' && c.trim() !== '');
+  },
+
+  /**
    * Fetch Location rows for a specific upload from the DB, mapped back to CSV-column
    * keyed records so the frontend receives the same shape as a CSV read.
    * Returns an empty array if no rows are linked to the given uploadId.
@@ -598,22 +641,27 @@ export const storeService = {
    * - Preserves existing isPremium values; re-applies from PremiumStore for
    *   any handle that matches.
    * - Optionally stamps all rows with an uploadId.
-   * - failFast: true (default) — one transaction per 500-row batch (scraper jobs).
-   * - failFast: false — per-row upsert with try/catch (manual CSV upload parity).
+   * - failFast: true (default) — one transaction per 500-row batch; on failure falls back to per-row upserts for that batch.
+   * - failFast: false — per-row upsert with try/catch for every row.
    * - requireCompleteForDb — only rows passing isRowCompleteForDb are upserted (incomplete stay on CSV only).
-   * - mergeOnUpdate — scraper/job saves: union brands; phone is never overwritten (DB value kept). Manual CSV uploads omit merge.
-   *   Dedupe before insert (mergeOnUpdate): same rounded coords + country; exact address fingerprint + city + country;
-   *   fingerprint substring (same city/country, min length); proximity (strict then name then similar-name);
-   *   plus intra-batch collapse (coords, address keys, containment, similar name + close coordinates).
+   * - mergeOnUpdate — union brands with existing; intra-batch collapse. Scraper: keep DB phone. Manual: use mergeKind `manual` so CSV phone applies when non-empty.
+   *   Dedupe before insert: same rounded coords + country; address fingerprint + city + country; containment; proximity/name;
+   *   plus intra-batch collapse when mergeOnUpdate is true.
    */
   async batchUpsertLocations(
     records: Record<string, string>[],
     uploadId?: string,
-    options?: { failFast?: boolean; requireCompleteForDb?: boolean; mergeOnUpdate?: boolean }
+    options?: {
+      failFast?: boolean;
+      requireCompleteForDb?: boolean;
+      mergeOnUpdate?: boolean;
+      mergeKind?: BatchUpsertMergeKind;
+    }
   ): Promise<UpsertResult> {
     const failFast = options?.failFast !== false;
     const requireComplete = options?.requireCompleteForDb === true;
     const mergeOnUpdate = options?.mergeOnUpdate === true;
+    const mergeKind: BatchUpsertMergeKind = options?.mergeKind ?? 'scraper';
 
     let working = records;
     let skippedIncomplete = 0;
@@ -648,7 +696,8 @@ export const storeService = {
         parsed,
         uploadId,
         skipped,
-        mergeOnUpdate
+        mergeOnUpdate,
+        mergeKind
       );
       return { ...result, skippedIncomplete: requireComplete ? skippedIncomplete : result.skippedIncomplete };
     }
@@ -656,17 +705,19 @@ export const storeService = {
       parsed,
       uploadId,
       skipped,
-      mergeOnUpdate
+      mergeOnUpdate,
+      mergeKind
     );
     return { ...result, skippedIncomplete: requireComplete ? skippedIncomplete : result.skippedIncomplete };
   },
 
-  /** Scraper path: batched transactions for throughput. */
+  /** Batched transactions; per-batch fallback to per-row upserts on transaction failure. */
   async batchUpsertLocationsFailFast(
     parsed: LocationData[],
     uploadId: string | undefined,
     skipped: number,
-    mergeOnUpdate: boolean
+    mergeOnUpdate: boolean,
+    mergeKind: BatchUpsertMergeKind
   ): Promise<UpsertResult> {
     let upserted = 0;
     let created = 0;
@@ -677,6 +728,40 @@ export const storeService = {
     const addressChanged: string[] = [];
     const infoChanged: string[] = [];
     const premiumHandles = new Set<string>();
+    const dbErrors: string[] = [];
+    let failed = 0;
+
+    const mergeRow: MergeRowFn =
+      mergeKind === 'manual' ? mergeLocationDataForManualImport : mergeLocationDataForUpdate;
+
+    const upsertPayload = (row: LocationData) => ({
+      where: { handle: row.handle },
+      update: {
+        ...row,
+        ...(uploadId ? { uploadId } : {}),
+      },
+      create: {
+        ...row,
+        ...(uploadId ? { uploadId } : {}),
+      },
+    });
+
+    const tallyAfterUpsert = (row: LocationData, preExisting: ExistingLocationSnapshot | undefined) => {
+      if (!preExisting) {
+        newStores.push(row.name);
+        created++;
+      } else {
+        const changes = classifyLocationChange(row, preExisting);
+        if (changes.brandsChanged || changes.addressChanged || changes.infoChanged) {
+          if (changes.brandsChanged) brandsChanged.push(row.name);
+          if (changes.addressChanged) addressChanged.push(row.name);
+          if (changes.infoChanged) infoChanged.push(row.name);
+          updated++;
+        } else {
+          unchanged++;
+        }
+      }
+    };
 
     for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
       const batch = parsed.slice(i, i + BATCH_SIZE);
@@ -707,7 +792,7 @@ export const storeService = {
       const mergedBatch = batch.map((row) => {
         const ex = existingMap.get(row.handle);
         const remapped = handleRemap.get(row.handle);
-        const baseRow = ex && mergeOnUpdate ? mergeLocationDataForUpdate(ex, row) : row;
+        const baseRow = ex && mergeOnUpdate ? mergeRow(ex, row) : row;
         return remapped ? { ...baseRow, handle: remapped.handle } : baseRow;
       });
 
@@ -715,7 +800,7 @@ export const storeService = {
       for (const m of handleRemap.values()) inDbHandles.add(m.handle);
 
       const finalBatch = mergeOnUpdate
-        ? collapseBatchRowsByIdentity(mergedBatch, true, inDbHandles)
+        ? collapseBatchRowsByIdentity(mergedBatch, true, inDbHandles, mergeRow)
         : mergedBatch;
 
       const uniqueHandles = [...new Set(finalBatch.map((r) => r.handle))];
@@ -725,56 +810,78 @@ export const storeService = {
       });
       const snapByHandle = new Map(snapshots.map((s) => [s.handle, s]));
 
-      for (const row of finalBatch) {
-        const existing = snapByHandle.get(row.handle);
-        if (!existing) {
-          newStores.push(row.name);
-          created++;
-        } else {
-          const changes = classifyLocationChange(row, existing);
-          if (changes.brandsChanged || changes.addressChanged || changes.infoChanged) {
-            if (changes.brandsChanged) brandsChanged.push(row.name);
-            if (changes.addressChanged) addressChanged.push(row.name);
-            if (changes.infoChanged) infoChanged.push(row.name);
-            updated++;
+      try {
+        await prisma.$transaction(async (tx) => {
+          for (const row of finalBatch) {
+            await tx.location.upsert(upsertPayload(row));
+          }
+        });
+        for (const row of finalBatch) {
+          premiumHandles.add(row.handle);
+          const existing = snapByHandle.get(row.handle);
+          if (!existing) {
+            newStores.push(row.name);
+            created++;
           } else {
-            unchanged++;
+            const changes = classifyLocationChange(row, existing);
+            if (changes.brandsChanged || changes.addressChanged || changes.infoChanged) {
+              if (changes.brandsChanged) brandsChanged.push(row.name);
+              if (changes.addressChanged) addressChanged.push(row.name);
+              if (changes.infoChanged) infoChanged.push(row.name);
+              updated++;
+            } else {
+              unchanged++;
+            }
+          }
+        }
+        upserted += batch.length;
+      } catch (err: any) {
+        logger.error(
+          `[storeService] Batch transaction failed (${batch.length} input rows), per-row fallback:`,
+          err.message
+        );
+        for (const row of finalBatch) {
+          const preExisting = snapByHandle.get(row.handle);
+          try {
+            await prisma.location.upsert(upsertPayload(row));
+            premiumHandles.add(row.handle);
+            upserted++;
+            tallyAfterUpsert(row, preExisting);
+          } catch (rowErr: any) {
+            failed++;
+            dbErrors.push(`Error importing ${row.name || row.handle}: ${rowErr.message}`);
+            logger.error(`[storeService] Fallback upsert failed for ${row.handle}:`, rowErr);
           }
         }
       }
-
-      for (const h of finalBatch.map((r) => r.handle)) premiumHandles.add(h);
-
-      await prisma.$transaction(
-        finalBatch.map((row) =>
-          prisma.location.upsert({
-            where: { handle: row.handle },
-            update: {
-              ...row,
-              ...(uploadId ? { uploadId } : {}),
-            },
-            create: {
-              ...row,
-              ...(uploadId ? { uploadId } : {}),
-            },
-          })
-        )
-      );
-
-      upserted += batch.length;
     }
 
     await storeService.reapplyPremiumFlags([...premiumHandles]);
 
-    return { upserted, skipped, created, updated, unchanged, newStores, brandsChanged, addressChanged, infoChanged };
+    const base = {
+      upserted,
+      skipped,
+      created,
+      updated,
+      unchanged,
+      newStores,
+      brandsChanged,
+      addressChanged,
+      infoChanged,
+    };
+    if (dbErrors.length > 0 || failed > 0) {
+      return { ...base, dbErrors, failed };
+    }
+    return base;
   },
 
-  /** Manual upload path: per-row upsert so one bad row does not roll back the batch. */
+  /** Per-row upsert with try/catch so one bad row does not roll back the batch. */
   async batchUpsertLocationsResilient(
     parsed: LocationData[],
     uploadId: string | undefined,
     skipped: number,
-    mergeOnUpdate: boolean
+    mergeOnUpdate: boolean,
+    mergeKind: BatchUpsertMergeKind
   ): Promise<UpsertResult> {
     let upserted = 0;
     let created = 0;
@@ -788,6 +895,9 @@ export const storeService = {
     let failed = 0;
     const successfulHandles: string[] = [];
 
+    const mergeRow: MergeRowFn =
+      mergeKind === 'manual' ? mergeLocationDataForManualImport : mergeLocationDataForUpdate;
+
     for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
       const batch = parsed.slice(i, i + BATCH_SIZE);
       const batchHandles = batch.map((r) => r.handle);
@@ -817,7 +927,7 @@ export const storeService = {
       const mergedBatch = batch.map((row) => {
         const ex = existingMap.get(row.handle);
         const remapped = handleRemap.get(row.handle);
-        const baseRow = ex && mergeOnUpdate ? mergeLocationDataForUpdate(ex, row) : row;
+        const baseRow = ex && mergeOnUpdate ? mergeRow(ex, row) : row;
         return remapped ? { ...baseRow, handle: remapped.handle } : baseRow;
       });
 
@@ -825,7 +935,7 @@ export const storeService = {
       for (const m of handleRemap.values()) inDbHandles.add(m.handle);
 
       const finalBatch = mergeOnUpdate
-        ? collapseBatchRowsByIdentity(mergedBatch, true, inDbHandles)
+        ? collapseBatchRowsByIdentity(mergedBatch, true, inDbHandles, mergeRow)
         : mergedBatch;
 
       const uniqueHandles = [...new Set(finalBatch.map((r) => r.handle))];

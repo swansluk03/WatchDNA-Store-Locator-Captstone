@@ -7,6 +7,7 @@ import { logger } from '../utils/logger';
 import { parseRowToLocationData } from '../utils/csv-to-location';
 import { storeService } from './store.service';
 import { locationCountryEqualsWhere } from '../utils/location-country-filter';
+import { legacyBrandTextFilterWhere } from '../utils/legacy-brand-filter';
 
 export interface LocationFilters {
   brand?: string;
@@ -29,6 +30,8 @@ export interface ImportResult {
   success: boolean;
   newCount: number;
   updatedCount: number;
+  /** Rows upserted with no field changes vs prior DB snapshot. */
+  unchangedCount: number;
   skippedCount: number;
   errorCount: number;
   errors: string[];
@@ -37,8 +40,8 @@ export interface ImportResult {
 class LocationService {
   /**
    * Import locations from CSV file to database.
-   * Delegates to storeService.batchUpsertLocations (resilient per-row mode) so
-   * manual uploads share the same Location write logic as scraper jobs.
+   * Uses batched transactions with per-batch fallback to per-row upserts, same dedupe/merge
+   * pipeline as scraper jobs, with manual merge rules (CSV phone applies when non-empty).
    *
    * @param uploadId When set (e.g. admin CSV upload), stamps Location.uploadId for reporting.
    */
@@ -47,6 +50,7 @@ class LocationService {
       success: false,
       newCount: 0,
       updatedCount: 0,
+      unchangedCount: 0,
       skippedCount: 0,
       errorCount: 0,
       errors: []
@@ -70,12 +74,15 @@ class LocationService {
       }
 
       const upsert = await storeService.batchUpsertLocations(rows, uploadId, {
-        failFast: false,
+        failFast: true,
         requireCompleteForDb: true,
+        mergeOnUpdate: true,
+        mergeKind: 'manual',
       });
 
       result.newCount = upsert.created;
-      result.updatedCount = upsert.updated + upsert.unchanged;
+      result.updatedCount = upsert.updated;
+      result.unchangedCount = upsert.unchanged;
       result.skippedCount = upsert.skipped;
       result.errorCount = upsert.failed ?? 0;
       if (upsert.dbErrors && upsert.dbErrors.length > 0) {
@@ -85,7 +92,7 @@ class LocationService {
       result.success = true;
       logger.warn(
         `[LocationService] Import complete: ${result.newCount} new, ${result.updatedCount} updated, ` +
-        `${result.skippedCount} skipped, ${result.errorCount} errors`
+        `${result.unchangedCount} unchanged, ${result.skippedCount} skipped, ${result.errorCount} errors`
       );
     } catch (error: any) {
       result.success = false;
@@ -113,7 +120,7 @@ class LocationService {
     const where: Prisma.LocationWhereInput = {};
 
     if (brand) {
-      where.brands = { contains: brand, mode: 'insensitive' };
+      Object.assign(where, legacyBrandTextFilterWhere(brand));
     }
     const countryClause = locationCountryEqualsWhere(country);
     if (countryClause) Object.assign(where, countryClause);

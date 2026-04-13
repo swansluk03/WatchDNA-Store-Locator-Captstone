@@ -6,7 +6,7 @@
  * Usage:
  *   npm run verify-store-coordinates
  *   ... --dry-run          # log actions, no DB writes
- *   ... --force            # re-verify even if already verified for same address key
+ *   ... --force            # re-verify all rows in id order (or use --limit)
  *   ... --limit 50         # max locations to process
  */
 
@@ -25,6 +25,18 @@ function parseArgs(argv: string[]) {
     if (Number.isFinite(n) && n > 0) limit = n;
   }
   return { dryRun, force, limit };
+}
+
+async function hasVerificationStampColumn(): Promise<boolean> {
+  const rows = await prisma.$queryRaw<{ present: bigint }[]>`
+    SELECT 1::bigint AS present
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'Location'
+      AND column_name = 'coordinatesVerifiedAt'
+    LIMIT 1
+  `;
+  return rows.length > 0;
 }
 
 async function main() {
@@ -46,54 +58,64 @@ async function main() {
     errors: 0,
   };
 
-  if (force) {
-    let cursor: string | undefined;
-    while (processed < limit) {
-      const take = Math.min(100, limit - processed);
-      const batch = await prisma.location.findMany({
+  const hasStampCol = await hasVerificationStampColumn();
+  const unverifiedOnly = hasStampCol && !force;
+
+  let lastId: string | null = null;
+  let cursor: string | undefined;
+
+  while (processed < limit) {
+    const take = Math.min(100, limit - processed);
+    let batch: { id: string; handle: string }[];
+
+    if (unverifiedOnly) {
+      batch =
+        lastId === null
+          ? await prisma.$queryRaw<{ id: string; handle: string }[]>`
+              SELECT id, handle FROM "Location"
+              WHERE "coordinatesVerifiedAt" IS NULL
+              ORDER BY id ASC
+              LIMIT ${take}
+            `
+          : await prisma.$queryRaw<{ id: string; handle: string }[]>`
+              SELECT id, handle FROM "Location"
+              WHERE "coordinatesVerifiedAt" IS NULL AND id > ${lastId}::uuid
+              ORDER BY id ASC
+              LIMIT ${take}
+            `;
+      lastId = batch.length ? batch[batch.length - 1]!.id : lastId;
+    } else {
+      batch = await prisma.location.findMany({
         take,
         orderBy: { id: 'asc' },
         ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
         select: { id: true, handle: true },
       });
-      if (batch.length === 0) break;
-
-      const summary = await verifyHandles(
-        batch.map((b) => b.handle),
-        { dryRun, forceReverify: true }
-      );
-      for (const k of Object.keys(totals) as (keyof typeof totals)[]) {
-        totals[k] += summary[k];
-      }
-      console.log(
-        `batch ${batch[0].id.slice(0, 8)}…${batch.length} handles → ${JSON.stringify(summary)}`
-      );
-
-      processed += batch.length;
-      cursor = batch[batch.length - 1]!.id;
+      cursor = batch.length ? batch[batch.length - 1]!.id : cursor;
     }
-  } else {
-    while (processed < limit) {
-      const take = Math.min(100, limit - processed);
-      const batch = await prisma.location.findMany({
-        where: { coordinatesVerifiedAt: null },
-        orderBy: { id: 'asc' },
-        take,
-        select: { handle: true },
-      });
-      if (batch.length === 0) break;
 
-      const summary = await verifyHandles(batch.map((b) => b.handle), { dryRun });
-      for (const k of Object.keys(totals) as (keyof typeof totals)[]) {
-        totals[k] += summary[k];
-      }
-      console.log(`batch ${batch.length} unverified handles → ${JSON.stringify(summary)}`);
+    if (batch.length === 0) break;
 
-      processed += batch.length;
+    const summary = await verifyHandles(batch.map((b) => b.handle), {
+      dryRun,
+      forceReverify: force || !hasStampCol,
+    });
+    for (const k of Object.keys(totals) as (keyof typeof totals)[]) {
+      totals[k] += summary[k];
     }
+    console.log(
+      `batch ${batch[0].id.slice(0, 8)}…${batch.length} handles → ${JSON.stringify(summary)}`
+    );
+
+    processed += batch.length;
   }
 
   console.log('\nDone. Totals:', JSON.stringify(totals, null, 2));
+  if (!hasStampCol) {
+    console.log(
+      '\nNote: no coordinatesVerifiedAt column — full id-order pass (use --limit for partial runs).'
+    );
+  }
 }
 
 main()

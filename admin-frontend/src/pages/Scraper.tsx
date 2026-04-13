@@ -81,6 +81,8 @@ const Scraper: React.FC = () => {
   const [editedMasterRecords, setEditedMasterRecords] = useState<Map<number, Record<string, string>>>(new Map());
   const [savingMasterRecords, setSavingMasterRecords] = useState(false);
   const [masterRecordsViewMode, setMasterRecordsViewMode] = useState<'all' | 'incomplete'>('all');
+  const [masterCountryOptions, setMasterCountryOptions] = useState<string[]>([]);
+  const [loadingMasterCountries, setLoadingMasterCountries] = useState(false);
 
   const masterCsvFilters = (): MasterCsvExportFilters | undefined => {
     const country = masterCountryFilter.trim();
@@ -102,6 +104,15 @@ const Scraper: React.FC = () => {
     }
   }, [filterStatus]);
 
+  const refreshScraperStats = useCallback(async () => {
+    try {
+      const { stats: statsData } = await scraperService.getStats();
+      setStats(statsData);
+    } catch (err) {
+      console.error('Failed to load scraper stats:', err);
+    }
+  }, []);
+
   const previousTabRef = useRef<TabType>(activeTab);
 
   useEffect(() => {
@@ -116,12 +127,47 @@ const Scraper: React.FC = () => {
     previousTabRef.current = activeTab;
   }, [activeTab]);
 
-  // Refresh jobs when filter changes or every 5 seconds
+  // Refresh jobs and DB store count when filter changes or every 5 seconds
   useEffect(() => {
     loadJobs();
-    const interval = setInterval(loadJobs, 5000);
+    refreshScraperStats();
+    const interval = setInterval(() => {
+      loadJobs();
+      refreshScraperStats();
+    }, 5000);
     return () => clearInterval(interval);
-  }, [loadJobs]);
+  }, [loadJobs, refreshScraperStats]);
+
+  useEffect(() => {
+    if (activeTab !== 'master') return;
+    let cancelled = false;
+    (async () => {
+      setLoadingMasterCountries(true);
+      try {
+        const scope =
+          masterBrandFilter || masterPremiumOnly
+            ? {
+                ...(masterBrandFilter ? { brand: masterBrandFilter } : {}),
+                ...(masterPremiumOnly ? { premiumOnly: true as const } : {}),
+              }
+            : undefined;
+        const countries = await scraperService.getMasterCsvCountries(scope);
+        if (cancelled) return;
+        setMasterCountryOptions(countries);
+        setMasterCountryFilter((prev) => (prev && countries.includes(prev) ? prev : ''));
+      } catch {
+        if (!cancelled) {
+          setMasterCountryOptions([]);
+          setMasterCountryFilter('');
+        }
+      } finally {
+        if (!cancelled) setLoadingMasterCountries(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, masterBrandFilter, masterPremiumOnly]);
 
   const loadData = async () => {
     setLoading(true);
@@ -309,7 +355,7 @@ const Scraper: React.FC = () => {
       setShowRecordsModal(false);
       loadData();
       const parts = [`Saved ${result.savedToJob} records to job CSV`];
-      if (result.appendedToMaster > 0) parts.push(`${result.appendedToMaster} complete record(s) added to master`);
+      if (result.dbUpserted > 0) parts.push(`${result.dbUpserted} complete record(s) synced to the database`);
       if (result.skippedIncomplete > 0) parts.push(`${result.skippedIncomplete} incomplete record(s) kept in job only`);
       if (result.validationErrors) parts.push(`Validation blocked ${result.validationErrors} record(s)`);
       alert(parts.join('. '));
@@ -543,7 +589,10 @@ const Scraper: React.FC = () => {
             <div className="filter-controls filter-controls-wrap">
               <select
                 value={masterBrandFilter}
-                onChange={(e) => setMasterBrandFilter(e.target.value)}
+                onChange={(e) => {
+                  setMasterBrandFilter(e.target.value);
+                  setMasterCountryFilter('');
+                }}
                 className="filter-select"
               >
                 <option value="">All brands</option>
@@ -553,14 +602,27 @@ const Scraper: React.FC = () => {
                   </option>
                 ))}
               </select>
-              <input
-                type="text"
-                className="filter-text"
-                placeholder="Country (e.g. US, United Kingdom)"
+              <select
+                className="filter-select"
                 value={masterCountryFilter}
                 onChange={(e) => setMasterCountryFilter(e.target.value)}
+                disabled={loadingMasterCountries}
                 aria-label="Filter by country"
-              />
+                title={
+                  masterBrandFilter
+                    ? 'Countries that have at least one store matching the selected brand in the database'
+                    : 'All countries that appear on locations in the database'
+                }
+              >
+                <option value="">
+                  {loadingMasterCountries ? 'Loading countries…' : 'All countries'}
+                </option>
+                {masterCountryOptions.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
               <label className="filter-checkbox">
                 <input
                   type="checkbox"
@@ -594,9 +656,10 @@ const Scraper: React.FC = () => {
             </div>
           </div>
           <p className="records-hint">
-            Filter by brand, country (same rules as the public locations API), and/or premium-only. Stores with
-            multiple brands still appear when a matching brand is selected. If premium counts look wrong after a
-            bulk import, use Reconcile premium flags on the Premium Stores page.
+            Pick a brand to limit the country list to countries that have at least one matching store in the
+            database (same brand matching as the public locations API). Optional premium-only narrows both the
+            country list and the export. Stores with multiple brands still appear when a matching brand is selected.
+            If premium counts look wrong after a bulk import, use Reconcile premium flags on the Premium Stores page.
             Click &quot;Load & Edit Master Data&quot; to open the editor, or &quot;Download CSV&quot; to export stores.
           </p>
         </div>
@@ -623,8 +686,10 @@ const Scraper: React.FC = () => {
             <div className="stat-label">Failed</div>
           </div>
           <div className="stat-card">
-            <div className="stat-value">{stats.totalRecords.toLocaleString()}</div>
-            <div className="stat-label">Total Records</div>
+            <div className="stat-value">
+              {(stats.totalStoresInDatabase ?? stats.totalRecords ?? 0).toLocaleString()}
+            </div>
+            <div className="stat-label">Stores in database</div>
           </div>
         </div>
       )}

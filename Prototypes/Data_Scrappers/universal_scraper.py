@@ -2966,12 +2966,13 @@ def universal_scrape(
                                              use_watch_countries=use_watch_countries)
             results["expansion_used"] = True
 
-        elif detected_type in ("radius", "radius_search") or (
-            has_radius and has_center
+        elif (
+            (detected_type in ("radius", "radius_search") or (has_radius and has_center))
+            and not (brand_config and brand_config.get("force_single_call"))
         ):
             # Radius-based API - use multi-point expansion (world city grid + dedupe).
-            # Note: brand configs often force type "json" -> single_call; geo+radius URLs
-            # must still expand, so we do not skip this branch when detected_type is single_call.
+            # Skipped when brand config sets force_single_call (e.g. StoreRocket APIs where
+            # a large radius already returns all stores in one call).
             log_debug("Strategy: Radius-based multi-point expansion", "INFO")
             stores = scrape_radius_expansion(
                 url, url_params, region, brand_config=brand_config

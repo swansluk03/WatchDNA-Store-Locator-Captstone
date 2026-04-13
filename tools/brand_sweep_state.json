@@ -55,13 +55,67 @@
       "notes": "Stockist.co SaaS. Uses radius_search expansion. Stockist is multi-tenant — expect to clone this for several smaller brands by swapping the map_<tenant> ID."
     },
     {
-      "brand": "MONDAINE",
-      "config_key": "mondaine_stores",
-      "rows": 1309,
-      "notes": "StoreMapper SaaS tenant 6698. Single GET, all stores in one call."
+      "brand": "PANERAI",
+      "config_key": "panerai_stores",
+      "rows": 591,
+      "notes": "Richemont brand. Static JSON at /network/boutiques...json. No auth needed."
+    },
+    {
+      "brand": "AEROWATCH",
+      "config_key": "aerowatch_stores",
+      "rows": 282,
+      "notes": "Custom AJAX endpoint /en/stockists/ajax/stores. Single GET."
     }
   ],
   "blocked": [
+    {
+      "brand": "ORIS",
+      "reason": "Nuxt SPA with GraphQL behind query-specific hash (__gqlh). Can't discover the query name + hash without browser. Store data not embedded in SSR HTML.",
+      "endpoint_seen": "https://www.oris.ch/api/nuxt/graphql/query/<unknown>",
+      "fix_estimate": "Would need browser automation or the exact query name + hash from DevTools."
+    },
+    {
+      "brand": "GRAND SEIKO",
+      "reason": "Shares the same Seiko API (same key, same country IDs, same 2507 stores). Grand Seiko dealers are already covered by the seiko_stores config. Would need the Grand Seiko collection_id to filter — low priority since the physical stores overlap completely.",
+      "endpoint_seen": "Same as Seiko",
+      "fix_estimate": "n/a — already covered by seiko_stores"
+    },
+    {
+      "brand": "CHOPARD",
+      "reason": "404 on Panerai-style JSON path. Different Richemont backend.",
+      "endpoint_seen": "https://www.chopard.com/us/en/network/boutiques...json → 404",
+      "fix_estimate": "Needs DevTools to find actual endpoint."
+    },
+    {
+      "brand": "HUBLOT",
+      "reason": "403/404 on direct probe. WAF protected.",
+      "endpoint_seen": null,
+      "fix_estimate": "Needs DevTools."
+    },
+    {
+      "brand": "IWC",
+      "reason": "404 on Panerai-style JSON path. Different Richemont backend.",
+      "endpoint_seen": "https://www.iwc.com/.../boutiques...json → 404",
+      "fix_estimate": "Needs DevTools."
+    },
+    {
+      "brand": "MOVADO",
+      "reason": "POST-only radius API at /api/commerce/SearchStores. 5894 total stores but capped at 200 per call. Offset/pagination params are ignored. Would need POST support in scrape_radius_expansion (currently GET only).",
+      "endpoint_seen": "https://www.movado.com/api/commerce/SearchStores (POST, body: {latitude, longitude, radius})",
+      "fix_estimate": "30-60 min to add POST support to scrape_radius_expansion."
+    },
+    {
+      "brand": "HAMILTON",
+      "reason": "Swatch Group but NOT on Tissot SFCC pattern. /en-us/stores?countryCode=US returns 404.",
+      "endpoint_seen": null,
+      "fix_estimate": "Needs DevTools."
+    },
+    {
+      "brand": "MIDO",
+      "reason": "Swatch Group but NOT on Tissot SFCC pattern. /en-us/stores?countryCode=US returns 404.",
+      "endpoint_seen": null,
+      "fix_estimate": "Needs DevTools."
+    },
     {
       "brand": "VERSACE",
       "reason": "ASP.NET WebForms postback. Store data is rendered into HTML by Storelocator.aspx after __doPostBack on country/city dropdowns. No JSON XHR feed (the GetViewportInfo XHRs are Google Maps tile metadata, not store data). Would require __VIEWSTATE/__EVENTVALIDATION management + per-country + per-city HTML parsing.",
@@ -82,21 +136,15 @@
     },
     {
       "brand": "LONGINES",
-      "reason": "Magento 2 GraphQL backend proxied through a frontend mesh (Platform.sh). The /graphql endpoint returns 404 when called from outside.",
-      "endpoint_seen": "https://www.longines.com/graphql",
-      "fix_estimate": "Would need browser automation."
+      "reason": "Magento 2 GraphQL backend proxied through a frontend mesh (Platform.sh). The /graphql endpoint returns 404 when called from outside — only reachable through the app's server-side proxy with session context. Internal endpoint: magento.longines.com.c.od5p7chjmqn7q.ent.platform.sh/graphql (SSL cert mismatch when called directly).",
+      "endpoint_seen": "https://www.longines.com/graphql (POST, Magento GraphQL with store: en_us header)",
+      "fix_estimate": "Would need browser automation or a way to proxy through the frontend session."
     },
     {
       "brand": "RADO",
-      "reason": "Proprietary LPE Nuxt SPA. Algolia only indexes subdivisions, not stores. No discoverable API.",
-      "endpoint_seen": "https://store.rado.com",
-      "fix_estimate": "Would need browser automation to intercept runtime fetch."
-    },
-    {
-      "brand": "PILO & CO",
-      "reason": "Website unreachable (connection timeout). No store locator.",
-      "endpoint_seen": null,
-      "fix_estimate": "n/a"
+      "reason": "Proprietary LPE (Luxury Product Experience) Nuxt SPA on store.rado.com. Algolia only indexes 'subdivisions' (geographic autocomplete), not stores. All curl probes return the same HTML shell. No SSR state (__NUXT__ empty), no data-lat attributes, no discoverable API endpoint. Store data loads dynamically via internal JS mechanisms after user interaction.",
+      "endpoint_seen": "https://store.rado.com (Nuxt SPA), Algolia app 0knemtbxx3 index=subdivisions only",
+      "fix_estimate": "Would need browser automation (Playwright/Puppeteer) to intercept the runtime fetch, or reverse-engineer the LPE platform API from minified JS bundles."
     },
     {
       "brand": "SWAROVSKI",
@@ -105,9 +153,11 @@
       "fix_estimate": "1-2h; revisit if 2+ similar HTML+radius brands surface"
     }
   ],
-  "queue_remaining": [ "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
-    "MONTBLANC", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
-    "LACOSTE", "JACOB & CO", "IWC", "HUBLOT", "HAMILTON",
+  "queue_remaining_excludes": ["SWAROVSKI"], "queue_remaining": [ "SWAROVSKI",
+    "RADO",
+    "PILO & CO", "PANERAI", "ORIS", "OCEANUS", "NORQAIN", "MOVADO",
+    "MONTBLANC", "MONDAINE", "MIDO", "MICROMILSPEC", "MARATHON", "LUMINOX",
+    "LONGINES", "LACOSTE", "JACOB & CO", "IWC", "HUBLOT", "HAMILTON",
     "GUESS", "GUCCI", "GRAND SEIKO", "GLASHÜTTE ORIGINAL", "GIRARD PERREGAUX",
     "G-SHOCK", "FREDERIQUE CONSTANT", "FORTIS", "ELKA", "EDOX", "DIESEL",
     "COACH", "CITIZEN", "CHOPARD", "BOSS", "BACKES & STRAUSS", "AEROWATCH"
