@@ -1645,38 +1645,66 @@ def scrape_radius_expansion(
     return all_stores
 
 
-def scrape_viewport_expansion(url: str, url_params: Dict, region: str = "world") -> List[Dict]:
+def scrape_viewport_expansion(
+    url: str,
+    url_params: Dict,
+    region: str = "world",
+    brand_config: Optional[Dict] = None,
+) -> List[Dict]:
     """Expand viewport-based API using grid scraping"""
     from viewport_grid import scrape_viewport_api, get_region_preset
-    
+
     print(f"🗺️  Viewport API detected - expanding to {region}")
-    
+
     viewport_params = {
         "northEastLat": "northEastLat",
         "northEastLng": "northEastLng",
         "southWestLat": "southWestLat",
-        "southWestLng": "southWestLng"
+        "southWestLng": "southWestLng",
     }
-    
-    additional_params = {k: v for k, v in url_params.items() 
-                        if k not in ["northEastLat", "northEastLng", "southWestLat", "southWestLng", "lat", "lng"]}
-    
-    # Use larger grid size to reduce API calls and focus on land areas
+
+    additional_params = {
+        k: v
+        for k, v in url_params.items()
+        if k
+        not in [
+            "northEastLat",
+            "northEastLng",
+            "southWestLat",
+            "southWestLng",
+            "lat",
+            "lng",
+        ]
+    }
+
     grid_size = DEFAULT_VIEWPORT_GRID_SIZE
+    if brand_config:
+        raw_gs = brand_config.get("viewport_grid_size")
+        if raw_gs is not None and str(raw_gs).strip() != "":
+            try:
+                gs = int(raw_gs)
+                if 1 <= gs <= 90:
+                    grid_size = gs
+            except (TypeError, ValueError):
+                pass
+
+    req_headers = _get_custom_headers(brand_config)
+
     grid_type = "world" if region == "world" else "focused"
     focus_region = None if region == "world" else get_region_preset(region)
 
     stores = scrape_viewport_api(
-        base_url=url.split('?')[0],
+        base_url=url.split("?")[0],
         viewport_params=viewport_params,
         grid_type=grid_type,
         grid_size=grid_size,
         data_path="",
         additional_params=additional_params,
         delay_between_requests=DEFAULT_DELAY_BETWEEN_REQUESTS,
-        focus_region=focus_region
+        focus_region=focus_region,
+        request_headers=req_headers,
     )
-    
+
     return stores
 
 
@@ -2931,7 +2959,9 @@ def universal_scrape(
         elif detected_type == "viewport":
             # Viewport expansion
             log_debug(f"Strategy: Viewport expansion (region={region})", "INFO")
-            stores = scrape_viewport_expansion(url, locator_analysis["url_params"], region)
+            stores = scrape_viewport_expansion(
+                url, locator_analysis["url_params"], region, brand_config=brand_config
+            )
             results["expansion_used"] = True
 
         elif detected_type == "country_filter":

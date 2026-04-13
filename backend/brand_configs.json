@@ -14,6 +14,7 @@
       "post_per_country": "If set (object), enables POST-per-country expansion for endpoints that accept POST with a JSON body and return one country's stores per call. The scraper iterates the global watch_store_countries list (or 'countries' override) and POSTs body_template with {country} interpolated to the ISO2 code. Keys: body_template (dict, default {country:'{country}'}), data_path (str, dot-path into response, e.g. 'result'), delay (float, default 0.2), countries (list[str], optional override). Example: Zenith storeLocator.",
       "inject_country_field": "If set (string), country_filter expansion writes the iterated country name into this key on each store record so field_mapping can read it. Use for APIs that only return an internal country id (numeric/UUID) and no country name. Example: Seiko (\"_country_name\").",
       "stores_by_api_countries": "Object for APIs that publish a country catalog JSON, then one store list per country id. Keys: countries_url (GET), countries_list_path (dot path to array, default \"countries\"), country_id_field (default \"id\"), country_name_field (default \"name\", injected on each store), stores_url_template (must include {country_id}), inject_country_name_field (default \"_api_country_name\"; empty string to disable). Optional radius_expansion_delay_seconds between country requests.",
+      "viewport_grid_size": "Optional degrees per viewport cell for type viewport (default 20). Smaller values = more API calls, better coverage if the API caps results per bbox (e.g. Rolex).",
       "pagination_fetch_urls": "Optional list of full URLs. When non-empty, the scraper GETs each URL in order, extracts the store array (data_path + standard fallbacks), merges results, and dedupes by id. Use for offset/per APIs where pages are fixed or total metadata is missing. Works with type json (runs before single_call). Optional radius_expansion_delay_seconds sets pause between requests (default 0.3s).",
       "row_filters": "Optional list of filter rules applied to raw store records after collection, before normalization. Each rule: { field (dot-notation path, e.g. 'extra_fields.Rank'), op (eq|in|not_in|contains, default eq), value or values }. All rules are ANDed. Absent or empty = no filtering (all other brands unaffected).",
       "force_radius_multi_point": "If true, always runs multi-center radius expansion when the URL (or radius_expansion_radius) supplies a distance and the URL or radius_expansion_centers supplies centers. Use when auto-detection or type=json would otherwise take a single-call path but the API is actually region-scoped.",
@@ -28,11 +29,18 @@
     }
   },
   "rolex_retailers": {
-    "type": "json",
-    "url": "https://retailers.rolex.com/app/establishments/by_viewport/light?brand=RLX&northEastLat=50.0&northEastLng=10.0&southWestLat=40.0&southWestLng=-10.0&langCode=en-us&establishmentType=STORE",
-    "description": "Rolex Official Retailers API - Verified Working ✅",
+    "type": "viewport",
+    "url": "https://retailers.rolex.com/app/establishments/by_viewport/light?brand=RLX%2CRCPO&northEastLat=50.0&northEastLng=10.0&southWestLat=40.0&southWestLng=-10.0&langCode=en-us&establishmentType=SERVICECENTER%2CSTORE",
+    "description": "Rolex Official Retailers API — viewport expansion walks the world; matches live site (RLX+RCPO, service centers + stores).",
     "method": "GET",
     "display_name": "ROLEX",
+    "url_base": "https://www.rolex.com",
+    "viewport_grid_size": 10,
+    "custom_headers": {
+      "Origin": "https://www.rolex.com",
+      "Referer": "https://www.rolex.com/",
+      "Accept": "application/json"
+    },
     "data_path": "",
     "field_mapping": {
       "Name": [
