@@ -4,6 +4,7 @@ import uploadService from '../services/upload.service';
 import { storeService } from '../services/store.service';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { ENDPOINT_DISCOVERER_PATH, PYTHON_CMD } from '../utils/paths';
 import prisma from '../lib/prisma';
 import {
@@ -15,6 +16,11 @@ import {
   masterBrandPremiumScopeFromQuery,
   masterExportFiltersFromQuery,
 } from '../utils/parse-master-export-query';
+import {
+  geoVerifyTasks,
+  runGeoVerifyPipeline,
+  type GeoVerifyTask,
+} from '../services/geo-verify-pipeline.service';
 
 // Helper functions for brand config similarity detection
 function calculateSimilarity(str1: string, str2: string): number {
@@ -840,6 +846,63 @@ export const scraperController = {
       res.json({ brandId: id, config: configs[id] });
     } catch (error: any) {
       console.error('Error getting brand config:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // POST /api/scraper/verify-coordinates - Start a geo-verify + dedup pipeline for a brand
+  async startVerifyCoordinates(req: Request, res: Response) {
+    try {
+      const { brandName } = req.body as { brandName?: string };
+      if (!brandName || typeof brandName !== 'string' || !brandName.trim()) {
+        return res.status(400).json({ error: 'brandName is required' });
+      }
+
+      const taskId = crypto.randomUUID();
+      const task: GeoVerifyTask = {
+        id: taskId,
+        brandName: brandName.trim(),
+        status: 'running',
+        progress: { checked: 0, total: 0 },
+        phase: 'geocoding',
+        log: [],
+        startedAt: new Date(),
+      };
+      geoVerifyTasks.set(taskId, task);
+
+      runGeoVerifyPipeline(task).catch((e) => {
+        task.status = 'error';
+        task.error = String(e);
+      });
+
+      res.status(202).json({ taskId });
+    } catch (error: any) {
+      console.error('Error starting verify-coordinates task:', error);
+      res.status(500).json({ error: error.message });
+    }
+  },
+
+  // GET /api/scraper/verify-coordinates/:taskId - Poll task status
+  async getVerifyCoordinatesStatus(req: Request, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const task = geoVerifyTasks.get(taskId);
+      if (!task) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+      res.json({
+        taskId: task.id,
+        brandName: task.brandName,
+        status: task.status,
+        phase: task.phase,
+        progress: task.progress,
+        log: task.log,
+        result: task.result,
+        error: task.error,
+        startedAt: task.startedAt,
+      });
+    } catch (error: any) {
+      console.error('Error getting verify-coordinates status:', error);
       res.status(500).json({ error: error.message });
     }
   },

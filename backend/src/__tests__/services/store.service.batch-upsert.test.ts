@@ -113,4 +113,20 @@ describe('storeService.batchUpsertLocations', () => {
     expect(brands).toContain('OMEGA');
     expect(brands).toContain('ROLEX');
   });
+
+  it('upserts a row that has no phone number when requireCompleteForDb is true', async () => {
+    prismaMocks.transactionFn.mockImplementation(async (callback: (tx: any) => Promise<void>) => {
+      await callback({ location: { upsert: prismaMocks.upsertFn } });
+    });
+
+    const row = { ...completeCsvRow('h-nophone', 'OMEGA'), Phone: '' };
+    const result = await storeService.batchUpsertLocations([row], undefined, {
+      failFast: true,
+      requireCompleteForDb: true,
+      mergeOnUpdate: false,
+    });
+
+    expect(result.upserted).toBe(1);
+    expect(result.skippedIncomplete ?? 0).toBe(0);
+  });
 });

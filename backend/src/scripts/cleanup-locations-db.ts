@@ -16,18 +16,15 @@ const execute = process.argv.includes('--execute');
 
 function isIncompleteDbRow(loc: {
   name: string;
-  phone: string | null;
   addressLine1: string;
   addressLine2: string | null;
   latitude: number;
   longitude: number;
 }): boolean {
-  const phone = (loc.phone ?? '').trim();
   const addr1 = (loc.addressLine1 ?? '').trim();
   const addr2 = (loc.addressLine2 ?? '').trim();
   const name = (loc.name ?? '').trim();
   if (!name) return true;
-  if (!phone) return true;
   if (!addr1 && !addr2) return true;
   const { latitude: lat, longitude: lng } = loc;
   if (Number.isNaN(lat) || Number.isNaN(lng)) return true;
@@ -44,7 +41,6 @@ async function main() {
       id: true,
       handle: true,
       name: true,
-      phone: true,
       addressLine1: true,
       addressLine2: true,
       city: true,
@@ -57,7 +53,7 @@ async function main() {
   });
 
   const incompleteHandles = all.filter(isIncompleteDbRow).map((r) => r.handle);
-  console.log(`Incomplete rows (no phone, no address, bad/missing coords, empty name): ${incompleteHandles.length}`);
+  console.log(`Incomplete rows (no address, bad/missing coords, empty name): ${incompleteHandles.length}`);
 
   const complete = all.filter((r) => !isIncompleteDbRow(r));
   const groups = new Map<string, typeof complete>();

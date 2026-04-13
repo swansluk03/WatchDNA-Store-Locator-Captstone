@@ -36,10 +36,18 @@ const PORT = config.port;
 app.set('trust proxy', 1);
 
 // CORS Configuration
+const localDevOrigin =
+  /^http:\/\/(localhost|127\.0\.0\.1):\d+$/;
+
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow requests with no origin (mobile apps, Postman, curl, etc.)
     if (!origin) {
+      return callback(null, true);
+    }
+
+    // Vite may use 5174, 5175, … when the default port is taken — allow any localhost port in non-production
+    if (!config.isProduction && localDevOrigin.test(origin)) {
       return callback(null, true);
     }
 

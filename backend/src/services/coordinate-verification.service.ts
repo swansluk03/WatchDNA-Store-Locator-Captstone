@@ -20,6 +20,8 @@ export type VerifyHandlesOptions = {
   forceReverify?: boolean;
   /** For tests only — bypasses HTTP when set */
   geocodeFn?: (input: NominatimAddressInput) => Promise<GeocodedPoint | null>;
+  /** Called after each handle is processed (checked, skipped, failed, or errored). */
+  onProgress?: (processed: number, total: number) => void;
 };
 
 export type VerifyHandlesSummary = {
@@ -164,6 +166,7 @@ export async function verifyHandles(
           }));
 
   const lastEnd = { t: 0 };
+  let processedCount = 0;
 
   for (const handle of unique) {
     try {
@@ -273,6 +276,9 @@ export async function verifyHandles(
     } catch (e: unknown) {
       logger.error(`[coordinateVerification] handle ${handle}: ${String(e)}`);
       summary.errors++;
+    } finally {
+      processedCount++;
+      options?.onProgress?.(processedCount, unique.length);
     }
   }
 

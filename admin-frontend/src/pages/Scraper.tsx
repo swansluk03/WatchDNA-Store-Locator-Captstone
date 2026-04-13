@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   scraperService,
   type Brand,
+  type GeoVerifyTaskStatus,
   type MasterCsvExportFilters,
   type ScraperJob,
   type ScraperStats,
@@ -10,7 +11,7 @@ import {
 import EndpointDiscovery from '../components/EndpointDiscovery';
 import '../styles/Scraper.css';
 
-type TabType = 'jobs' | 'discovery' | 'master';
+type TabType = 'jobs' | 'discovery' | 'master' | 'tools';
 
 /** Escape a value for CSV (quotes and commas) */
 function escapeCsvValue(val: string): string {
@@ -83,6 +84,12 @@ const Scraper: React.FC = () => {
   const [masterRecordsViewMode, setMasterRecordsViewMode] = useState<'all' | 'incomplete'>('all');
   const [masterCountryOptions, setMasterCountryOptions] = useState<string[]>([]);
   const [loadingMasterCountries, setLoadingMasterCountries] = useState(false);
+  // Geo-verify Tools tab
+  const [geoVerifyBrand, setGeoVerifyBrand] = useState('');
+  const [geoVerifyTask, setGeoVerifyTask] = useState<GeoVerifyTaskStatus | null>(null);
+  const [geoVerifyRunning, setGeoVerifyRunning] = useState(false);
+  const [geoVerifyError, setGeoVerifyError] = useState<string | null>(null);
+  const geoVerifyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const masterCsvFilters = (): MasterCsvExportFilters | undefined => {
     const country = masterCountryFilter.trim();
@@ -184,6 +191,54 @@ const Scraper: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const stopGeoVerifyPoll = () => {
+    if (geoVerifyPollRef.current) {
+      clearInterval(geoVerifyPollRef.current);
+      geoVerifyPollRef.current = null;
+    }
+  };
+
+  const startGeoVerifyPoll = (taskId: string) => {
+    stopGeoVerifyPoll();
+    geoVerifyPollRef.current = setInterval(async () => {
+      try {
+        const task = await scraperService.getGeoVerifyStatus(taskId);
+        setGeoVerifyTask(task);
+        if (task.status !== 'running') {
+          stopGeoVerifyPoll();
+          setGeoVerifyRunning(false);
+        }
+      } catch (err) {
+        console.error('Failed to poll geo-verify status:', err);
+      }
+    }, 2500);
+  };
+
+  const handleStartGeoVerify = async () => {
+    const brand = geoVerifyBrand.trim();
+    if (!brand) {
+      setGeoVerifyError('Please enter a brand name.');
+      return;
+    }
+    setGeoVerifyError(null);
+    setGeoVerifyRunning(true);
+    setGeoVerifyTask(null);
+    try {
+      const { taskId } = await scraperService.startGeoVerify(brand);
+      startGeoVerifyPoll(taskId);
+    } catch (err: any) {
+      setGeoVerifyError(err.response?.data?.error || 'Failed to start verification.');
+      setGeoVerifyRunning(false);
+    }
+  };
+
+  const handleResetGeoVerify = () => {
+    stopGeoVerifyPoll();
+    setGeoVerifyTask(null);
+    setGeoVerifyRunning(false);
+    setGeoVerifyError(null);
   };
 
   const handleStartScraping = async () => {
@@ -577,11 +632,154 @@ const Scraper: React.FC = () => {
         >
           Master Store Data
         </button>
+        <button
+          className={`tab-button ${activeTab === 'tools' ? 'active' : ''}`}
+          onClick={() => setActiveTab('tools')}
+        >
+          Tools
+        </button>
       </div>
 
       {/* Tab Content */}
       {activeTab === 'discovery' ? (
         <EndpointDiscovery onConfigSaved={loadData} />
+      ) : activeTab === 'tools' ? (
+        <div className="content-section">
+          <div className="section-header">
+            <h2>Store Tools</h2>
+          </div>
+
+          {/* Geo-Verify & Dedup Tool */}
+          <div className="tool-card">
+            <div className="tool-card-header">
+              <h3>Geo-Verify &amp; Dedup</h3>
+              <p className="tool-card-description">
+                Re-geocode all stores for a brand using Nominatim, then run address deduplication to
+                merge any duplicate locations. Brand affiliations are unioned onto the surviving record.
+              </p>
+            </div>
+
+            <div className="tool-card-body">
+              <div className="tool-field-row">
+                <label className="tool-label" htmlFor="geo-verify-brand-input">Brand name</label>
+                <div className="tool-input-group">
+                  <input
+                    id="geo-verify-brand-input"
+                    type="text"
+                    className="tool-input"
+                    placeholder="e.g. OMEGA, AUDEMARS PIGUET, omega_stores"
+                    value={geoVerifyBrand}
+                    onChange={(e) => setGeoVerifyBrand(e.target.value)}
+                    disabled={geoVerifyRunning}
+                    list="geo-verify-brand-list"
+                  />
+                  <datalist id="geo-verify-brand-list">
+                    {brands.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+
+              {geoVerifyError && (
+                <div className="tool-error">{geoVerifyError}</div>
+              )}
+
+              <div className="tool-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleStartGeoVerify}
+                  disabled={geoVerifyRunning || !geoVerifyBrand.trim()}
+                >
+                  {geoVerifyRunning ? 'Running...' : 'Run Geo-Verify & Dedup'}
+                </button>
+                {geoVerifyTask && !geoVerifyRunning && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleResetGeoVerify}
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+
+              {/* Progress */}
+              {(geoVerifyRunning || geoVerifyTask) && (
+                <div className="tool-progress-section">
+                  {geoVerifyTask && geoVerifyTask.progress.total > 0 && (
+                    <div className="tool-progress-bar-wrap">
+                      <div
+                        className="tool-progress-bar-fill"
+                        style={{
+                          width: `${Math.min(100, Math.round((geoVerifyTask.progress.checked / geoVerifyTask.progress.total) * 100))}%`,
+                        }}
+                      />
+                      <span className="tool-progress-label">
+                        {geoVerifyTask.progress.checked} / {geoVerifyTask.progress.total}
+                        {geoVerifyTask.phase === 'dedup' ? ' — deduplicating...' : ''}
+                      </span>
+                    </div>
+                  )}
+                  {geoVerifyRunning && (!geoVerifyTask || geoVerifyTask.progress.total === 0) && (
+                    <div className="tool-progress-bar-wrap">
+                      <div className="tool-progress-bar-fill tool-progress-bar-indeterminate" />
+                      <span className="tool-progress-label">Starting…</span>
+                    </div>
+                  )}
+
+                  {geoVerifyTask && geoVerifyTask.log.length > 0 && (
+                    <div className="tool-log">
+                      {geoVerifyTask.log.map((line, i) => (
+                        <div key={i} className="tool-log-line">{line}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Results summary */}
+              {geoVerifyTask && geoVerifyTask.status === 'done' && geoVerifyTask.result && (
+                <div className="tool-results">
+                  <h4>Results</h4>
+                  <div className="tool-results-grid">
+                    <div className="tool-result-stat">
+                      <span className="tool-result-value tool-result-value--updated">{geoVerifyTask.result.coordinatesUpdated}</span>
+                      <span className="tool-result-label">Coordinates updated</span>
+                    </div>
+                    <div className="tool-result-stat">
+                      <span className="tool-result-value">{geoVerifyTask.result.verifiedStampOnly}</span>
+                      <span className="tool-result-label">Confirmed (no change)</span>
+                    </div>
+                    <div className="tool-result-stat">
+                      <span className="tool-result-value tool-result-value--warn">{geoVerifyTask.result.geocodeFailed}</span>
+                      <span className="tool-result-label">Geocode failures</span>
+                    </div>
+                    <div className="tool-result-stat">
+                      <span className="tool-result-value tool-result-value--merged">{geoVerifyTask.result.dedupMerged}</span>
+                      <span className="tool-result-label">Duplicates removed</span>
+                    </div>
+                    <div className="tool-result-stat">
+                      <span className="tool-result-value">{geoVerifyTask.result.locationsRemaining}</span>
+                      <span className="tool-result-label">Stores remaining</span>
+                    </div>
+                    <div className="tool-result-stat">
+                      <span className="tool-result-value">{geoVerifyTask.result.elapsedSec.toFixed(1)}s</span>
+                      <span className="tool-result-label">Total time</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {geoVerifyTask && geoVerifyTask.status === 'error' && (
+                <div className="tool-error tool-error--block">
+                  <strong>Error:</strong> {geoVerifyTask.error}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       ) : activeTab === 'master' ? (
         <div className="content-section">
           <div className="section-header">
