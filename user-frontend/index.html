@@ -66,12 +66,12 @@
 
         <!-- Watch / Accessory toggle -->
         <div class="type-toggle-row">
-          <span class="type-toggle-label" id="toggleLabelWatch">Multi-Brand Stores</span>
+          <span class="type-toggle-label" id="toggleLabelWatch">Non-Verified</span>
           <button type="button" id="typeToggle" class="type-toggle" role="switch" aria-checked="false"
-            title="Switch between Multi-Brand and Single Brand stores"></button>
-          <span class="type-toggle-label" id="toggleLabelAccessory">Boutiques</span>
+            title="Switch between Non-Verified and Verified stores"></button>
+          <span class="type-toggle-label" id="toggleLabelAccessory">Verified</span>
           <input type="checkbox" id="serviceCenterCheckbox" value="services-center" />
-          <span>Services Center</span>
+          <span>Service Centers</span>
         </div>
 
       </div>
@@ -1008,7 +1008,7 @@
       const premiumOnly = false;
 
       const toggleEl = document.getElementById('typeToggle');
-      const isMultiBrand = toggleEl?.getAttribute('aria-checked') === 'false';
+      const showVerified = toggleEl?.getAttribute('aria-checked') === 'true';
       const serviceCenterChecked = document.getElementById('serviceCenterCheckbox')?.checked;
 
       let brandListRows = [];  // rows for populating the brand checkbox list (ignores toggle + brand filter)
@@ -1037,10 +1037,10 @@
         }
 
         if (!passesText) return;
-        const brandCount = (row['Brands'] || '')
-          .split(',').map(s => s.trim()).filter(Boolean).length;
+        //const brandCount = (row['Brands'] || '')
+          //.split(',').map(s => s.trim()).filter(Boolean).length;
 
-        const passesToggle = isMultiBrand ? brandCount > 1 : brandCount === 1;
+        const passesToggle = showVerified ? row._isPremium === true : row._isPremium !== true;
         const passesServiceCenter = !serviceCenterChecked || row._type === 'services-center';
 
         const passesType = passesToggle && passesServiceCenter;
