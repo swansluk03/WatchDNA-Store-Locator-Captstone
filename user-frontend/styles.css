@@ -847,3 +847,63 @@ header::-webkit-scrollbar-thumb {
   font-weight: 600;
   opacity: 0.75;
 }
+
+#mapToggleBtn {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  body {
+    display: block;
+    overflow: hidden;
+    position: relative;
+  }
+
+  header {
+    position: fixed;
+    width: 100%;
+    height: 100vh;
+    left: 0;
+    top: 0;
+    z-index: 1002;
+    transition: transform 0.3s ease;
+  }
+
+  header.map-visible {
+    transform: translateX(-100%);
+  }
+
+  #map {
+    position: fixed;
+    margin-left: 0;
+    width: 100%;
+    height: 100vh;
+    top: 0;
+    left: 0;
+    z-index: 1;
+  }
+
+  #mapToggleBtn {
+    display: inline-block;
+    font-family: "Cormorant", serif;
+    font-size: 15px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 7px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    align-self: flex-end;
+    margin-left: auto;
+  }
+
+  #mapToggleBtn.list-mode {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1003;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    white-space: nowrap;
+  }
+}

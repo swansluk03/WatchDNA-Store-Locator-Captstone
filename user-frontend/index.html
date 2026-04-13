@@ -37,7 +37,7 @@
 
 <body>
   <header id="sidebar">
-
+    <button id="mapToggleBtn" aria-label="View map">View Map →</button>
     <div id="top">
       <div id="inner">
         <h2>WatchDNA's Network | Find jewellers in your area</h2>
@@ -1038,7 +1038,7 @@
 
         if (!passesText) return;
         //const brandCount = (row['Brands'] || '')
-          //.split(',').map(s => s.trim()).filter(Boolean).length;
+        //.split(',').map(s => s.trim()).filter(Boolean).length;
 
         const passesToggle = showVerified ? row._isPremium === true : row._isPremium !== true;
         const passesServiceCenter = !serviceCenterChecked || row._type === 'services-center';
@@ -1839,6 +1839,21 @@
         console.error('Error loading locations API:', err);
         alert('Failed to load locations from the Railway API.');
       });
+
+    (function () {
+      const btn = document.getElementById('mapToggleBtn');
+      const sidebar = document.getElementById('sidebar');
+      if (!btn || !sidebar) return;
+
+      btn.addEventListener('click', () => {
+        const isMapVisible = sidebar.classList.toggle('map-visible');
+        btn.textContent = isMapVisible ? '← View List' : 'View Map →';
+        btn.classList.toggle('list-mode', isMapVisible);
+        if (isMapVisible) {
+          setTimeout(() => map.invalidateSize({ animate: false }), 320);
+        }
+      });
+    })();
   </script>
 </body>
 
