@@ -990,6 +990,33 @@
     },
     "_note": "StoreMapper SaaS tenant 6698. Address is one combined string (like U-Boat); city/country inferred by data_normalizer. storemapper-id found via data-storemapper-id attribute in the Shopify page HTML."
   },
+  "aerowatch_stores": {
+    "type": "json",
+    "url": "https://www.aerowatch.com/en/stockists/ajax/stores",
+    "method": "GET",
+    "description": "Aerowatch — custom AJAX endpoint. Single GET returns all 282 stores worldwide as a flat JSON array. No pagination needed.",
+    "display_name": "AEROWATCH",
+    "url_base": "https://www.aerowatch.com",
+    "data_path": "",
+    "custom_headers": {
+      "X-Requested-With": "XMLHttpRequest"
+    },
+    "field_mapping": {
+      "Handle": "stockist_id",
+      "Name": "name",
+      "Address Line 1": "address",
+      "City": "city",
+      "State/Province/Region": "region",
+      "Postal/ZIP Code": "postcode",
+      "Country": "country",
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "external_link",
+      "Latitude": "latitude",
+      "Longitude": "longitude"
+    },
+    "_note": "Country field is ISO2 (e.g. 'CH'). Flat array, no wrapper."
+  },
   "coach_stores": {
     "type": "json",
     "url": "https://www.coach.com/stores/store-locator?coachstoretype=5988915&per=50&l=en",
@@ -1220,5 +1247,99 @@
         "separator": ", "
       }
     }
+  },
+  "panerai_stores": {
+    "type": "json",
+    "url": "https://www.panerai.com/us/en/network/boutiques.stores-with-hours.internal-external-retailer.json",
+    "method": "GET",
+    "description": "Panerai — static JSON endpoint. Single GET returns all 596 stores worldwide as a flat array. Includes both boutiques and authorized retailers.",
+    "display_name": "PANERAI",
+    "url_base": "https://www.panerai.com",
+    "data_path": "",
+    "field_mapping": {
+      "Handle": "storeId",
+      "Name": "name",
+      "Address Line 1": "address.street",
+      "Address Line 2": "address.street2",
+      "City": "address.city",
+      "State/Province/Region": "address.state",
+      "Postal/ZIP Code": "address.zipCode",
+      "Country": "address.country",
+      "Phone": "phoneNumber",
+      "Email": "email",
+      "Website": "website",
+      "Latitude": "location.latitude",
+      "Longitude": "location.longitude",
+      "Service Type": "type"
+    },
+    "_note": "Richemont brand. Static JSON, no auth needed. Same pattern may work for IWC (also Richemont)."
+  },
+  "norqain_stores": {
+    "type": "json",
+    "force_single_call": true,
+    "url": "https://storerocket.io/api/user/Or85dW0JNM/locations?lat=20&lng=0&radius=25000&units=kilometers",
+    "method": "GET",
+    "description": "Norqain — StoreRocket SaaS. Single GET with large radius returns all 342 stores worldwide.",
+    "display_name": "NORQAIN",
+    "url_base": "https://www.norqain.com",
+    "data_path": "results.locations",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "name",
+      "Address Line 1": "address_line_1",
+      "Address Line 2": "address_line_2",
+      "City": "city",
+      "State/Province/Region": "state",
+      "Postal/ZIP Code": "postcode",
+      "Country": "country",
+      "Phone": "phone",
+      "Email": "email",
+      "Website": "url",
+      "Latitude": "lat",
+      "Longitude": "lng"
+    },
+    "_note": "StoreRocket SaaS tenant Or85dW0JNM. Large radius (25000km) returns all stores in one call."
+  },
+  "montblanc_stores": {
+    "type": "json",
+    "url": "https://stores.montblanc.com/api/boutiques",
+    "method": "GET",
+    "description": "Montblanc — dedicated store API. Single GET returns all 2129 boutiques worldwide. No auth needed.",
+    "display_name": "MONTBLANC",
+    "url_base": "https://www.montblanc.com",
+    "data_path": "boutiques.publicBoutiques",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "defaultName",
+      "Phone": "phone",
+      "Email": "email",
+      "Country": "city.country.defaultName",
+      "Latitude": "latitude",
+      "Longitude": "longitude"
+    },
+    "_note": "Address not a discrete field — Montblanc only stores city/country/coords. City at city.defaultName (often null). Country at city.country.defaultName."
+  },
+  "lacoste_stores": {
+    "type": "json",
+    "url": "https://www.lacoste.com/us/stores?country=unitedstates&city=sandiego&json=true",
+    "method": "GET",
+    "description": "Lacoste — hierarchical API (continent→country→city→stores). 2599 stores worldwide. Initial scrape done via custom crawl script. For admin re-runs, the scraper would need a hierarchical crawler.",
+    "display_name": "LACOSTE",
+    "url_base": "https://www.lacoste.com",
+    "data_path": "stores",
+    "field_mapping": {
+      "Handle": "id",
+      "Name": "name",
+      "Address Line 1": "address",
+      "City": "city",
+      "Postal/ZIP Code": "postalCode",
+      "Country": "_country",
+      "Phone": "phone",
+      "Email": "email",
+      "Latitude": "latitude",
+      "Longitude": "longitude",
+      "Service Type": "type"
+    },
+    "_note": "2599 stores, 0 missing fields. Hierarchical crawl: root→6 continents→~80 countries→~900 cities. CSV at /tmp/lacoste.csv for upload. Top: FR 501, CN 396, KR 219, TH 170, JP 125, MX 103, US 94."
   }
 }
