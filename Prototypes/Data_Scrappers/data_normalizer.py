@@ -1336,6 +1336,10 @@ def batch_normalize(
                     combo_key = f"addr|{_addr_fp}|{_city_norm}|{_country_norm}"
                 else:
                     combo_key = None
+            if not combo_key:
+                _h = normalized.get("Handle", "").strip().lower()
+                if _h:
+                    combo_key = f"handle|{_h}"
             if combo_key:
                 if combo_key in seen_combinations:
                     continue

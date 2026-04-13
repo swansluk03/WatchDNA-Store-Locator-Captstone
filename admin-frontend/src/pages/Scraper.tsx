@@ -90,6 +90,8 @@ const Scraper: React.FC = () => {
   const [geoVerifyRunning, setGeoVerifyRunning] = useState(false);
   const [geoVerifyError, setGeoVerifyError] = useState<string | null>(null);
   const geoVerifyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** False after unmount so in-flight status polls do not call setState. */
+  const geoVerifyMountedRef = useRef(true);
 
   const masterCsvFilters = (): MasterCsvExportFilters | undefined => {
     const country = masterCountryFilter.trim();
@@ -176,6 +178,17 @@ const Scraper: React.FC = () => {
     };
   }, [activeTab, masterBrandFilter, masterPremiumOnly]);
 
+  useEffect(() => {
+    geoVerifyMountedRef.current = true;
+    return () => {
+      geoVerifyMountedRef.current = false;
+      if (geoVerifyPollRef.current) {
+        clearInterval(geoVerifyPollRef.current);
+        geoVerifyPollRef.current = null;
+      }
+    };
+  }, []);
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -205,6 +218,7 @@ const Scraper: React.FC = () => {
     geoVerifyPollRef.current = setInterval(async () => {
       try {
         const task = await scraperService.getGeoVerifyStatus(taskId);
+        if (!geoVerifyMountedRef.current) return;
         setGeoVerifyTask(task);
         if (task.status !== 'running') {
           stopGeoVerifyPoll();
@@ -227,8 +241,10 @@ const Scraper: React.FC = () => {
     setGeoVerifyTask(null);
     try {
       const { taskId } = await scraperService.startGeoVerify(brand);
+      if (!geoVerifyMountedRef.current) return;
       startGeoVerifyPoll(taskId);
     } catch (err: any) {
+      if (!geoVerifyMountedRef.current) return;
       setGeoVerifyError(err.response?.data?.error || 'Failed to start verification.');
       setGeoVerifyRunning(false);
     }

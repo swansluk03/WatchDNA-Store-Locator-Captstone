@@ -4,12 +4,10 @@ import {
   markStoresPremium,
   reconcilePremiumFlags,
   removeStoresPremium,
-  updateStore,
-  uploadStoreImage,
   type PremiumRetailKind,
   type StoreRecord,
-  type StoreUpdatePayload,
 } from '../services/premium.service';
+import StoreEditModal from '../components/StoreEditModal';
 import '../styles/PremiumStores.css';
 import { parseBrandsForDisplay, storeMatchesBrandFilter } from '../utils/brandDisplay';
 
@@ -41,106 +39,6 @@ function formatAddress(store: StoreRecord): string {
   return parts.join(', ');
 }
 
-function n2s(v: string | null | undefined): string {
-  return v ?? '';
-}
-
-const API_ORIGIN = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-
-/** Admin runs on another origin; API-relative image paths need the backend base URL. */
-function imagePreviewSrc(imageUrl: string): string {
-  const t = imageUrl.trim();
-  if (!t) return '';
-  if (t.startsWith('/api/')) return `${API_ORIGIN}${t}`;
-  return t;
-}
-
-function draftToPayload(d: StoreEditDraft, baseline: StoreRecord): StoreUpdatePayload {
-  const empty = (s: string) => (s.trim() === '' ? null : s.trim());
-  const out: StoreUpdatePayload = {
-    addressLine1: d.addressLine1.trim(),
-    addressLine2: empty(d.addressLine2),
-    city: d.city.trim(),
-    stateProvinceRegion: empty(d.stateProvinceRegion),
-    postalCode: empty(d.postalCode),
-    country: d.country.trim(),
-    phone: empty(d.phone),
-    website: empty(d.website),
-    imageUrl: empty(d.imageUrl),
-    pageDescription: empty(d.pageDescription),
-    monday: empty(d.monday),
-    tuesday: empty(d.tuesday),
-    wednesday: empty(d.wednesday),
-    thursday: empty(d.thursday),
-    friday: empty(d.friday),
-    saturday: empty(d.saturday),
-    sunday: empty(d.sunday),
-  };
-  if (d.isPremium) {
-    out.isServiceCenter = d.isServiceCenter;
-    out.premiumRetailKind =
-      d.premiumRetailKind === 'boutique' || d.premiumRetailKind === 'multi_brand'
-        ? d.premiumRetailKind
-        : null;
-  }
-  if (d.isPremium !== baseline.isPremium) {
-    out.isPremium = d.isPremium;
-  }
-  return out;
-}
-
-function storeToDraft(s: StoreRecord): StoreEditDraft {
-  return {
-    addressLine1: s.addressLine1,
-    addressLine2: n2s(s.addressLine2),
-    city: s.city,
-    stateProvinceRegion: n2s(s.stateProvinceRegion),
-    postalCode: n2s(s.postalCode),
-    country: s.country,
-    phone: n2s(s.phone),
-    website: n2s(s.website),
-    imageUrl: n2s(s.imageUrl),
-    pageDescription: n2s(s.pageDescription),
-    monday: n2s(s.monday),
-    tuesday: n2s(s.tuesday),
-    wednesday: n2s(s.wednesday),
-    thursday: n2s(s.thursday),
-    friday: n2s(s.friday),
-    saturday: n2s(s.saturday),
-    sunday: n2s(s.sunday),
-    isPremium: s.isPremium,
-    isServiceCenter: Boolean(s.isServiceCenter),
-    premiumRetailKind:
-      s.premiumRetailKind === 'boutique' || s.premiumRetailKind === 'multi_brand'
-        ? s.premiumRetailKind
-        : '',
-  };
-}
-
-interface StoreEditDraft {
-  addressLine1: string;
-  addressLine2: string;
-  city: string;
-  stateProvinceRegion: string;
-  postalCode: string;
-  country: string;
-  phone: string;
-  website: string;
-  imageUrl: string;
-  pageDescription: string;
-  monday: string;
-  tuesday: string;
-  wednesday: string;
-  thursday: string;
-  friday: string;
-  saturday: string;
-  sunday: string;
-  isPremium: boolean;
-  isServiceCenter: boolean;
-  /** Empty until user picks Boutique or Multi-brand (required when premium). */
-  premiumRetailKind: PremiumRetailKind | '';
-}
-
 interface BulkPremiumRow {
   handle: string;
   name: string;
@@ -148,16 +46,6 @@ interface BulkPremiumRow {
   isServiceCenter: boolean;
   premiumRetailKind: PremiumRetailKind | '';
 }
-
-const DAY_LABELS: { key: keyof Pick<StoreEditDraft, 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'>; label: string }[] = [
-  { key: 'monday', label: 'Monday' },
-  { key: 'tuesday', label: 'Tuesday' },
-  { key: 'wednesday', label: 'Wednesday' },
-  { key: 'thursday', label: 'Thursday' },
-  { key: 'friday', label: 'Friday' },
-  { key: 'saturday', label: 'Saturday' },
-  { key: 'sunday', label: 'Sunday' },
-];
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -271,24 +159,10 @@ const PremiumStores: React.FC = () => {
   const autocompleteRef = useRef<HTMLUListElement>(null);
 
   const [editingStore, setEditingStore] = useState<StoreRecord | null>(null);
-  const [editDraft, setEditDraft] = useState<StoreEditDraft | null>(null);
-  const [editSaving, setEditSaving] = useState(false);
-  const [imageUploading, setImageUploading] = useState(false);
-  const [imagePreviewBroken, setImagePreviewBroken] = useState(false);
 
   const [bulkPremiumOpen, setBulkPremiumOpen] = useState(false);
   const [bulkPremiumRows, setBulkPremiumRows] = useState<BulkPremiumRow[]>([]);
   const [bulkPremiumSubmitting, setBulkPremiumSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (!editingStore) {
-      setEditDraft(null);
-      setImagePreviewBroken(false);
-      return;
-    }
-    setEditDraft(storeToDraft(editingStore));
-    setImagePreviewBroken(false);
-  }, [editingStore]);
 
   // Load all stores once on mount
   useEffect(() => {
@@ -498,82 +372,19 @@ const PremiumStores: React.FC = () => {
     setPremiumOnly(false);
   };
 
-  const closeEditModal = useCallback(() => {
-    if (!editSaving && !imageUploading) setEditingStore(null);
-  }, [editSaving, imageUploading]);
-
-  const updateDraft = useCallback((patch: Partial<StoreEditDraft>) => {
-    setEditDraft((prev) => (prev ? { ...prev, ...patch } : null));
+  const handleEditClose = useCallback(() => {
+    setEditingStore(null);
   }, []);
 
-  const handleStoreImageFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !editingStore) return;
-    if (!/^image\/(jpeg|png|webp|gif)$/i.test(file.type)) {
-      setToast({ message: 'Please choose a JPEG, PNG, WebP, or GIF image.', type: 'error' });
-      e.target.value = '';
-      return;
-    }
-    setImageUploading(true);
-    try {
-      const store = await uploadStoreImage(editingStore.handle, file);
-      setStores((prev) => prev.map((s) => (s.handle === store.handle ? store : s)));
-      setEditingStore(store);
-      setEditDraft(storeToDraft(store));
-      setImagePreviewBroken(false);
-      setToast({ message: 'Image uploaded.', type: 'success' });
-    } catch {
-      setToast({ message: 'Image upload failed. Please try again.', type: 'error' });
-    } finally {
-      setImageUploading(false);
-      e.target.value = '';
-    }
-  };
+  const handleEditSaved = useCallback((updated: StoreRecord) => {
+    setStores((prev) => prev.map((s) => (s.handle === updated.handle ? updated : s)));
+    setEditingStore(null);
+  }, []);
 
-  const handleRemoveStoreImage = async () => {
-    if (!editingStore) return;
-    setEditSaving(true);
-    try {
-      const store = await updateStore(editingStore.handle, { imageUrl: null });
-      setStores((prev) => prev.map((s) => (s.handle === store.handle ? store : s)));
-      setEditingStore(store);
-      setEditDraft(storeToDraft(store));
-      setImagePreviewBroken(false);
-      setToast({ message: 'Image removed.', type: 'success' });
-    } catch {
-      setToast({ message: 'Failed to remove image.', type: 'error' });
-    } finally {
-      setEditSaving(false);
-    }
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editingStore || !editDraft) return;
-    if (!editDraft.addressLine1.trim() || !editDraft.city.trim() || !editDraft.country.trim()) {
-      setToast({ message: 'Address line 1, city, and country are required.', type: 'error' });
-      return;
-    }
-    if (editDraft.isPremium) {
-      if (editDraft.premiumRetailKind !== 'boutique' && editDraft.premiumRetailKind !== 'multi_brand') {
-        setToast({
-          message: 'Premium stores must have a retail type: choose Boutique or Multi-brand retailer.',
-          type: 'error',
-        });
-        return;
-      }
-    }
-    setEditSaving(true);
-    try {
-      const store = await updateStore(editingStore.handle, draftToPayload(editDraft, editingStore));
-      setStores((prev) => prev.map((s) => (s.handle === store.handle ? store : s)));
-      setEditingStore(null);
-      setToast({ message: 'Store updated.', type: 'success' });
-    } catch {
-      setToast({ message: 'Failed to save store. Please try again.', type: 'error' });
-    } finally {
-      setEditSaving(false);
-    }
-  };
+  const handleEditStoreSynced = useCallback((updated: StoreRecord) => {
+    setStores((prev) => prev.map((s) => (s.handle === updated.handle ? updated : s)));
+    setEditingStore(updated);
+  }, []);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -704,230 +515,14 @@ const PremiumStores: React.FC = () => {
       {selectedHandles.size > 0 && <div className="review-panel-spacer" />}
 
       {/* Review panel */}
-      {editingStore && editDraft && (
-        <div className="store-edit-overlay" onClick={closeEditModal} role="presentation">
-          <div
-            className="store-edit-modal"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="store-edit-title"
-          >
-            <div className="store-edit-modal__header">
-              <h2 id="store-edit-title">Edit store</h2>
-              <button
-                type="button"
-                className="store-edit-modal__close"
-                onClick={closeEditModal}
-                disabled={editSaving || imageUploading}
-                aria-label="Close"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="store-edit-modal__body">
-              <p className="store-edit-modal__subtitle">{editingStore.name}</p>
-
-              <section className="store-edit-section">
-                <h3 className="store-edit-section__title">Address</h3>
-                <div className="store-edit-grid">
-                  <label className="store-edit-field store-edit-field--full">
-                    <span className="store-edit-label">Address line 1</span>
-                    <input
-                      value={editDraft.addressLine1}
-                      onChange={(e) => updateDraft({ addressLine1: e.target.value })}
-                    />
-                  </label>
-                  <label className="store-edit-field store-edit-field--full">
-                    <span className="store-edit-label">Address line 2</span>
-                    <input
-                      value={editDraft.addressLine2}
-                      onChange={(e) => updateDraft({ addressLine2: e.target.value })}
-                    />
-                  </label>
-                  <label className="store-edit-field">
-                    <span className="store-edit-label">City</span>
-                    <input value={editDraft.city} onChange={(e) => updateDraft({ city: e.target.value })} />
-                  </label>
-                  <label className="store-edit-field">
-                    <span className="store-edit-label">State / province</span>
-                    <input
-                      value={editDraft.stateProvinceRegion}
-                      onChange={(e) => updateDraft({ stateProvinceRegion: e.target.value })}
-                    />
-                  </label>
-                  <label className="store-edit-field">
-                    <span className="store-edit-label">Postal code</span>
-                    <input
-                      value={editDraft.postalCode}
-                      onChange={(e) => updateDraft({ postalCode: e.target.value })}
-                    />
-                  </label>
-                  <label className="store-edit-field">
-                    <span className="store-edit-label">Country</span>
-                    <input
-                      value={editDraft.country}
-                      onChange={(e) => updateDraft({ country: e.target.value })}
-                    />
-                  </label>
-                </div>
-              </section>
-
-              <section className="store-edit-section">
-                <h3 className="store-edit-section__title">Contact</h3>
-                <div className="store-edit-grid">
-                  <label className="store-edit-field">
-                    <span className="store-edit-label">Phone</span>
-                    <input value={editDraft.phone} onChange={(e) => updateDraft({ phone: e.target.value })} />
-                  </label>
-                  <label className="store-edit-field">
-                    <span className="store-edit-label">Website</span>
-                    <input
-                      type="url"
-                      placeholder="https://"
-                      value={editDraft.website}
-                      onChange={(e) => updateDraft({ website: e.target.value })}
-                    />
-                  </label>
-                </div>
-              </section>
-
-              <section className="store-edit-section">
-                <h3 className="store-edit-section__title">Image</h3>
-                <p className="store-edit-hint">Upload a JPEG, PNG, WebP, or GIF (max 5 MB). Saves immediately.</p>
-                <div className="store-edit-image-actions">
-                  <label className="store-edit-field store-edit-field--full">
-                    <span className="store-edit-label">Upload image</span>
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,image/gif"
-                      onChange={handleStoreImageFile}
-                      disabled={imageUploading || editSaving}
-                    />
-                  </label>
-                  {editDraft.imageUrl.trim() !== '' && (
-                    <button
-                      type="button"
-                      className="store-edit-btn store-edit-btn--secondary store-edit-remove-image"
-                      onClick={handleRemoveStoreImage}
-                      disabled={imageUploading || editSaving}
-                    >
-                      Remove image
-                    </button>
-                  )}
-                </div>
-                {imageUploading && <p className="store-edit-hint">Uploading…</p>}
-                {editDraft.imageUrl.trim() !== '' && !imagePreviewBroken && (
-                  <div className="store-edit-image-preview">
-                    <img
-                      src={imagePreviewSrc(editDraft.imageUrl)}
-                      alt=""
-                      onError={() => setImagePreviewBroken(true)}
-                    />
-                  </div>
-                )}
-              </section>
-
-              <section className="store-edit-section">
-                <h3 className="store-edit-section__title">Hours</h3>
-                <div className="store-edit-grid store-edit-grid--days">
-                  {DAY_LABELS.map(({ key, label }) => (
-                    <label key={key} className="store-edit-field">
-                      <span className="store-edit-label">{label}</span>
-                      <input
-                        value={editDraft[key]}
-                        onChange={(e) => updateDraft({ [key]: e.target.value } as Partial<StoreEditDraft>)}
-                        placeholder="e.g. 9:00–17:00"
-                      />
-                    </label>
-                  ))}
-                </div>
-              </section>
-
-              <section className="store-edit-section">
-                <h3 className="store-edit-section__title">Description</h3>
-                <label className="store-edit-field store-edit-field--full">
-                  <span className="store-edit-label">Page description</span>
-                  <textarea
-                    rows={4}
-                    value={editDraft.pageDescription}
-                    onChange={(e) => updateDraft({ pageDescription: e.target.value })}
-                  />
-                </label>
-              </section>
-
-              <section className="store-edit-section">
-                <h3 className="store-edit-section__title">Premium</h3>
-                <label className="store-edit-premium-toggle">
-                  <div
-                    className={`toggle-switch${editDraft.isPremium ? ' on' : ''}`}
-                    onClick={() => updateDraft({ isPremium: !editDraft.isPremium })}
-                    role="switch"
-                    aria-checked={editDraft.isPremium}
-                    tabIndex={0}
-                    onKeyDown={(e) => e.key === ' ' && updateDraft({ isPremium: !editDraft.isPremium })}
-                  >
-                    <div className="toggle-knob" />
-                  </div>
-                  <span>Premium store</span>
-                </label>
-                {editDraft.isPremium && (
-                  <div className="store-edit-premium-meta">
-                    <label className="store-edit-checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={editDraft.isServiceCenter}
-                        onChange={(e) => updateDraft({ isServiceCenter: e.target.checked })}
-                      />
-                      <span>Authorized service center</span>
-                    </label>
-                    <fieldset className="store-edit-fieldset">
-                      <legend className="store-edit-label">Retail type (required)</legend>
-                      <label className="store-edit-radio-row">
-                        <input
-                          type="radio"
-                          name="premium-retail-kind"
-                          checked={editDraft.premiumRetailKind === 'boutique'}
-                          onChange={() => updateDraft({ premiumRetailKind: 'boutique' })}
-                        />
-                        <span>Boutique</span>
-                      </label>
-                      <label className="store-edit-radio-row">
-                        <input
-                          type="radio"
-                          name="premium-retail-kind"
-                          checked={editDraft.premiumRetailKind === 'multi_brand'}
-                          onChange={() => updateDraft({ premiumRetailKind: 'multi_brand' })}
-                        />
-                        <span>Retailer (multiple brands)</span>
-                      </label>
-                    </fieldset>
-                  </div>
-                )}
-              </section>
-            </div>
-
-            <div className="store-edit-modal__footer">
-              <button
-                type="button"
-                className="store-edit-btn store-edit-btn--secondary"
-                onClick={closeEditModal}
-                disabled={editSaving || imageUploading}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="store-edit-btn store-edit-btn--primary"
-                onClick={handleSaveEdit}
-                disabled={editSaving || imageUploading}
-              >
-                {editSaving ? 'Saving…' : 'Save changes'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {editingStore && (
+        <StoreEditModal
+          store={editingStore}
+          onClose={handleEditClose}
+          onSaved={handleEditSaved}
+          onStoreSynced={handleEditStoreSynced}
+          onToast={setToast}
+        />
       )}
 
       {bulkPremiumOpen && (
