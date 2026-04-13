@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   updateStore,
   uploadStoreImage,
+  type BrandFilterModeWire,
   type PremiumRetailKind,
   type StoreRecord,
   type StoreUpdatePayload,
@@ -43,6 +44,7 @@ export interface StoreEditDraft {
   isPremium: boolean;
   isServiceCenter: boolean;
   premiumRetailKind: PremiumRetailKind | '';
+  brandFilterMode: BrandFilterModeWire;
 }
 
 function storeToDraft(s: StoreRecord): StoreEditDraft {
@@ -70,6 +72,7 @@ function storeToDraft(s: StoreRecord): StoreEditDraft {
       s.premiumRetailKind === 'boutique' || s.premiumRetailKind === 'multi_brand'
         ? s.premiumRetailKind
         : '',
+    brandFilterMode: s.brandFilterMode === 'verified_brand' ? 'verified_brand' : 'brand',
   };
 }
 
@@ -108,6 +111,11 @@ function draftToPayload(
   }
   if (d.isPremium !== baseline.isPremium) {
     out.isPremium = d.isPremium;
+  }
+  const baselineBf: BrandFilterModeWire =
+    baseline.brandFilterMode === 'verified_brand' ? 'verified_brand' : 'brand';
+  if (d.brandFilterMode !== baselineBf) {
+    out.brandFilterMode = d.brandFilterMode === 'verified_brand' ? 'verified_brand' : 'brand';
   }
   return out;
 }
@@ -347,7 +355,7 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
     if (editDraft.isPremium) {
       if (editDraft.premiumRetailKind !== 'boutique' && editDraft.premiumRetailKind !== 'multi_brand') {
         onToast({
-          message: 'Premium stores must have a retail type: choose Boutique or Multi-brand retailer.',
+          message: 'AD Verified stores must have a retail type: choose Boutique or Multi-brand retailer.',
           type: 'error',
         });
         return;
@@ -532,20 +540,32 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
           </section>
 
           <section className="store-edit-section">
-            <h3 className="store-edit-section__title">Premium</h3>
-            <label className="store-edit-premium-toggle">
-              <div
-                className={`toggle-switch${editDraft.isPremium ? ' on' : ''}`}
-                onClick={() => updateDraft({ isPremium: !editDraft.isPremium })}
-                role="switch"
-                aria-checked={editDraft.isPremium}
-                tabIndex={0}
-                onKeyDown={(e) => e.key === ' ' && updateDraft({ isPremium: !editDraft.isPremium })}
-              >
-                <div className="toggle-knob" />
-              </div>
-              <span>Premium store</span>
-            </label>
+            <h3 className="store-edit-section__title">Listing &amp; map filters</h3>
+            <fieldset className="store-edit-fieldset">
+              <legend className="store-edit-label">Store listing type</legend>
+              <p className="store-edit-hint">
+                Authorized Dealers appear in the public map’s general list; AD Verified locations are shown when
+                shoppers use the verified toggle.
+              </p>
+              <label className="store-edit-radio-row">
+                <input
+                  type="radio"
+                  name="store-listing-type"
+                  checked={!editDraft.isPremium}
+                  onChange={() => updateDraft({ isPremium: false })}
+                />
+                <span>Authorized Dealers</span>
+              </label>
+              <label className="store-edit-radio-row">
+                <input
+                  type="radio"
+                  name="store-listing-type"
+                  checked={editDraft.isPremium}
+                  onChange={() => updateDraft({ isPremium: true })}
+                />
+                <span>AD Verified</span>
+              </label>
+            </fieldset>
             {editDraft.isPremium && (
               <div className="store-edit-premium-meta">
                 <label className="store-edit-checkbox-row">
@@ -557,7 +577,7 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
                   <span>Authorized service center</span>
                 </label>
                 <fieldset className="store-edit-fieldset">
-                  <legend className="store-edit-label">Retail type (required)</legend>
+                  <legend className="store-edit-label">Retail type (required for AD Verified)</legend>
                   <label className="store-edit-radio-row">
                     <input
                       type="radio"
@@ -579,6 +599,25 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
                 </fieldset>
               </div>
             )}
+            <label className="store-edit-field store-edit-field--full">
+              <span className="store-edit-label">Brand filter (public map)</span>
+              <select
+                value={editDraft.brandFilterMode}
+                onChange={(e) =>
+                  updateDraft({
+                    brandFilterMode: e.target.value === 'verified_brand' ? 'verified_brand' : 'brand',
+                  })
+                }
+                disabled={editSaving || imageUploading}
+              >
+                <option value="brand">Brand — match full brand listing</option>
+                <option value="verified_brand">Verified brand — match approved brands only</option>
+              </select>
+            </label>
+            <p className="store-edit-hint">
+              For “Verified brand”, a store is included in a brand filter only if that brand is approved for this
+              location (same rules as the checkmarks on the map).
+            </p>
           </section>
         </div>
 

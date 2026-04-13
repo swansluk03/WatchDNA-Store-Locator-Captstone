@@ -35,9 +35,9 @@ const PATCH_KEYS: (keyof PremiumStoreUpdateInput)[] = [
   'saturday',
   'sunday',
   'isPremium',
-  'storeType',
   'isServiceCenter',
   'premiumRetailKind',
+  'brandFilterMode',
 ];
 
 function pickPremiumUpdate(body: unknown): PremiumStoreUpdateInput {
@@ -67,6 +67,16 @@ function pickPremiumUpdate(body: unknown): PremiumStoreUpdateInput {
       }
       continue;
     }
+    if (key === 'brandFilterMode') {
+      if (v === null || v === '') {
+        out.brandFilterMode = null;
+        continue;
+      }
+      if (v === 'brand' || v === 'verified_brand') {
+        out.brandFilterMode = v;
+      }
+      continue;
+    }
     if (v === null) {
       (out as Record<string, unknown>)[key] = null;
       continue;
@@ -74,10 +84,6 @@ function pickPremiumUpdate(body: unknown): PremiumStoreUpdateInput {
     if (typeof v === 'string') {
       (out as Record<string, unknown>)[key] = v;
     }
-  }
-  // storeType: allow empty string to mean null
-  if ('storeType' in out && out.storeType === '') {
-    out.storeType = null;
   }
   return out;
 }

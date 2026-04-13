@@ -341,6 +341,12 @@
   white-space: nowrap;
 }
 
+.badge-store-type--verified {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
 .store-card__address {
   font-size: 0.8125rem;
   color: var(--gray-600);

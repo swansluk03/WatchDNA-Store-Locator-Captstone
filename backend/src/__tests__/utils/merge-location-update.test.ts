@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   mergeLocationDataForManualImport,
   mergeLocationDataForUpdate,
+  stripCustomBrandsRedundantWithBrandsColumn,
+  unifiedBrandsAfterMerge,
 } from '../../utils/merge-location-update';
 import type { LocationData } from '../../utils/csv-to-location';
 
@@ -96,5 +98,39 @@ describe('mergeLocationDataForManualImport', () => {
     const incoming = baseIncoming({ phone: '+1 999' });
     expect(mergeLocationDataForUpdate(existing, incoming).phone).toBe('+1 000');
     expect(mergeLocationDataForManualImport(existing, incoming).phone).toBe('+1 999');
+  });
+});
+
+describe('mergeLocationDataForUpdate — cross-field brands (manual custom + scrape)', () => {
+  it('folds manual custom-only brand into brands and drops redundant custom when scrape adds same brand', () => {
+    const existing = { brands: null, customBrands: 'ROLEX', phone: '+1 000' };
+    const incoming = baseIncoming({ brands: 'ROLEX', customBrands: null });
+    const out = mergeLocationDataForUpdate(existing, incoming);
+    expect(out.brands).toBe('ROLEX');
+    expect(out.customBrands).toBeNull();
+  });
+
+  it('dedupes case-insensitive across brands and custom (single canonical label)', () => {
+    const existing = { brands: 'rolex', customBrands: null, phone: '+1 000' };
+    const incoming = baseIncoming({ brands: 'ROLEX', customBrands: null });
+    const out = mergeLocationDataForUpdate(existing, incoming);
+    expect(out.brands).toBe('ROLEX');
+    expect(out.brands?.split(',').length).toBe(1);
+  });
+
+  it('pulls brand only in custom HTML into unified brands and clears redundant custom', () => {
+    const existing = { brands: 'ROLEX', customBrands: '<a href="/x">TAG HEUER</a>', phone: '+1 000' };
+    const incoming = baseIncoming({ brands: 'ROLEX', customBrands: null });
+    const out = mergeLocationDataForUpdate(existing, incoming);
+    expect(out.brands).toMatch(/ROLEX/);
+    expect(out.brands).toMatch(/TAG HEUER/);
+    expect(out.customBrands).toBeNull();
+  });
+
+  it('strips HTML custom when every anchor brand is already in brands', () => {
+    const brands = unifiedBrandsAfterMerge('ROLEX', '<a href="/r">ROLEX</a>', 'ROLEX', null);
+    expect(brands).toBe('ROLEX');
+    const custom = stripCustomBrandsRedundantWithBrandsColumn('<a href="/r">ROLEX</a>', brands);
+    expect(custom).toBeNull();
   });
 });

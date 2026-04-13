@@ -7,6 +7,7 @@
 import type { Prisma } from '@prisma/client';
 
 import prisma from '../lib/prisma';
+import { locationTableHasBrandFilterModeColumn } from '../utils/location-brand-filter-column';
 import { normalizeCountry } from '../utils/country';
 import { normalizePhone } from '../utils/normalize-phone';
 import {
@@ -18,8 +19,19 @@ import {
 
 export type PremiumRetailKind = 'boutique' | 'multi_brand';
 
+export const STORE_LISTING_AUTHORIZED_DEALERS = 'Authorized Dealers';
+export const STORE_LISTING_AD_VERIFIED = 'AD Verified';
+
+export type StoreListingType = typeof STORE_LISTING_AUTHORIZED_DEALERS | typeof STORE_LISTING_AD_VERIFIED;
+
+export type BrandFilterModeWire = 'brand' | 'verified_brand';
+
 export function isValidPremiumRetailKind(v: unknown): v is PremiumRetailKind {
   return v === 'boutique' || v === 'multi_brand';
+}
+
+function brandFilterModeFromDb(v: string | null | undefined): BrandFilterModeWire {
+  return v === 'verified_brand' ? 'verified_brand' : 'brand';
 }
 
 /** Thrown when `isPremium: true` without valid `premiumRetailKind`. */
@@ -47,7 +59,9 @@ export interface PremiumStoreRecord {
   friday: string | null;
   saturday: string | null;
   sunday: string | null;
-  storeType: string | null;
+  /** Derived from `Location.isPremium` for the admin and public map. */
+  storeType: StoreListingType;
+  brandFilterMode: BrandFilterModeWire;
   isServiceCenter: boolean;
   premiumRetailKind: PremiumRetailKind | null;
 }
@@ -74,7 +88,21 @@ const premiumStoreSelect = {
   friday: true,
   saturday: true,
   sunday: true,
+  brandFilterMode: true,
 } as const;
+
+/** Same as `premiumStoreSelect` when the DB has migrated; used when `brandFilterMode` column is absent. */
+const premiumStoreSelectNoBrandFilter: Omit<typeof premiumStoreSelect, 'brandFilterMode'> = (() => {
+  const copy = { ...premiumStoreSelect };
+  delete (copy as Record<string, unknown>).brandFilterMode;
+  return copy;
+})();
+
+async function selectForPremiumLocationRow(): Promise<
+  typeof premiumStoreSelect | typeof premiumStoreSelectNoBrandFilter
+> {
+  return (await locationTableHasBrandFilterModeColumn()) ? premiumStoreSelect : premiumStoreSelectNoBrandFilter;
+}
 
 function toPremiumRecord(loc: {
   handle: string;
@@ -98,11 +126,16 @@ function toPremiumRecord(loc: {
   friday: string | null;
   saturday: string | null;
   sunday: string | null;
+  brandFilterMode?: string | null;
 }): PremiumStoreRecord {
+  const listing: StoreListingType = loc.isPremium
+    ? STORE_LISTING_AD_VERIFIED
+    : STORE_LISTING_AUTHORIZED_DEALERS;
   return {
     ...loc,
     country: normalizeCountry(loc.country ?? '') || '',
-    storeType: null,
+    storeType: listing,
+    brandFilterMode: brandFilterModeFromDb(loc.brandFilterMode),
     isServiceCenter: false,
     premiumRetailKind: null,
   };
@@ -111,18 +144,16 @@ function toPremiumRecord(loc: {
 function mergePremiumRegistry(
   base: PremiumStoreRecord,
   row: {
-    storeType: string | null;
     isServiceCenter: boolean;
     premiumRetailKind: string | null;
   } | null
 ): PremiumStoreRecord {
   if (!row) {
-    return { ...base, storeType: null, isServiceCenter: false, premiumRetailKind: null };
+    return { ...base, isServiceCenter: false, premiumRetailKind: null };
   }
   const kind = isValidPremiumRetailKind(row.premiumRetailKind) ? row.premiumRetailKind : null;
   return {
     ...base,
-    storeType: row.storeType ?? null,
     isServiceCenter: row.isServiceCenter,
     premiumRetailKind: kind,
   };
@@ -149,9 +180,9 @@ export type PremiumStoreUpdateInput = Partial<{
   saturday: string | null;
   sunday: string | null;
   isPremium: boolean;
-  storeType: string | null;
   isServiceCenter: boolean;
   premiumRetailKind: PremiumRetailKind | null;
+  brandFilterMode: BrandFilterModeWire | null;
 }>;
 
 export type MarkPremiumEntry = {
@@ -172,15 +203,15 @@ export const premiumService = {
    * for the premium management UI. Merges storeType from PremiumStore registry.
    */
   async getStores(): Promise<PremiumStoreRecord[]> {
+    const locSelect = await selectForPremiumLocationRow();
     const [rows, premiumRows] = await Promise.all([
       prisma.location.findMany({
-        select: premiumStoreSelect,
+        select: locSelect,
         orderBy: { name: 'asc' },
       }),
       prisma.premiumStore.findMany({
         select: {
           handle: true,
-          storeType: true,
           isServiceCenter: true,
           premiumRetailKind: true,
         },
@@ -190,7 +221,6 @@ export const premiumService = {
       premiumRows.map((p) => [
         p.handle,
         {
-          storeType: p.storeType,
           isServiceCenter: p.isServiceCenter,
           premiumRetailKind: p.premiumRetailKind,
         },
@@ -210,9 +240,10 @@ export const premiumService = {
     const h = handle.trim();
     if (!h) return null;
 
+    const locSelect = await selectForPremiumLocationRow();
     const existing = await prisma.location.findUnique({
       where: { handle: h },
-      select: premiumStoreSelect,
+      select: locSelect,
     });
     if (!existing) return null;
 
@@ -262,6 +293,9 @@ export const premiumService = {
       const raw = body.phone === null ? '' : String(body.phone);
       data.phone = normalizePhone(raw, nextCountry);
     }
+    if (body.brandFilterMode !== undefined && (await locationTableHasBrandFilterModeColumn())) {
+      data.brandFilterMode = body.brandFilterMode === 'verified_brand' ? 'verified_brand' : null;
+    }
 
     const premiumOp =
       body.isPremium === undefined
@@ -271,7 +305,6 @@ export const premiumService = {
           : ('unmark' as const);
 
     const registryPatch: Prisma.PremiumStoreUpdateInput = {};
-    if (body.storeType !== undefined) registryPatch.storeType = body.storeType;
     if (body.isServiceCenter !== undefined) registryPatch.isServiceCenter = body.isServiceCenter;
     if (body.premiumRetailKind !== undefined) {
       registryPatch.premiumRetailKind = body.premiumRetailKind;
@@ -293,7 +326,6 @@ export const premiumService = {
     }
 
     const premiumRowSelect = {
-      storeType: true,
       isServiceCenter: true,
       premiumRetailKind: true,
     } as const;
@@ -304,7 +336,7 @@ export const premiumService = {
           handle: h,
           isServiceCenter: body.isServiceCenter ?? false,
           premiumRetailKind: body.premiumRetailKind as PremiumRetailKind,
-          ...(body.storeType !== undefined ? { storeType: body.storeType } : {}),
+          storeType: STORE_LISTING_AD_VERIFIED,
         };
         await tx.premiumStore.upsert({
           where: { handle: h },
@@ -312,7 +344,7 @@ export const premiumService = {
             addedAt: new Date(),
             isServiceCenter: body.isServiceCenter ?? false,
             premiumRetailKind: body.premiumRetailKind as PremiumRetailKind,
-            ...(body.storeType !== undefined ? { storeType: body.storeType } : {}),
+            storeType: STORE_LISTING_AD_VERIFIED,
           },
           create: markData,
         });
@@ -336,7 +368,7 @@ export const premiumService = {
     });
 
     const [updated, premiumRow] = await Promise.all([
-      prisma.location.findUnique({ where: { handle: h }, select: premiumStoreSelect }),
+      prisma.location.findUnique({ where: { handle: h }, select: locSelect }),
       prisma.premiumStore.findUnique({ where: { handle: h }, select: premiumRowSelect }),
     ]);
     if (!updated) return null;
@@ -361,9 +393,10 @@ export const premiumService = {
     const h = handle.trim();
     if (!h || !isValidStoreImageFilename(storedFilename)) return null;
 
+    const locSelect = await selectForPremiumLocationRow();
     const existing = await prisma.location.findUnique({
       where: { handle: h },
-      select: premiumStoreSelect,
+      select: locSelect,
     });
     if (!existing) return null;
 
@@ -380,10 +413,10 @@ export const premiumService = {
     }
 
     const [updated, premiumRow] = await Promise.all([
-      prisma.location.findUnique({ where: { handle: h }, select: premiumStoreSelect }),
+      prisma.location.findUnique({ where: { handle: h }, select: locSelect }),
       prisma.premiumStore.findUnique({
         where: { handle: h },
-        select: { storeType: true, isServiceCenter: true, premiumRetailKind: true },
+        select: { isServiceCenter: true, premiumRetailKind: true },
       }),
     ]);
     if (!updated) return null;
@@ -413,11 +446,13 @@ export const premiumService = {
             addedAt: new Date(),
             isServiceCenter: e.isServiceCenter,
             premiumRetailKind: e.premiumRetailKind,
+            storeType: STORE_LISTING_AD_VERIFIED,
           },
           create: {
             handle: e.handle,
             isServiceCenter: e.isServiceCenter,
             premiumRetailKind: e.premiumRetailKind,
+            storeType: STORE_LISTING_AD_VERIFIED,
           },
         })
       ),

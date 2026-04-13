@@ -8,6 +8,8 @@ import { parseRowToLocationData } from '../utils/csv-to-location';
 import { storeService } from './store.service';
 import { locationCountryEqualsWhere } from '../utils/location-country-filter';
 import { legacyBrandTextFilterWhere } from '../utils/legacy-brand-filter';
+import { locationTableHasBrandFilterModeColumn } from '../utils/location-brand-filter-column';
+import { locationScalarSelectWithoutBrandFilterMode } from '../utils/location-scalar-select-without-brand-filter';
 
 export interface LocationFilters {
   brand?: string;
@@ -136,12 +138,14 @@ class LocationService {
       where.name = { contains: search, mode: 'insensitive' };
     }
 
+    const hasBrandFilterCol = await locationTableHasBrandFilterModeColumn();
     const [locations, total] = await Promise.all([
       prisma.location.findMany({
         where,
         take: limit,
         skip: offset,
-        orderBy: { name: 'asc' }
+        orderBy: { name: 'asc' },
+        ...(hasBrandFilterCol ? {} : { select: locationScalarSelectWithoutBrandFilterMode }),
       }),
       prisma.location.count({ where })
     ]);
@@ -188,13 +192,18 @@ class LocationService {
    * Find a single location by ID.
    */
   async findById(id: string) {
-    return prisma.location.findUnique({ where: { id } });
+    const hasBrandFilterCol = await locationTableHasBrandFilterModeColumn();
+    return prisma.location.findUnique({
+      where: { id },
+      ...(hasBrandFilterCol ? {} : { select: locationScalarSelectWithoutBrandFilterMode }),
+    });
   }
 
   /**
    * Search locations by name or address (case-insensitive on PostgreSQL).
    */
   async search(query: string, limit: number = 50) {
+    const hasBrandFilterCol = await locationTableHasBrandFilterModeColumn();
     const locations = await prisma.location.findMany({
       where: {
         OR: [
@@ -204,7 +213,8 @@ class LocationService {
         ]
       },
       take: limit,
-      orderBy: { name: 'asc' }
+      orderBy: { name: 'asc' },
+      ...(hasBrandFilterCol ? {} : { select: locationScalarSelectWithoutBrandFilterMode }),
     });
 
     return { data: locations, total: locations.length, query };

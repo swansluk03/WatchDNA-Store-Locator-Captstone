@@ -3,6 +3,10 @@ import api from './api';
 
 export type PremiumRetailKind = 'boutique' | 'multi_brand';
 
+export type StoreListingType = 'Authorized Dealers' | 'AD Verified';
+
+export type BrandFilterModeWire = 'brand' | 'verified_brand';
+
 export interface StoreRecord {
   handle: string;
   name: string;
@@ -25,7 +29,8 @@ export interface StoreRecord {
   friday: string | null;
   saturday: string | null;
   sunday: string | null;
-  storeType: string | null;
+  storeType: StoreListingType;
+  brandFilterMode: BrandFilterModeWire;
   isServiceCenter: boolean;
   premiumRetailKind: PremiumRetailKind | null;
 }
@@ -51,9 +56,9 @@ export type StoreUpdatePayload = Partial<{
   saturday: string | null;
   sunday: string | null;
   isPremium: boolean;
-  storeType: string | null;
   isServiceCenter: boolean;
   premiumRetailKind: PremiumRetailKind | null;
+  brandFilterMode: BrandFilterModeWire | null;
 }>;
 
 export type MarkPremiumEntryPayload = {

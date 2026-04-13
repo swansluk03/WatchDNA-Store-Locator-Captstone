@@ -42,8 +42,8 @@
       <div id="inner">
         <h2>WatchDNA's Network | Find jewellers in your area</h2>
         <p>As your trusted directory for brands and authorized dealers, we make it easy to find and reach out to
-          Authorized Dealers. (Please note that only select verified authorized dealers will be featured under our brand
-          filters.)
+          Authorized Dealers. (Please note that only select AD Verified locations will be featured under our brand
+          filters when those stores use verified-brand matching.)
         </p>
       </div>
     </div>
@@ -66,10 +66,10 @@
 
         <!-- Watch / Accessory toggle -->
         <div class="type-toggle-row">
-          <span class="type-toggle-label" id="toggleLabelWatch">Retailers</span>
+          <span class="type-toggle-label" id="toggleLabelWatch">Authorized Dealers</span>
           <button type="button" id="typeToggle" class="type-toggle" role="switch" aria-checked="false"
-            title="Switch between Non-Verified and Verified stores"></button>
-          <span class="type-toggle-label" id="toggleLabelAccessory">Verified Authorized Dealers</span>
+            title="Switch between Authorized Dealers and AD Verified locations"></button>
+          <span class="type-toggle-label" id="toggleLabelAccessory">AD Verified</span>
           <input type="checkbox" id="serviceCenterCheckbox" value="services-center" />
           <span>Service Centers</span>
         </div>
@@ -285,6 +285,7 @@
         'Custom Button title 2': loc.customButton2Title || '',
         'Custom Button URL 2': loc.customButton2Url || '',
         '_isPremium': !!loc.isPremium,
+        '_brandFilterMode': loc.brandFilterMode === 'verified_brand' ? 'verified_brand' : 'brand',
         // English translations (for non-Latin stores)
         'Name EN': loc.nameEn || '',
         'Address Line 1 EN': loc.addressLine1En || '',
@@ -349,7 +350,7 @@
             headerText.textContent = "Find Jewellers In Your Area";
           }
           if (paragraph) {
-            paragraph.textContent = "Explore all retailers, or refine your search to verified authorized dealers only."
+            paragraph.textContent = "Explore all authorized dealers, or refine your search to AD Verified locations only."
           }
         }
         else {
@@ -519,9 +520,15 @@
       return list.filter(b => isLocationApprovedForBrand(row, b));
     }
 
-    // Plain string used for filtering + any logic that expects commas
-    function getDisplayBrandsForRow(row) {
-      return getVisibleBrandsList(row).join(", ");
+    /** Tokens used when applying the sidebar “Filter by Brand” (per-store mode from admin). */
+    function getBrandTokensForFilter(row) {
+      if (row._brandFilterMode === 'verified_brand') {
+        return getVisibleBrandsList(row).map((s) => s.trim()).filter(Boolean);
+      }
+      return extractBrandsText(row)
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean);
     }
 
     // HTML string used for UI display (adds verified checkmark)
@@ -609,21 +616,6 @@
 
       return handleApproved || nameApproved;
     }
-
-    function getDisplayBrandsForRow(row) {
-      const fullBrands = extractBrandsText(row);
-      const list = fullBrands
-        .split(",")
-        .map(s => s.trim())
-        .filter(Boolean);
-
-      if (row._isPremium) return list.join(", ");
-
-      // Unverified: only show brands that approved this location
-      const allowed = list.filter(b => isLocationApprovedForBrand(row, b));
-      return allowed.join(", ");
-    }
-
 
     /** Parse `Custom Brands` HTML or plain comma-separated text into brand names. */
     function brandsFromCustomBrandsField(html) {
@@ -781,7 +773,7 @@
 
       if (nameEl) {
         const verifiedBadge = isVerified
-          ? ` <span class="verified-location-badge" aria-label="Verified location" title="Verified location">✓</span>`
+          ? ` <span class="verified-location-badge" aria-label="AD Verified location" title="AD Verified location">✓</span>`
           : '';
         const origLine = originalDetailName
           ? `<div class="store-original-name">${escapeHtml(originalDetailName)}</div>`
@@ -1070,10 +1062,7 @@
 
         if (!passesText) return;
 
-        const brandTokens = extractBrandsText(row)
-          .split(',')
-          .map(s => s.trim())
-          .filter(Boolean);
+        const brandTokens = getBrandTokensForFilter(row);
 
         const passesToggle = showVerified ? row._isPremium === true : row._isPremium !== true;
         const passesServiceCenter = !serviceCenterChecked || row._type === 'services-center';
@@ -1439,8 +1428,8 @@
         const verifiedLabel = isVerified
           ? `
     <div class="store-card-badge-row">
-      <div class="store-card-badge">Verified</div>
-      <span class="verified-location-badge" aria-label="Verified location" title="Verified location">✓</span>
+      <div class="store-card-badge">AD Verified</div>
+      <span class="verified-location-badge" aria-label="AD Verified location" title="AD Verified location">✓</span>
     </div>
   `
           : '';
