@@ -26,6 +26,7 @@ const PATCH_KEYS: (keyof PremiumStoreUpdateInput)[] = [
   'website',
   'imageUrl',
   'pageDescription',
+  'brands',
   'monday',
   'tuesday',
   'wednesday',

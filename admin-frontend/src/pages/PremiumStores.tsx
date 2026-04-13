@@ -8,6 +8,7 @@ import {
   type StoreRecord,
 } from '../services/premium.service';
 import StoreEditModal from '../components/StoreEditModal';
+import ManualAddStoreModal from '../components/ManualAddStoreModal';
 import '../styles/PremiumStores.css';
 import { parseBrandsForDisplay, storeMatchesBrandFilter } from '../utils/brandDisplay';
 
@@ -159,6 +160,7 @@ const PremiumStores: React.FC = () => {
   const autocompleteRef = useRef<HTMLUListElement>(null);
 
   const [editingStore, setEditingStore] = useState<StoreRecord | null>(null);
+  const [manualAddOpen, setManualAddOpen] = useState(false);
 
   const [bulkPremiumOpen, setBulkPremiumOpen] = useState(false);
   const [bulkPremiumRows, setBulkPremiumRows] = useState<BulkPremiumRow[]>([]);
@@ -386,6 +388,12 @@ const PremiumStores: React.FC = () => {
     setEditingStore(updated);
   }, []);
 
+  const handleManualAddSuccess = useCallback(() => {
+    fetchAllStores()
+      .then(setStores)
+      .catch(() => setToast({ message: 'Store was added but the list failed to refresh.', type: 'error' }));
+  }, []);
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (loading) return <div className="loading">Loading stores...</div>;
@@ -398,10 +406,21 @@ const PremiumStores: React.FC = () => {
       )}
 
       <div className="premium-stores__header">
-        <h1>Premium Stores</h1>
-        <span className="premium-stores__count">
-          {stores.filter((s) => s.isPremium).length} premium &middot; {stores.length} total
-        </span>
+        <div className="premium-stores__header-row">
+          <div className="premium-stores__header-titles">
+            <h1>Premium Stores</h1>
+            <span className="premium-stores__count">
+              {stores.filter((s) => s.isPremium).length} premium &middot; {stores.length} total
+            </span>
+          </div>
+          <button
+            type="button"
+            className="premium-stores__manual-add"
+            onClick={() => setManualAddOpen(true)}
+          >
+            Add store manually
+          </button>
+        </div>
       </div>
 
       {/* Filter bar */}
@@ -515,9 +534,19 @@ const PremiumStores: React.FC = () => {
       {selectedHandles.size > 0 && <div className="review-panel-spacer" />}
 
       {/* Review panel */}
+      {manualAddOpen && (
+        <ManualAddStoreModal
+          availableBrands={allBrands}
+          onClose={() => setManualAddOpen(false)}
+          onSuccess={handleManualAddSuccess}
+          onToast={setToast}
+        />
+      )}
+
       {editingStore && (
         <StoreEditModal
           store={editingStore}
+          availableBrands={allBrands}
           onClose={handleEditClose}
           onSaved={handleEditSaved}
           onStoreSynced={handleEditStoreSynced}

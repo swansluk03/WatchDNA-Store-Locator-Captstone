@@ -456,15 +456,6 @@
         .filter(Boolean).join(', ');
       const phone = row['Phone'] ? `<br>${row['Phone']}` : '';
 
-      // Get brands from Brands column first, fallback to Custom Brands if empty
-      let brands = (row['Brands'] || '').trim();
-      if (!brands && row['Custom Brands']) {
-        // Extract brand names from HTML Custom Brands column
-        const customBrandsHtml = row['Custom Brands'];
-        const brandMatches = customBrandsHtml.match(/>([^<]+)<\/A>/gi) || [];
-        brands = brandMatches.map(m => m.replace(/>|<\/A>/gi, '').trim()).filter(Boolean).join(', ');
-      }
-
       const displayBrandsHTML = getDisplayBrandsHTMLForRow(row);
       const brandsDisplay = displayBrandsHTML
         ? `<br><br><strong>Brands:</strong> ${displayBrandsHTML}`
@@ -634,19 +625,41 @@
     }
 
 
+    /** Parse `Custom Brands` HTML or plain comma-separated text into brand names. */
+    function brandsFromCustomBrandsField(html) {
+      const s = String(html || '').trim();
+      if (!s) return [];
+      const temp = document.createElement('div');
+      temp.innerHTML = s;
+      const fromAnchors = Array.from(temp.querySelectorAll('a'))
+        .map(a => (a.textContent || '').trim())
+        .filter(Boolean);
+      if (fromAnchors.length) return fromAnchors;
+      return s.split(',').map(x => x.trim()).filter(Boolean);
+    }
+
+    /**
+     * All brand names tied to a row (CSV `Brands` plus `Custom Brands`), deduped case-insensitively.
+     * Used for filters, toggles, and detail — matches backend `getBrands()` intent.
+     */
     function extractBrandsText(row) {
-      let brands = (row['Brands'] || '').trim();
-
-      if (!brands && row['Custom Brands']) {
-        const temp = document.createElement('div');
-        temp.innerHTML = row['Custom Brands'];
-        brands = Array.from(temp.querySelectorAll('a'))
-          .map(a => a.textContent.trim())
-          .filter(Boolean)
-          .join(', ');
-      }
-
-      return brands;
+      const fromCsv = String(row['Brands'] || '')
+        .split(',')
+        .map(x => x.trim())
+        .filter(Boolean);
+      const fromCustom = brandsFromCustomBrandsField(row['Custom Brands']);
+      const seen = new Set();
+      const merged = [];
+      const add = (name) => {
+        const key = name.toUpperCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          merged.push(name);
+        }
+      };
+      fromCsv.forEach(add);
+      fromCustom.forEach(add);
+      return merged.join(', ');
     }
 
     function extractBrandLinksMap(row) {
@@ -1056,8 +1069,11 @@
         }
 
         if (!passesText) return;
-        //const brandCount = (row['Brands'] || '')
-          //.split(',').map(s => s.trim()).filter(Boolean).length;
+
+        const brandTokens = extractBrandsText(row)
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
 
         const passesToggle = showVerified ? row._isPremium === true : row._isPremium !== true;
         const passesServiceCenter = !serviceCenterChecked || row._type === 'services-center';
@@ -1070,13 +1086,7 @@
         // --- Pass 4: apply brand filter ---
         let passesBrand = passesToggle;
         if (passesBrand && brandFilterActive) {
-          const brands = new Set(
-            (row['Brands'] || '')
-              .toUpperCase()
-              .split(',')
-              .map(s => s.trim())
-              .filter(Boolean)
-          );
+          const brands = new Set(brandTokens.map(s => s.toUpperCase()));
           passesBrand = [...brandSet].every(b => brands.has(b));
         }
 
@@ -1632,8 +1642,10 @@
       // Reset brand list to show all brands
       const brandSet = new Set();
       allMarkers.forEach(({ row }) => {
-        (row['Brands'] || '')
-          .split(',').map(s => s.trim()).filter(Boolean)
+        extractBrandsText(row)
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
           .forEach(b => brandSet.add(b));
       });
       populateBrandSelect(brandSet);
@@ -1798,8 +1810,7 @@
           clusterGroup.addLayer(marker);
           bounds.extend([lat, lon]);
 
-          // Extract brands from Brands column (plain text, comma-separated)
-          (row['Brands'] || '')
+          extractBrandsText(row)
             .split(',')
             .map(s => s.trim())
             .filter(Boolean)

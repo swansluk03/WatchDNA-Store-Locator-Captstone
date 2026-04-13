@@ -20,6 +20,12 @@ router.get('/stats', uploadController.getStats);
 // GET /api/uploads/master/download - Download master CSV file (must be before /:id routes)
 router.get('/master/download', uploadController.downloadMasterCSV);
 
+// POST /api/uploads/manual-store — add one location via same validation + import as CSV (admin only)
+router.post('/manual-store', requireRole(['admin']), uploadController.createManualStore);
+
+// POST /api/uploads/geocode-address — lookup lat/lon for manual add form (admin only; must be before /:id)
+router.post('/geocode-address', requireRole(['admin']), uploadController.geocodeAddress);
+
 // GET /api/uploads/:id - Get single upload details
 router.get('/:id', uploadController.getUpload);
 

@@ -1,10 +1,93 @@
 import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import type { AuthRequest } from '../middleware/auth.middleware';
 import uploadService from '../services/upload.service';
 import { masterExportFiltersFromQuery } from '../utils/parse-master-export-query';
 
 export class UploadController {
+
+  /**
+   * POST /api/uploads/manual-store — JSON body; same pipeline as CSV upload (validate_csv + importFromCSV).
+   */
+  async createManualStore(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const result = await uploadService.submitManualStoreLocation(req.body, req.user?.username);
+
+      if (!result.ok && result.reason === 'bad_input') {
+        res.status(400).json({ success: false, error: result.message });
+        return;
+      }
+
+      if (!result.ok && result.reason === 'validation_failed') {
+        res.status(422).json({
+          success: false,
+          error: 'validation_failed',
+          uploadId: result.uploadId,
+          errors: result.errors,
+          warnings: result.warnings,
+        });
+        return;
+      }
+
+      if (!result.ok && result.reason === 'import_failed') {
+        res.status(422).json({
+          success: false,
+          error: 'import_failed',
+          uploadId: result.uploadId,
+          message: result.message,
+          importResult: result.importResult,
+        });
+        return;
+      }
+
+      res.status(201).json({
+        success: true,
+        uploadId: result.uploadId,
+        store: result.store,
+        importResult: result.importResult,
+        warnings: result.warnings,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Manual store error:', error);
+      res.status(500).json({ success: false, error: message });
+    }
+  }
+
+  /**
+   * POST /api/uploads/geocode-address — forward-geocode for manual add-store form (admin).
+   */
+  async geocodeAddress(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const result = await uploadService.geocodeManualFormAddress(req.body);
+      if (!result.ok) {
+        const status =
+          result.code === 'bad_input'
+            ? 400
+            : result.code === 'unconfigured'
+              ? 503
+              : result.code === 'not_found'
+                ? 404
+                : 502;
+        res.status(status).json({
+          success: false,
+          error: result.code,
+          message: result.message,
+        });
+        return;
+      }
+      res.status(200).json({
+        success: true,
+        latitude: result.latitude,
+        longitude: result.longitude,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Geocode address error:', error);
+      res.status(500).json({ success: false, error: message });
+    }
+  }
 
   async uploadCSV(req: Request, res: Response) {
     try {

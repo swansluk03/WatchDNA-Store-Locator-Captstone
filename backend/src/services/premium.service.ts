@@ -140,6 +140,7 @@ export type PremiumStoreUpdateInput = Partial<{
   website: string | null;
   imageUrl: string | null;
   pageDescription: string | null;
+  brands: string | null;
   monday: string | null;
   tuesday: string | null;
   wednesday: string | null;
@@ -240,6 +241,9 @@ export const premiumService = {
     }
     if (body.website !== undefined) {
       data.website = emptyToNull(body.website);
+    }
+    if (body.brands !== undefined) {
+      data.brands = emptyToNull(body.brands);
     }
     if (body.imageUrl !== undefined) {
       data.imageUrl = emptyToNull(body.imageUrl);

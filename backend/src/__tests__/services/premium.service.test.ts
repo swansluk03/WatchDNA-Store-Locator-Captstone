@@ -214,6 +214,59 @@ describe('premiumService.updateStoreByHandle', () => {
       data: expect.objectContaining({ website: 'https://example.com' }),
     });
   });
+
+  it('updates brands CSV on Location when brands is provided', async () => {
+    const txLocationUpdate = vi.fn().mockResolvedValue(undefined);
+
+    findUnique
+      .mockResolvedValueOnce({ ...baseRow, brands: 'OMEGA' })
+      .mockResolvedValueOnce({ ...baseRow, brands: 'OMEGA, ROLEX' });
+
+    $transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => {
+      await fn({
+        premiumStore: {
+          upsert: vi.fn(),
+          deleteMany: vi.fn(),
+        },
+        location: { update: txLocationUpdate },
+      });
+    });
+
+    const result = await premiumService.updateStoreByHandle('h1', {
+      brands: 'OMEGA, ROLEX',
+    });
+
+    expect(txLocationUpdate).toHaveBeenCalledWith({
+      where: { handle: 'h1' },
+      data: expect.objectContaining({ brands: 'OMEGA, ROLEX' }),
+    });
+    expect(result?.brands).toBe('OMEGA, ROLEX');
+  });
+
+  it('clears brands when brands is null', async () => {
+    const txLocationUpdate = vi.fn().mockResolvedValue(undefined);
+
+    findUnique
+      .mockResolvedValueOnce({ ...baseRow, brands: 'OMEGA' })
+      .mockResolvedValueOnce({ ...baseRow, brands: null });
+
+    $transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => {
+      await fn({
+        premiumStore: {
+          upsert: vi.fn(),
+          deleteMany: vi.fn(),
+        },
+        location: { update: txLocationUpdate },
+      });
+    });
+
+    await premiumService.updateStoreByHandle('h1', { brands: null });
+
+    expect(txLocationUpdate).toHaveBeenCalledWith({
+      where: { handle: 'h1' },
+      data: expect.objectContaining({ brands: null }),
+    });
+  });
 });
 
 describe('premiumService.batchMarkPremium / batchRemovePremium', () => {
