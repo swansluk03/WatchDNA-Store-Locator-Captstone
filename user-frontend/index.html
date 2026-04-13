@@ -1207,13 +1207,29 @@
         },
         (err) => {
           const m = {
-            1: 'Permission Denied.',
+            1: 'Location Permissions Denied.',
             2: 'Position Unavailable.',
             3: 'Request Timed Out.'
           };
           setNearMeStatus(m[err.code] || 'Unable to get location.');
+          syncViewportCountVisibility();
         }
       );
+    }
+
+    // Hide viewportCount when nearMeStatus is already surfacing a useful location message,
+    // or when nearMeStatus is showing an error (to avoid redundant/conflicting UI)
+    function syncViewportCountVisibility() {
+      const countEl = document.getElementById('viewportCount');
+      if (!countEl) return;
+
+      const nearMeEl = document.getElementById('nearMeStatus');
+      const nearMeText = (nearMeEl?.textContent || '').trim();
+
+      // Show viewportCount only when nearMeStatus is empty or showing an error
+      // If nearMe is showing a "Showing X locations" message, viewportCount is redundant
+      const nearMeIsActive = nearMeText && !nearMeHasError;
+      countEl.style.display = nearMeIsActive ? 'none' : '';
     }
 
     const NearMeControl = L.Control.extend({
