@@ -109,15 +109,24 @@ _VIEWPORT_HEADERS = {
 }
 
 
+def _merged_viewport_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    h = dict(_VIEWPORT_HEADERS)
+    if extra:
+        h.update(extra)
+    return h
+
+
 def fetch_viewport_data(
     url: str,
     data_path: str = "",
     timeout: int = 15,
-    retry_count: int = 3
+    retry_count: int = 3,
+    request_headers: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
+    headers = _merged_viewport_headers(request_headers)
     for attempt in range(retry_count):
         try:
-            resp = requests.get(url, timeout=timeout, headers=_VIEWPORT_HEADERS)
+            resp = requests.get(url, timeout=timeout, headers=headers)
             resp.raise_for_status()
             if not resp.text or resp.text.strip() == '':
                 return []
@@ -185,7 +194,8 @@ def scrape_viewport_api(
     additional_params: Optional[Dict[str, str]] = None,
     delay_between_requests: float = 0.5,
     progress_interval: int = 50,
-    focus_region: Optional[Dict[str, float]] = None
+    focus_region: Optional[Dict[str, float]] = None,
+    request_headers: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     log_debug("Starting viewport API scraper", "INFO")
     log_debug(f"Grid type: {grid_type} | Grid size: {grid_size}° | Delay: {delay_between_requests}s", "DEBUG")
@@ -216,7 +226,7 @@ def scrape_viewport_api(
 
     for i, viewport in enumerate(viewports, 1):
         url = build_viewport_url(base_url, viewport, viewport_params, additional_params)
-        stores = fetch_viewport_data(url, data_path)
+        stores = fetch_viewport_data(url, data_path, request_headers=request_headers)
         
         if stores:
             all_stores.extend(stores)

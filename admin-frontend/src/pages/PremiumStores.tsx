@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { isAxiosError } from 'axios';
 import {
   fetchAllStores,
   markStoresPremium,
@@ -8,6 +9,7 @@ import {
   type StoreRecord,
 } from '../services/premium.service';
 import StoreEditModal from '../components/StoreEditModal';
+import ManualAddStoreModal from '../components/ManualAddStoreModal';
 import '../styles/PremiumStores.css';
 import { parseBrandsForDisplay, storeMatchesBrandFilter } from '../utils/brandDisplay';
 
@@ -93,14 +95,11 @@ const StoreCard: React.FC<StoreCardProps> = ({
       <div className="store-card__top">
         <span className="store-card__name">{store.name}</span>
         <div className="store-card__badges">
-          {store.isPremium && (
-            <span className="badge badge-warning badge-premium">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-              </svg>
-              Premium
-            </span>
-          )}
+          <span
+            className={`badge badge-store-type${store.isPremium ? ' badge-store-type--verified' : ''}`}
+          >
+            {store.storeType}
+          </span>
           {store.isPremium && store.premiumRetailKind === 'boutique' && (
             <span className="badge badge-store-type">Boutique</span>
           )}
@@ -159,6 +158,7 @@ const PremiumStores: React.FC = () => {
   const autocompleteRef = useRef<HTMLUListElement>(null);
 
   const [editingStore, setEditingStore] = useState<StoreRecord | null>(null);
+  const [manualAddOpen, setManualAddOpen] = useState(false);
 
   const [bulkPremiumOpen, setBulkPremiumOpen] = useState(false);
   const [bulkPremiumRows, setBulkPremiumRows] = useState<BulkPremiumRow[]>([]);
@@ -168,7 +168,25 @@ const PremiumStores: React.FC = () => {
   useEffect(() => {
     fetchAllStores()
       .then(setStores)
-      .catch(() => setError('Failed to load stores. Please refresh the page.'))
+      .catch((err: unknown) => {
+        if (isAxiosError(err)) {
+          const status = err.response?.status;
+          const data = err.response?.data;
+          const detail =
+            data && typeof data === 'object' && data !== null && 'error' in data
+              ? String((data as { error: unknown }).error)
+              : err.message;
+          if (status === 401) {
+            setError('Session expired or not signed in. Please log in again.');
+            return;
+          }
+          setError(
+            `Failed to load stores (${status ?? 'network'}): ${detail}. Check that the admin API URL is correct and the backend is running.`
+          );
+          return;
+        }
+        setError('Failed to load stores. Please refresh the page.');
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -322,9 +340,9 @@ const PremiumStores: React.FC = () => {
       setSelectedHandles(new Set());
       setBulkPremiumOpen(false);
       setBulkPremiumRows([]);
-      setToast({ message: `${result.marked} store(s) marked as premium.`, type: 'success' });
+      setToast({ message: `${result.marked} store(s) marked as AD Verified.`, type: 'success' });
     } catch {
-      setToast({ message: 'Failed to mark stores as premium. Please try again.', type: 'error' });
+      setToast({ message: 'Failed to mark stores as AD Verified. Please try again.', type: 'error' });
     } finally {
       setBulkPremiumSubmitting(false);
     }
@@ -340,9 +358,9 @@ const PremiumStores: React.FC = () => {
         prev.map((s) => (handles.includes(s.handle) ? { ...s, isPremium: false } : s))
       );
       setSelectedHandles(new Set());
-      setToast({ message: `Premium status removed from ${result.removed} store(s).`, type: 'success' });
+      setToast({ message: `AD Verified status removed from ${result.removed} store(s).`, type: 'success' });
     } catch {
-      setToast({ message: 'Failed to remove premium status. Please try again.', type: 'error' });
+      setToast({ message: 'Failed to remove AD Verified status. Please try again.', type: 'error' });
     } finally {
       setSubmitting(false);
     }
@@ -386,6 +404,12 @@ const PremiumStores: React.FC = () => {
     setEditingStore(updated);
   }, []);
 
+  const handleManualAddSuccess = useCallback(() => {
+    fetchAllStores()
+      .then(setStores)
+      .catch(() => setToast({ message: 'Store was added but the list failed to refresh.', type: 'error' }));
+  }, []);
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (loading) return <div className="loading">Loading stores...</div>;
@@ -398,10 +422,21 @@ const PremiumStores: React.FC = () => {
       )}
 
       <div className="premium-stores__header">
-        <h1>Premium Stores</h1>
-        <span className="premium-stores__count">
-          {stores.filter((s) => s.isPremium).length} premium &middot; {stores.length} total
-        </span>
+        <div className="premium-stores__header-row">
+          <div className="premium-stores__header-titles">
+            <h1>Premium Stores</h1>
+            <span className="premium-stores__count">
+              {stores.filter((s) => s.isPremium).length} AD Verified &middot; {stores.length} total
+            </span>
+          </div>
+          <button
+            type="button"
+            className="premium-stores__manual-add"
+            onClick={() => setManualAddOpen(true)}
+          >
+            Add store manually
+          </button>
+        </div>
       </div>
 
       {/* Filter bar */}
@@ -469,7 +504,7 @@ const PremiumStores: React.FC = () => {
           >
             <div className="toggle-knob" />
           </div>
-          <span>Premium only</span>
+          <span>AD Verified only</span>
         </label>
 
         <button className="premium-filter-reset" onClick={resetFilters}>
@@ -515,9 +550,19 @@ const PremiumStores: React.FC = () => {
       {selectedHandles.size > 0 && <div className="review-panel-spacer" />}
 
       {/* Review panel */}
+      {manualAddOpen && (
+        <ManualAddStoreModal
+          availableBrands={allBrands}
+          onClose={() => setManualAddOpen(false)}
+          onSuccess={handleManualAddSuccess}
+          onToast={setToast}
+        />
+      )}
+
       {editingStore && (
         <StoreEditModal
           store={editingStore}
+          availableBrands={allBrands}
           onClose={handleEditClose}
           onSaved={handleEditSaved}
           onStoreSynced={handleEditStoreSynced}
@@ -539,7 +584,7 @@ const PremiumStores: React.FC = () => {
             aria-labelledby="bulk-premium-title"
           >
             <div className="store-edit-modal__header">
-              <h2 id="bulk-premium-title">Mark stores as premium</h2>
+              <h2 id="bulk-premium-title">Mark stores as AD Verified</h2>
               <button
                 type="button"
                 className="store-edit-modal__close"
@@ -552,8 +597,9 @@ const PremiumStores: React.FC = () => {
             </div>
             <div className="store-edit-modal__body bulk-premium-modal__body">
               <p className="store-edit-hint bulk-premium-hint">
-                For each location, indicate whether it is an authorized service center and choose Boutique or
-                multi-brand retailer. All rows must be completed before confirming.
+                These stores will be listed as AD Verified on the public map. For each location, indicate whether it is
+                an authorized service center and choose Boutique or multi-brand retailer. All rows must be completed
+                before confirming.
               </p>
               <div className="bulk-premium-table-wrap">
                 <table className="bulk-premium-table">
@@ -683,7 +729,7 @@ const PremiumStores: React.FC = () => {
                 onClick={openBulkPremiumModal}
                 disabled={submitting}
               >
-                Mark {nonPremiumSelected.length} as Premium…
+                Mark {nonPremiumSelected.length} as AD Verified…
               </button>
             )}
             {premiumSelected.length > 0 && (
@@ -692,7 +738,7 @@ const PremiumStores: React.FC = () => {
                 onClick={handleRemovePremium}
                 disabled={submitting}
               >
-                {submitting ? 'Saving...' : `Remove Premium (${premiumSelected.length})`}
+                {submitting ? 'Saving...' : `Remove AD Verified (${premiumSelected.length})`}
               </button>
             )}
           </div>

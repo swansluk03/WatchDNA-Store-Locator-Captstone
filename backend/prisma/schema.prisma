@@ -99,6 +99,13 @@ model Location {
   brands                  String?
   customBrands            String?
   isPremium               Boolean  @default(false)
+  /// Map brand filter: null = match full brands/customBrands; "verified_brand" = match visible (approved) brands only.
+  brandFilterMode         String?
+
+  // English translations (for stores with non-Latin names/addresses)
+  nameEn                  String?
+  addressLine1En          String?
+  cityEn                  String?
 
   // Localization (French)
   nameFr                  String?
@@ -187,7 +194,7 @@ model PremiumStore {
   handle              String   @id
   addedAt             DateTime @default(now())
   notes               String?
-  storeType           String?
+  storeType           String? // AD Verified (set when in premium program)
   isServiceCenter     Boolean  @default(false)
   premiumRetailKind   String? // boutique | multi_brand when in premium program
 }

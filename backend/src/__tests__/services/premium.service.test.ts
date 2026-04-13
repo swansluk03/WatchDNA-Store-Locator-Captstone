@@ -20,6 +20,10 @@ const {
   premiumDeleteMany: vi.fn(),
 }));
 
+vi.mock('../../utils/location-brand-filter-column', () => ({
+  locationTableHasBrandFilterModeColumn: vi.fn(() => Promise.resolve(true)),
+}));
+
 vi.mock('../../lib/prisma', () => ({
   __esModule: true,
   default: {
@@ -62,10 +66,10 @@ const baseRow = {
   friday: null as string | null,
   saturday: null as string | null,
   sunday: null as string | null,
+  brandFilterMode: null as string | null,
 };
 
 const emptyPremiumRow = {
-  storeType: null as string | null,
   isServiceCenter: false,
   premiumRetailKind: null as string | null,
 };
@@ -94,7 +98,6 @@ describe('premiumService.updateStoreByHandle', () => {
 
   it('runs transaction with premium upsert and location update when marking premium', async () => {
     premiumFindUnique.mockResolvedValue({
-      storeType: null,
       isServiceCenter: false,
       premiumRetailKind: 'boutique',
     });
@@ -129,6 +132,7 @@ describe('premiumService.updateStoreByHandle', () => {
           handle: 'h1',
           isServiceCenter: false,
           premiumRetailKind: 'boutique',
+          storeType: 'AD Verified',
         }),
       })
     );
@@ -176,12 +180,40 @@ describe('premiumService.updateStoreByHandle', () => {
     });
   });
 
-  it('throws when storeType is set without a PremiumStore row and no mark premium', async () => {
+  it('updates brandFilterMode on Location without a PremiumStore row', async () => {
+    const txLocationUpdate = vi.fn().mockResolvedValue(undefined);
+
+    findUnique
+      .mockResolvedValueOnce({ ...baseRow })
+      .mockResolvedValueOnce({ ...baseRow, brandFilterMode: 'verified_brand' });
+
+    $transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => {
+      await fn({
+        premiumStore: {
+          upsert: vi.fn(),
+          deleteMany: vi.fn(),
+        },
+        location: { update: txLocationUpdate },
+      });
+    });
+
+    const result = await premiumService.updateStoreByHandle('h1', {
+      brandFilterMode: 'verified_brand',
+    });
+
+    expect(txLocationUpdate).toHaveBeenCalledWith({
+      where: { handle: 'h1' },
+      data: expect.objectContaining({ brandFilterMode: 'verified_brand' }),
+    });
+    expect(result?.brandFilterMode).toBe('verified_brand');
+  });
+
+  it('throws when isServiceCenter is set without a PremiumStore row and no mark premium', async () => {
     findUnique.mockResolvedValueOnce({ ...baseRow });
     premiumFindUnique.mockResolvedValueOnce(null);
 
     await expect(
-      premiumService.updateStoreByHandle('h1', { storeType: 'Retailer' })
+      premiumService.updateStoreByHandle('h1', { isServiceCenter: true })
     ).rejects.toThrow('STORE_TYPE_REQUIRES_PREMIUM');
     expect($transaction).not.toHaveBeenCalled();
   });
@@ -214,6 +246,59 @@ describe('premiumService.updateStoreByHandle', () => {
       data: expect.objectContaining({ website: 'https://example.com' }),
     });
   });
+
+  it('updates brands CSV on Location when brands is provided', async () => {
+    const txLocationUpdate = vi.fn().mockResolvedValue(undefined);
+
+    findUnique
+      .mockResolvedValueOnce({ ...baseRow, brands: 'OMEGA' })
+      .mockResolvedValueOnce({ ...baseRow, brands: 'OMEGA, ROLEX' });
+
+    $transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => {
+      await fn({
+        premiumStore: {
+          upsert: vi.fn(),
+          deleteMany: vi.fn(),
+        },
+        location: { update: txLocationUpdate },
+      });
+    });
+
+    const result = await premiumService.updateStoreByHandle('h1', {
+      brands: 'OMEGA, ROLEX',
+    });
+
+    expect(txLocationUpdate).toHaveBeenCalledWith({
+      where: { handle: 'h1' },
+      data: expect.objectContaining({ brands: 'OMEGA, ROLEX' }),
+    });
+    expect(result?.brands).toBe('OMEGA, ROLEX');
+  });
+
+  it('clears brands when brands is null', async () => {
+    const txLocationUpdate = vi.fn().mockResolvedValue(undefined);
+
+    findUnique
+      .mockResolvedValueOnce({ ...baseRow, brands: 'OMEGA' })
+      .mockResolvedValueOnce({ ...baseRow, brands: null });
+
+    $transaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => {
+      await fn({
+        premiumStore: {
+          upsert: vi.fn(),
+          deleteMany: vi.fn(),
+        },
+        location: { update: txLocationUpdate },
+      });
+    });
+
+    await premiumService.updateStoreByHandle('h1', { brands: null });
+
+    expect(txLocationUpdate).toHaveBeenCalledWith({
+      where: { handle: 'h1' },
+      data: expect.objectContaining({ brands: null }),
+    });
+  });
 });
 
 describe('premiumService.batchMarkPremium / batchRemovePremium', () => {
@@ -243,6 +328,7 @@ describe('premiumService.batchMarkPremium / batchRemovePremium', () => {
           handle: 'a',
           isServiceCenter: true,
           premiumRetailKind: 'boutique',
+          storeType: 'AD Verified',
         }),
       })
     );

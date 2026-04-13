@@ -1,14 +1,197 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { randomUUID } from 'crypto';
+import Papa from 'papaparse';
 import validationService from './validation.service';
-import locationService from './location.service';
+import locationService, { type ImportResult } from './location.service';
 import prisma from '../lib/prisma';
 import { logger } from '../utils/logger';
+import { locationToCSVRow } from '../utils/csv-to-location';
 import {
   VALIDATION_MANUAL_UPLOAD,
   VALIDATION_REVALIDATE_DEFAULT,
 } from '../config/validation-policy';
 import type { Prisma } from '@prisma/client';
+import { readGeoVerifyConfig } from '../config/geo-verify';
+import type { GeocodeAddressInput } from '../utils/geocode-address-format';
+import { geocodeAddressNominatim } from '../utils/nominatim-geocode';
+import { geocodeAddressPhoton } from '../utils/photon-geocode';
+
+export type ManualLocationPayload = {
+  name: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  stateProvinceRegion: string;
+  postalCode: string;
+  country: string;
+  phone: string;
+  email: string;
+  website: string;
+  latitude: number;
+  longitude: number;
+  brands: string;
+  tags: string;
+  pageTitle: string;
+  pageDescription: string;
+  status: boolean;
+  handle: string;
+};
+
+const GEOCODE_REQUEST_TIMEOUT_MS = 25_000;
+
+function parseGeocodeManualBody(
+  body: unknown
+): { ok: true; input: GeocodeAddressInput } | { ok: false; message: string } {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, message: 'Request body must be a JSON object' };
+  }
+  const o = body as Record<string, unknown>;
+  const str = (k: string) => (typeof o[k] === 'string' ? (o[k] as string).trim() : '');
+  const country = str('country');
+  if (!country) {
+    return { ok: false, message: 'country is required' };
+  }
+
+  const fullAddress = str('fullAddress');
+  const addressLine1 = str('addressLine1');
+  const addressLine2 = str('addressLine2');
+  const city = str('city');
+
+  if (fullAddress) {
+    return {
+      ok: true,
+      input: {
+        addressLine1: fullAddress,
+        addressLine2: null,
+        city,
+        stateProvinceRegion: str('stateProvinceRegion') || null,
+        postalCode: str('postalCode') || null,
+        country,
+      },
+    };
+  }
+
+  if (!city) {
+    return { ok: false, message: 'city is required (or provide a one-line address in fullAddress)' };
+  }
+  if (!addressLine1 && !addressLine2) {
+    return {
+      ok: false,
+      message: 'Enter address line 1 and/or 2, or paste a full address in fullAddress',
+    };
+  }
+
+  const line1 = addressLine1 || addressLine2;
+  const line2 = addressLine1 ? (addressLine2 || null) : null;
+
+  return {
+    ok: true,
+    input: {
+      addressLine1: line1,
+      addressLine2: line2,
+      city,
+      stateProvinceRegion: str('stateProvinceRegion') || null,
+      postalCode: str('postalCode') || null,
+      country,
+    },
+  };
+}
+
+function parseManualLocationBody(
+  body: unknown
+): { ok: true; data: ManualLocationPayload } | { ok: false; message: string } {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, message: 'Request body must be a JSON object' };
+  }
+  const o = body as Record<string, unknown>;
+
+  const name = typeof o.name === 'string' ? o.name.trim() : '';
+  const city = typeof o.city === 'string' ? o.city.trim() : '';
+  const country = typeof o.country === 'string' ? o.country.trim() : '';
+  if (!name) return { ok: false, message: 'name is required' };
+  if (!city) return { ok: false, message: 'city is required' };
+  if (!country) return { ok: false, message: 'country is required' };
+
+  const latRaw = o.latitude;
+  const lonRaw = o.longitude;
+  const latitude =
+    typeof latRaw === 'number' ? latRaw : latRaw != null ? parseFloat(String(latRaw)) : NaN;
+  const longitude =
+    typeof lonRaw === 'number' ? lonRaw : lonRaw != null ? parseFloat(String(lonRaw)) : NaN;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return { ok: false, message: 'latitude and longitude must be valid numbers' };
+  }
+
+  const str = (k: string) => (typeof o[k] === 'string' ? (o[k] as string).trim() : '');
+  const addressLine1 = str('addressLine1');
+  const addressLine2 = str('addressLine2');
+  if (!addressLine1 && !addressLine2) {
+    return { ok: false, message: 'At least one of addressLine1 or addressLine2 is required' };
+  }
+
+  let brandsField = '';
+  if (Array.isArray(o.brands)) {
+    brandsField = o.brands.map((x) => String(x).trim()).filter(Boolean).join(', ');
+  } else {
+    brandsField = str('brands');
+  }
+
+  const status =
+    o.status === false || o.status === 'false' || o.status === 0 ? false : true;
+
+  return {
+    ok: true,
+    data: {
+      name,
+      addressLine1,
+      addressLine2,
+      city,
+      stateProvinceRegion: str('stateProvinceRegion'),
+      postalCode: str('postalCode'),
+      country,
+      phone: o.phone === null || o.phone === undefined ? '' : String(o.phone).trim(),
+      email: str('email'),
+      website: str('website'),
+      latitude,
+      longitude,
+      brands: brandsField,
+      tags: str('tags'),
+      pageTitle: str('pageTitle'),
+      pageDescription: str('pageDescription'),
+      status,
+      handle: str('handle'),
+    },
+  };
+}
+
+function manualPayloadToCsvRow(data: ManualLocationPayload): Record<string, string> {
+  const base = locationToCSVRow({});
+  const handle =
+    data.handle ||
+    `manual_pending_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  return {
+    ...base,
+    Handle: handle,
+    Name: data.name,
+    Status: data.status ? 'true' : 'false',
+    'Address Line 1': data.addressLine1,
+    'Address Line 2': data.addressLine2,
+    City: data.city,
+    'State/Province/Region': data.stateProvinceRegion,
+    'Postal/ZIP Code': data.postalCode,
+    Country: data.country,
+    Phone: data.phone,
+    Email: data.email,
+    Website: data.website,
+    Latitude: String(data.latitude),
+    Longitude: String(data.longitude),
+    Brands: data.brands,
+    Tags: data.tags,
+    'Page Title': data.pageTitle,
+    'Page Description': data.pageDescription,
+  };
+}
 
 /** Bootstrap / legacy rows — master data lives in DB; hide from lists and stats. */
 const EXCLUDE_FROM_LISTING: Prisma.UploadWhereInput = {
@@ -24,6 +207,7 @@ export class UploadService {
     originalFilename: string;
     fileSize: number;
     uploadedBy?: string;
+    scraperType?: string | null;
   }) {
     return prisma.upload.create({
       data: {
@@ -31,9 +215,259 @@ export class UploadService {
         originalFilename: fileInfo.originalFilename,
         fileSize: fileInfo.fileSize,
         uploadedBy: fileInfo.uploadedBy || 'admin',
-        status: 'pending'
+        status: 'pending',
+        ...(fileInfo.scraperType ? { scraperType: fileInfo.scraperType } : {}),
       }
     });
+  }
+
+  /**
+   * One-row CSV → same path as admin CSV upload: Python validate_csv (--fix, --db-import-parity),
+   * then locationService.importFromCSV → storeService.batchUpsertLocations (manual merge, dedupe, premium reapply).
+   */
+  async submitManualStoreLocation(
+    body: unknown,
+    uploadedBy?: string
+  ): Promise<
+    | {
+        ok: true;
+        uploadId: string;
+        store: { handle: string; name: string } | null;
+        importResult: ImportResult;
+        warnings: { type?: string; message: string; row?: number }[];
+      }
+    | {
+        ok: false;
+        reason: 'bad_input';
+        message: string;
+      }
+    | {
+        ok: false;
+        reason: 'validation_failed';
+        uploadId: string;
+        errors: { row: number; field: string; issue: string; value?: string }[];
+        warnings: { type?: string; message: string }[];
+      }
+    | {
+        ok: false;
+        reason: 'import_failed';
+        uploadId: string;
+        message: string;
+        importResult: ImportResult;
+      }
+  > {
+    const parsed = parseManualLocationBody(body);
+    if (!parsed.ok) {
+      return { ok: false, reason: 'bad_input', message: parsed.message };
+    }
+
+    const row = manualPayloadToCsvRow(parsed.data);
+    const csvContent = Papa.unparse([row], { header: true });
+    const uploadDir = path.join(__dirname, '..', '..', process.env.UPLOAD_DIR || 'uploads');
+    await fs.mkdir(uploadDir, { recursive: true });
+    const filename = `manual-${randomUUID()}.csv`;
+    const absPath = path.resolve(path.join(uploadDir, filename));
+    if (!absPath.startsWith(path.resolve(uploadDir))) {
+      return { ok: false, reason: 'bad_input', message: 'Invalid upload path' };
+    }
+
+    const upload = await this.createUpload({
+      filename,
+      originalFilename: `manual_store_${parsed.data.name.slice(0, 60).replace(/[^\w\- ]+/g, '_')}.csv`,
+      fileSize: Buffer.byteLength(csvContent, 'utf8'),
+      uploadedBy,
+      scraperType: 'manual_form',
+    });
+
+    try {
+      await fs.writeFile(absPath, csvContent, 'utf8');
+
+      await prisma.upload.update({
+        where: { id: upload.id },
+        data: { status: 'validating' },
+      });
+
+      logger.info(`[Upload ${upload.id}] Manual store — validating...`);
+      const validationResult = await validationService.validateCSV(absPath, VALIDATION_MANUAL_UPLOAD);
+      logger.info(
+        `[Upload ${upload.id}] Manual store validation ${validationResult.valid ? 'passed' : 'failed'} — ` +
+          `errors: ${validationResult.errors.length}`
+      );
+
+      const updateData = validationService.formatForDatabase(validationResult);
+      await prisma.upload.update({ where: { id: upload.id }, data: updateData });
+
+      const logs = validationService.createValidationLogs(upload.id, validationResult);
+      if (logs.length > 0) {
+        await prisma.validationLog.createMany({ data: logs });
+      }
+
+      if (!validationResult.valid) {
+        return {
+          ok: false,
+          reason: 'validation_failed',
+          uploadId: upload.id,
+          errors: validationResult.errors,
+          warnings: validationResult.warnings,
+        };
+      }
+
+      let importResult: ImportResult;
+      try {
+        importResult = await locationService.importFromCSV(absPath, upload.id);
+      } catch (importErr: unknown) {
+        const msg = importErr instanceof Error ? importErr.message : String(importErr);
+        logger.error(`[Upload ${upload.id}] Manual store import failed:`, msg);
+        await prisma.upload.update({
+          where: { id: upload.id },
+          data: {
+            status: 'failed',
+            validationErrors: JSON.stringify([{ issue: 'import_error', message: msg }]),
+          },
+        });
+        return {
+          ok: false,
+          reason: 'import_failed',
+          uploadId: upload.id,
+          message: msg,
+          importResult: {
+            success: false,
+            newCount: 0,
+            updatedCount: 0,
+            unchangedCount: 0,
+            skippedCount: 0,
+            errorCount: 1,
+            errors: [msg],
+          },
+        };
+      }
+
+      const rowsProcessed =
+        importResult.newCount + importResult.updatedCount + importResult.unchangedCount;
+      const rowsFailed = importResult.skippedCount + importResult.errorCount;
+
+      await prisma.upload.update({
+        where: { id: upload.id },
+        data: {
+          status: 'completed',
+          rowsProcessed,
+          rowsFailed,
+        },
+      });
+
+      if (rowsProcessed === 0) {
+        return {
+          ok: false,
+          reason: 'import_failed',
+          uploadId: upload.id,
+          message:
+            'No row was written to the database (incomplete row after validation, or all rows skipped).',
+          importResult,
+        };
+      }
+
+      const store = await prisma.location.findFirst({
+        where: { uploadId: upload.id },
+        orderBy: { updatedAt: 'desc' },
+        select: { handle: true, name: true },
+      });
+
+      return {
+        ok: true,
+        uploadId: upload.id,
+        store,
+        importResult,
+        warnings: validationResult.warnings,
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[Upload ${upload.id}] Manual store pipeline failed:`, msg);
+      await prisma.upload.update({
+        where: { id: upload.id },
+        data: {
+          status: 'failed',
+          validationErrors: JSON.stringify([{ issue: 'processing_error', message: msg }]),
+        },
+      });
+      return {
+        ok: false,
+        reason: 'import_failed',
+        uploadId: upload.id,
+        message: msg,
+        importResult: {
+          success: false,
+          newCount: 0,
+          updatedCount: 0,
+          unchangedCount: 0,
+          skippedCount: 0,
+          errorCount: 1,
+          errors: [msg],
+        },
+      };
+    }
+  }
+
+  /**
+   * Single forward-geocode for the manual-add-store form (Photon or Nominatim from geo-verify config).
+   */
+  async geocodeManualFormAddress(body: unknown): Promise<
+    | { ok: true; latitude: number; longitude: number }
+    | { ok: false; code: 'bad_input' | 'unconfigured' | 'not_found' | 'upstream'; message: string }
+  > {
+    const parsed = parseGeocodeManualBody(body);
+    if (!parsed.ok) {
+      return { ok: false, code: 'bad_input', message: parsed.message };
+    }
+
+    const config = readGeoVerifyConfig();
+    if (!config.nominatimUserAgent) {
+      return {
+        ok: false,
+        code: 'unconfigured',
+        message:
+          'Geocoding is not configured. Set NOMINATIM_USER_AGENT in backend config (see src/config/geo-verify.ts).',
+      };
+    }
+
+    const signal = AbortSignal.timeout(GEOCODE_REQUEST_TIMEOUT_MS);
+
+    try {
+      const point =
+        config.geocoder === 'photon'
+          ? await geocodeAddressPhoton(parsed.input, {
+              baseUrl: config.photonBaseUrl,
+              userAgent: config.nominatimUserAgent,
+              signal,
+            })
+          : await geocodeAddressNominatim(parsed.input, {
+              baseUrl: config.nominatimBaseUrl,
+              userAgent: config.nominatimUserAgent,
+              minIntervalMs: config.minIntervalMs,
+              signal,
+            });
+
+      if (!point) {
+        return {
+          ok: false,
+          code: 'not_found',
+          message:
+            'Could not find coordinates for this address. Add more detail (postal code, region) or enter latitude and longitude manually.',
+        };
+      }
+
+      return { ok: true, latitude: point.lat, longitude: point.lon };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      logger.warn(`[Upload] Manual geocode failed: ${msg}`);
+      return {
+        ok: false,
+        code: 'upstream',
+        message:
+          msg.includes('abort') || msg.includes('Timeout')
+            ? 'Geocoding timed out. Try again or enter coordinates manually.'
+            : `Geocoding failed: ${msg}`,
+      };
+    }
   }
 
   async processUpload(uploadId: string, filePath: string) {

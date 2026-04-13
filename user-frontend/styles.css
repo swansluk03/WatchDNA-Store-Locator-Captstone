@@ -414,6 +414,13 @@ header::-webkit-scrollbar-thumb {
   letter-spacing: 0.02em;
 }
 
+.store-original-name {
+  font-size: 0.78rem;
+  color: var(--text-muted, #888);
+  margin-top: 1px;
+  margin-bottom: 2px;
+}
+
 .store {
   /* Will change colors if necessary */
   background-color: var(--card2);

@@ -42,8 +42,8 @@
       <div id="inner">
         <h2>WatchDNA's Network | Find jewellers in your area</h2>
         <p>As your trusted directory for brands and authorized dealers, we make it easy to find and reach out to
-          Authorized Dealers. (Please note that only select verified authorized dealers will be featured under our brand
-          filters.)
+          Authorized Dealers. (Please note that only select AD Verified locations will be featured under our brand
+          filters when those stores use verified-brand matching.)
         </p>
       </div>
     </div>
@@ -66,10 +66,10 @@
 
         <!-- Watch / Accessory toggle -->
         <div class="type-toggle-row">
-          <span class="type-toggle-label" id="toggleLabelWatch">Non-Verified</span>
+          <span class="type-toggle-label" id="toggleLabelWatch">Authorized Dealers</span>
           <button type="button" id="typeToggle" class="type-toggle" role="switch" aria-checked="false"
-            title="Switch between Non-Verified and Verified stores"></button>
-          <span class="type-toggle-label" id="toggleLabelAccessory">Verified</span>
+            title="Switch between Authorized Dealers and AD Verified locations"></button>
+          <span class="type-toggle-label" id="toggleLabelAccessory">AD Verified</span>
           <input type="checkbox" id="serviceCenterCheckbox" value="services-center" />
           <span>Service Centers</span>
         </div>
@@ -284,7 +284,12 @@
         'Custom Button URL 1': loc.customButton1Url || '',
         'Custom Button title 2': loc.customButton2Title || '',
         'Custom Button URL 2': loc.customButton2Url || '',
-        '_isPremium': !!loc.isPremium
+        '_isPremium': !!loc.isPremium,
+        '_brandFilterMode': loc.brandFilterMode === 'verified_brand' ? 'verified_brand' : 'brand',
+        // English translations (for non-Latin stores)
+        'Name EN': loc.nameEn || '',
+        'Address Line 1 EN': loc.addressLine1En || '',
+        'City EN': loc.cityEn || '',
       };
     }
 
@@ -345,7 +350,7 @@
             headerText.textContent = "Find Jewellers In Your Area";
           }
           if (paragraph) {
-            paragraph.textContent = "Explore all retailers, or refine your search to verified authorized dealers only."
+            paragraph.textContent = "Explore all authorized dealers, or refine your search to AD Verified locations only."
           }
         }
         else {
@@ -452,15 +457,6 @@
         .filter(Boolean).join(', ');
       const phone = row['Phone'] ? `<br>${row['Phone']}` : '';
 
-      // Get brands from Brands column first, fallback to Custom Brands if empty
-      let brands = (row['Brands'] || '').trim();
-      if (!brands && row['Custom Brands']) {
-        // Extract brand names from HTML Custom Brands column
-        const customBrandsHtml = row['Custom Brands'];
-        const brandMatches = customBrandsHtml.match(/>([^<]+)<\/A>/gi) || [];
-        brands = brandMatches.map(m => m.replace(/>|<\/A>/gi, '').trim()).filter(Boolean).join(', ');
-      }
-
       const displayBrandsHTML = getDisplayBrandsHTMLForRow(row);
       const brandsDisplay = displayBrandsHTML
         ? `<br><br><strong>Brands:</strong> ${displayBrandsHTML}`
@@ -524,9 +520,15 @@
       return list.filter(b => isLocationApprovedForBrand(row, b));
     }
 
-    // Plain string used for filtering + any logic that expects commas
-    function getDisplayBrandsForRow(row) {
-      return getVisibleBrandsList(row).join(", ");
+    /** Tokens used when applying the sidebar “Filter by Brand” (per-store mode from admin). */
+    function getBrandTokensForFilter(row) {
+      if (row._brandFilterMode === 'verified_brand') {
+        return getVisibleBrandsList(row).map((s) => s.trim()).filter(Boolean);
+      }
+      return extractBrandsText(row)
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean);
     }
 
     // HTML string used for UI display (adds verified checkmark)
@@ -615,34 +617,41 @@
       return handleApproved || nameApproved;
     }
 
-    function getDisplayBrandsForRow(row) {
-      const fullBrands = extractBrandsText(row);
-      const list = fullBrands
-        .split(",")
-        .map(s => s.trim())
+    /** Parse `Custom Brands` HTML or plain comma-separated text into brand names. */
+    function brandsFromCustomBrandsField(html) {
+      const s = String(html || '').trim();
+      if (!s) return [];
+      const temp = document.createElement('div');
+      temp.innerHTML = s;
+      const fromAnchors = Array.from(temp.querySelectorAll('a'))
+        .map(a => (a.textContent || '').trim())
         .filter(Boolean);
-
-      if (row._isPremium) return list.join(", ");
-
-      // Unverified: only show brands that approved this location
-      const allowed = list.filter(b => isLocationApprovedForBrand(row, b));
-      return allowed.join(", ");
+      if (fromAnchors.length) return fromAnchors;
+      return s.split(',').map(x => x.trim()).filter(Boolean);
     }
 
-
+    /**
+     * All brand names tied to a row (CSV `Brands` plus `Custom Brands`), deduped case-insensitively.
+     * Used for filters, toggles, and detail — matches backend `getBrands()` intent.
+     */
     function extractBrandsText(row) {
-      let brands = (row['Brands'] || '').trim();
-
-      if (!brands && row['Custom Brands']) {
-        const temp = document.createElement('div');
-        temp.innerHTML = row['Custom Brands'];
-        brands = Array.from(temp.querySelectorAll('a'))
-          .map(a => a.textContent.trim())
-          .filter(Boolean)
-          .join(', ');
-      }
-
-      return brands;
+      const fromCsv = String(row['Brands'] || '')
+        .split(',')
+        .map(x => x.trim())
+        .filter(Boolean);
+      const fromCustom = brandsFromCustomBrandsField(row['Custom Brands']);
+      const seen = new Set();
+      const merged = [];
+      const add = (name) => {
+        const key = name.toUpperCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          merged.push(name);
+        }
+      };
+      fromCsv.forEach(add);
+      fromCustom.forEach(add);
+      return merged.join(', ');
     }
 
     function extractBrandLinksMap(row) {
@@ -726,7 +735,9 @@
       const aboutSectionEl = document.getElementById('detailAboutSection');
       const aboutEl = document.getElementById('detailAbout');
 
-      const name = (row['Name'] || 'Unnamed').trim();
+      const hasEnName = !!row['Name EN'];
+      const name = hasEnName ? row['Name EN'].trim() : (row['Name'] || 'Unnamed').trim();
+      const originalDetailName = hasEnName ? row['Name'].trim() : '';
       const address = buildFullAddress(row);
       const phone = (row['Phone'] || '').trim();
       const fullBrandsText = extractBrandsText(row);
@@ -761,13 +772,23 @@
 
 
       if (nameEl) {
-        nameEl.innerHTML = isVerified
-          ? `${escapeHtml(name)} <span class="verified-location-badge" aria-label="Verified location" title="Verified location">✓</span>`
-          : escapeHtml(name);
+        const verifiedBadge = isVerified
+          ? ` <span class="verified-location-badge" aria-label="AD Verified location" title="AD Verified location">✓</span>`
+          : '';
+        const origLine = originalDetailName
+          ? `<div class="store-original-name">${escapeHtml(originalDetailName)}</div>`
+          : '';
+        nameEl.innerHTML = `${escapeHtml(name)}${verifiedBadge}${origLine}`;
       }
 
       if (addressEl) {
-        addressEl.textContent = address || 'Not provided';
+        const enAddr = row['Address Line 1 EN'] || '';
+        const displayAddress = enAddr ? buildFullAddress({
+          ...row,
+          'Address Line 1': enAddr,
+          'City': row['City EN'] || row['City'],
+        }) : address;
+        addressEl.textContent = displayAddress || 'Not provided';
         addressEl.style.whiteSpace = 'pre-line';
       }
 
@@ -1031,14 +1052,17 @@
               row['Address Line 2'] || '',
               row['Country'] || '',
               row['Zip/Postal Code'] || '',
+              row['Name EN'] || '',
+              row['Address Line 1 EN'] || '',
+              row['City EN'] || '',
             ].map(f => String(f).toLowerCase());
             passesText = searchFields.some(field => field.includes(storeInput));
           }
         }
 
         if (!passesText) return;
-        //const brandCount = (row['Brands'] || '')
-        //.split(',').map(s => s.trim()).filter(Boolean).length;
+
+        const brandTokens = getBrandTokensForFilter(row);
 
         const passesToggle = showVerified ? row._isPremium === true : row._isPremium !== true;
         const passesServiceCenter = !serviceCenterChecked || row._type === 'services-center';
@@ -1051,13 +1075,7 @@
         // --- Pass 4: apply brand filter ---
         let passesBrand = passesToggle;
         if (passesBrand && brandFilterActive) {
-          const brands = new Set(
-            (row['Brands'] || '')
-              .toUpperCase()
-              .split(',')
-              .map(s => s.trim())
-              .filter(Boolean)
-          );
+          const brands = new Set(brandTokens.map(s => s.toUpperCase()));
           passesBrand = [...brandSet].every(b => brands.has(b));
         }
 
@@ -1377,10 +1395,15 @@
         const item = document.createElement('div');
         item.className = row._isPremium ? 'store verified' : 'store';
 
-        const addressLine = row['Address Line 1'] || '';
+        // Use English translation if available, show original as subtitle
+        const hasEnName = !!row['Name EN'];
+        const displayName = hasEnName ? row['Name EN'] : (row['Name'] || 'Unnamed');
+        const originalName = hasEnName ? row['Name'] : '';
+
+        const addressLine = row['Address Line 1 EN'] || row['Address Line 1'] || '';
 
         const locationParts = [
-          row['City'],
+          row['City EN'] || row['City'],
           row['State/Province/Region'],
           row['Country']
         ].filter(Boolean);
@@ -1405,8 +1428,8 @@
         const verifiedLabel = isVerified
           ? `
     <div class="store-card-badge-row">
-      <div class="store-card-badge">Verified</div>
-      <span class="verified-location-badge" aria-label="Verified location" title="Verified location">✓</span>
+      <div class="store-card-badge">AD Verified</div>
+      <span class="verified-location-badge" aria-label="AD Verified location" title="AD Verified location">✓</span>
     </div>
   `
           : '';
@@ -1419,11 +1442,16 @@
     `
           : '';
 
+        const originalNameHtml = originalName
+          ? `<div class="store-original-name">${escapeHtml(originalName)}</div>`
+          : '';
+
         item.innerHTML = `
     <div class="store-card-row">
       <div class="store-card-content">
         ${verifiedLabel}
-        <strong>${row['Name'] || 'Unnamed'}</strong><br>
+        <strong>${escapeHtml(displayName)}</strong>
+        ${originalNameHtml}
         ${addressLine}<br>
         ${locationLine}
         ${distanceLine}
@@ -1603,8 +1631,10 @@
       // Reset brand list to show all brands
       const brandSet = new Set();
       allMarkers.forEach(({ row }) => {
-        (row['Brands'] || '')
-          .split(',').map(s => s.trim()).filter(Boolean)
+        extractBrandsText(row)
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
           .forEach(b => brandSet.add(b));
       });
       populateBrandSelect(brandSet);
@@ -1769,8 +1799,7 @@
           clusterGroup.addLayer(marker);
           bounds.extend([lat, lon]);
 
-          // Extract brands from Brands column (plain text, comma-separated)
-          (row['Brands'] || '')
+          extractBrandsText(row)
             .split(',')
             .map(s => s.trim())
             .filter(Boolean)

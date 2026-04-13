@@ -1,11 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   updateStore,
   uploadStoreImage,
+  type BrandFilterModeWire,
   type PremiumRetailKind,
   type StoreRecord,
   type StoreUpdatePayload,
 } from '../services/premium.service';
+import { parseBrandsForDisplay } from '../utils/brandDisplay';
 
 const API_ORIGIN = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -31,6 +33,7 @@ export interface StoreEditDraft {
   phone: string;
   website: string;
   imageUrl: string;
+  brands: string[];
   monday: string;
   tuesday: string;
   wednesday: string;
@@ -41,6 +44,7 @@ export interface StoreEditDraft {
   isPremium: boolean;
   isServiceCenter: boolean;
   premiumRetailKind: PremiumRetailKind | '';
+  brandFilterMode: BrandFilterModeWire;
 }
 
 function storeToDraft(s: StoreRecord): StoreEditDraft {
@@ -54,6 +58,7 @@ function storeToDraft(s: StoreRecord): StoreEditDraft {
     phone: n2s(s.phone),
     website: n2s(s.website),
     imageUrl: n2s(s.imageUrl),
+    brands: parseBrandsForDisplay(s.brands),
     monday: n2s(s.monday),
     tuesday: n2s(s.tuesday),
     wednesday: n2s(s.wednesday),
@@ -67,6 +72,7 @@ function storeToDraft(s: StoreRecord): StoreEditDraft {
       s.premiumRetailKind === 'boutique' || s.premiumRetailKind === 'multi_brand'
         ? s.premiumRetailKind
         : '',
+    brandFilterMode: s.brandFilterMode === 'verified_brand' ? 'verified_brand' : 'brand',
   };
 }
 
@@ -87,6 +93,7 @@ function draftToPayload(
     website: empty(d.website),
     imageUrl: empty(d.imageUrl),
     pageDescription: empty(pageDescription),
+    brands: d.brands.length > 0 ? d.brands.join(', ') : null,
     monday: empty(d.monday),
     tuesday: empty(d.tuesday),
     wednesday: empty(d.wednesday),
@@ -104,6 +111,11 @@ function draftToPayload(
   }
   if (d.isPremium !== baseline.isPremium) {
     out.isPremium = d.isPremium;
+  }
+  const baselineBf: BrandFilterModeWire =
+    baseline.brandFilterMode === 'verified_brand' ? 'verified_brand' : 'brand';
+  if (d.brandFilterMode !== baselineBf) {
+    out.brandFilterMode = d.brandFilterMode === 'verified_brand' ? 'verified_brand' : 'brand';
   }
   return out;
 }
@@ -125,6 +137,111 @@ const DAY_LABELS: {
 ];
 
 export type StoreEditToast = { message: string; type: 'success' | 'error' };
+
+const BRAND_SUGGESTIONS_LIMIT = 8;
+
+/** Tag-style brand picker: chips for current brands + autocomplete input to add more. */
+export const BrandEditor: React.FC<{
+  brands: string[];
+  availableBrands: string[];
+  onChange: (brands: string[]) => void;
+  disabled?: boolean;
+}> = ({ brands, availableBrands, onChange, disabled }) => {
+  const [input, setInput] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const suggestionsRef = useRef<HTMLUListElement>(null);
+
+  const suggestions = useMemo(() => {
+    const q = input.trim().toLowerCase();
+    return availableBrands
+      .filter((b) => !brands.includes(b))
+      .filter((b) => !q || b.toLowerCase().includes(q))
+      .slice(0, BRAND_SUGGESTIONS_LIMIT);
+  }, [availableBrands, brands, input]);
+
+  const addBrand = useCallback((name: string) => {
+    const trimmed = name.trim().toUpperCase();
+    if (!trimmed || brands.includes(trimmed)) return;
+    onChange([...brands, trimmed]);
+    setInput('');
+    setShowSuggestions(false);
+  }, [brands, onChange]);
+
+  const removeBrand = useCallback((brand: string) => {
+    onChange(brands.filter((b) => b !== brand));
+  }, [brands, onChange]);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (
+        inputRef.current && !inputRef.current.contains(e.target as Node) &&
+        suggestionsRef.current && !suggestionsRef.current.contains(e.target as Node)
+      ) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const trimmedInput = input.trim().toUpperCase();
+  const isNew = trimmedInput && !availableBrands.includes(trimmedInput);
+
+  return (
+    <div className="brand-editor">
+      {brands.length > 0 && (
+        <div className="brand-editor__chips">
+          {brands.map((b) => (
+            <span key={b} className="brand-editor__chip">
+              {b}
+              <button
+                type="button"
+                className="brand-editor__chip-remove"
+                onClick={() => removeBrand(b)}
+                disabled={disabled}
+                aria-label={`Remove ${b}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="brand-editor__input-wrap">
+        <input
+          ref={inputRef}
+          type="text"
+          className="brand-editor__input"
+          placeholder="Search or type a brand name…"
+          value={input}
+          onChange={(e) => { setInput(e.target.value); setShowSuggestions(true); }}
+          onFocus={() => setShowSuggestions(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); addBrand(input); }
+            if (e.key === 'Escape') { setShowSuggestions(false); }
+          }}
+          disabled={disabled}
+          autoComplete="off"
+        />
+        {showSuggestions && suggestions.length > 0 && (
+          <ul className="autocomplete-list brand-editor__suggestions" ref={suggestionsRef}>
+            {suggestions.map((b) => (
+              <li key={b} onMouseDown={() => addBrand(b)}>
+                {b}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {isNew && (
+        <p className="store-edit-hint brand-editor__new-hint">
+          Press Enter to add "{trimmedInput}" as a new brand.
+        </p>
+      )}
+    </div>
+  );
+};
 
 /** Local state + ref so typing does not re-render the full edit modal. */
 const PageDescriptionField: React.FC<{
@@ -151,6 +268,8 @@ const PageDescriptionField: React.FC<{
 
 interface StoreEditModalProps {
   store: StoreRecord;
+  /** All brand display names across all stores — used to populate autocomplete suggestions. */
+  availableBrands: string[];
   onClose: () => void;
   onSaved: (updated: StoreRecord) => void;
   /** After image upload/remove — parent refreshes list and keeps editor open with new server row. */
@@ -160,6 +279,7 @@ interface StoreEditModalProps {
 
 const StoreEditModal: React.FC<StoreEditModalProps> = ({
   store,
+  availableBrands,
   onClose,
   onSaved,
   onStoreSynced,
@@ -235,7 +355,7 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
     if (editDraft.isPremium) {
       if (editDraft.premiumRetailKind !== 'boutique' && editDraft.premiumRetailKind !== 'multi_brand') {
         onToast({
-          message: 'Premium stores must have a retail type: choose Boutique or Multi-brand retailer.',
+          message: 'AD Verified stores must have a retail type: choose Boutique or Multi-brand retailer.',
           type: 'error',
         });
         return;
@@ -346,6 +466,16 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
           </section>
 
           <section className="store-edit-section">
+            <h3 className="store-edit-section__title">Brands</h3>
+            <BrandEditor
+              brands={editDraft.brands}
+              availableBrands={availableBrands}
+              onChange={(brands) => updateDraft({ brands })}
+              disabled={editSaving || imageUploading}
+            />
+          </section>
+
+          <section className="store-edit-section">
             <h3 className="store-edit-section__title">Image</h3>
             <p className="store-edit-hint">Upload a JPEG, PNG, WebP, or GIF (max 5 MB). Saves immediately.</p>
             <div className="store-edit-image-actions">
@@ -410,20 +540,32 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
           </section>
 
           <section className="store-edit-section">
-            <h3 className="store-edit-section__title">Premium</h3>
-            <label className="store-edit-premium-toggle">
-              <div
-                className={`toggle-switch${editDraft.isPremium ? ' on' : ''}`}
-                onClick={() => updateDraft({ isPremium: !editDraft.isPremium })}
-                role="switch"
-                aria-checked={editDraft.isPremium}
-                tabIndex={0}
-                onKeyDown={(e) => e.key === ' ' && updateDraft({ isPremium: !editDraft.isPremium })}
-              >
-                <div className="toggle-knob" />
-              </div>
-              <span>Premium store</span>
-            </label>
+            <h3 className="store-edit-section__title">Listing &amp; map filters</h3>
+            <fieldset className="store-edit-fieldset">
+              <legend className="store-edit-label">Store listing type</legend>
+              <p className="store-edit-hint">
+                Authorized Dealers appear in the public map’s general list; AD Verified locations are shown when
+                shoppers use the verified toggle.
+              </p>
+              <label className="store-edit-radio-row">
+                <input
+                  type="radio"
+                  name="store-listing-type"
+                  checked={!editDraft.isPremium}
+                  onChange={() => updateDraft({ isPremium: false })}
+                />
+                <span>Authorized Dealers</span>
+              </label>
+              <label className="store-edit-radio-row">
+                <input
+                  type="radio"
+                  name="store-listing-type"
+                  checked={editDraft.isPremium}
+                  onChange={() => updateDraft({ isPremium: true })}
+                />
+                <span>AD Verified</span>
+              </label>
+            </fieldset>
             {editDraft.isPremium && (
               <div className="store-edit-premium-meta">
                 <label className="store-edit-checkbox-row">
@@ -435,7 +577,7 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
                   <span>Authorized service center</span>
                 </label>
                 <fieldset className="store-edit-fieldset">
-                  <legend className="store-edit-label">Retail type (required)</legend>
+                  <legend className="store-edit-label">Retail type (required for AD Verified)</legend>
                   <label className="store-edit-radio-row">
                     <input
                       type="radio"
@@ -457,6 +599,25 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
                 </fieldset>
               </div>
             )}
+            <label className="store-edit-field store-edit-field--full">
+              <span className="store-edit-label">Brand filter (public map)</span>
+              <select
+                value={editDraft.brandFilterMode}
+                onChange={(e) =>
+                  updateDraft({
+                    brandFilterMode: e.target.value === 'verified_brand' ? 'verified_brand' : 'brand',
+                  })
+                }
+                disabled={editSaving || imageUploading}
+              >
+                <option value="brand">Brand — match full brand listing</option>
+                <option value="verified_brand">Verified brand — match approved brands only</option>
+              </select>
+            </label>
+            <p className="store-edit-hint">
+              For “Verified brand”, a store is included in a brand filter only if that brand is approved for this
+              location (same rules as the checkmarks on the map).
+            </p>
           </section>
         </div>
 
