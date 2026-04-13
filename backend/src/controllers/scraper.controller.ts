@@ -18,6 +18,8 @@ import {
 } from '../utils/parse-master-export-query';
 import {
   geoVerifyTasks,
+  markGeoVerifyTaskFinished,
+  pruneGeoVerifyTasks,
   runGeoVerifyPipeline,
   type GeoVerifyTask,
 } from '../services/geo-verify-pipeline.service';
@@ -858,6 +860,8 @@ export const scraperController = {
         return res.status(400).json({ error: 'brandName is required' });
       }
 
+      pruneGeoVerifyTasks();
+
       const taskId = crypto.randomUUID();
       const task: GeoVerifyTask = {
         id: taskId,
@@ -872,7 +876,9 @@ export const scraperController = {
 
       runGeoVerifyPipeline(task).catch((e) => {
         task.status = 'error';
+        task.phase = 'done';
         task.error = String(e);
+        markGeoVerifyTaskFinished(task);
       });
 
       res.status(202).json({ taskId });
@@ -885,6 +891,7 @@ export const scraperController = {
   // GET /api/scraper/verify-coordinates/:taskId - Poll task status
   async getVerifyCoordinatesStatus(req: Request, res: Response) {
     try {
+      pruneGeoVerifyTasks();
       const { taskId } = req.params;
       const task = geoVerifyTasks.get(taskId);
       if (!task) {

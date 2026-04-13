@@ -43,10 +43,46 @@ export type GeoVerifyTask = {
   result?: GeoVerifyPipelineResult;
   error?: string;
   startedAt: Date;
+  /** Set when status becomes done or error — used to evict old tasks from {@link geoVerifyTasks}. */
+  finishedAt?: Date;
 };
 
 /** Shared in-memory task registry — lives for the lifetime of the server process. */
 export const geoVerifyTasks = new Map<string, GeoVerifyTask>();
+
+const GEO_VERIFY_FINISHED_MAX_AGE_MS = 30 * 60 * 1000;
+const GEO_VERIFY_TASK_MAP_MAX = 100;
+const GEO_VERIFY_LOG_MAX_LINES = 400;
+
+/** Mark a task finished for TTL / map-size pruning (idempotent). */
+export function markGeoVerifyTaskFinished(task: GeoVerifyTask): void {
+  if (!task.finishedAt) task.finishedAt = new Date();
+}
+
+/**
+ * Drop old finished tasks and enforce a hard cap so long-lived servers do not grow memory without bound.
+ * Safe to call on every status poll or new-task start.
+ */
+export function pruneGeoVerifyTasks(): void {
+  const now = Date.now();
+  for (const [id, t] of geoVerifyTasks) {
+    if (t.status === 'running') continue;
+    const fin = t.finishedAt?.getTime();
+    if (fin !== undefined && now - fin > GEO_VERIFY_FINISHED_MAX_AGE_MS) {
+      geoVerifyTasks.delete(id);
+    }
+  }
+  while (geoVerifyTasks.size > GEO_VERIFY_TASK_MAP_MAX) {
+    let oldest: { id: string; t: number } | null = null;
+    for (const [id, t] of geoVerifyTasks) {
+      if (t.status === 'running') continue;
+      const fin = t.finishedAt?.getTime() ?? 0;
+      if (!oldest || fin < oldest.t) oldest = { id, t: fin };
+    }
+    if (!oldest) break;
+    geoVerifyTasks.delete(oldest.id);
+  }
+}
 
 // ─── Dedup helpers (brand-scoped) ────────────────────────────────────────────
 
@@ -218,23 +254,38 @@ function buildBrandScopedDedupPlans(stores: StoreRow[]): MergePlan[] {
   return plans;
 }
 
+function mergePremiumNotesParts(...parts: (string | null | undefined)[]): string | undefined {
+  const joined = parts.map((p) => (p ?? '').trim()).filter(Boolean);
+  if (joined.length === 0) return undefined;
+  return joined.join('\n\n--- merged from duplicate ---\n\n');
+}
+
 async function executeDedupPlans(plans: MergePlan[]): Promise<number> {
   let duplicatesRemoved = 0;
   for (const plan of plans) {
     const loserHandles = plan.remove.map((r) => r.handle);
 
     const survivorPrem = await prisma.premiumStore.findUnique({ where: { handle: plan.keep.handle } });
-    const loserNotes: (string | null)[] = [];
+    const loserNotes: string[] = [];
     for (const r of plan.remove) {
       const prem = await prisma.premiumStore.findUnique({ where: { handle: r.handle } });
-      if (prem) loserNotes.push(prem.notes);
+      const n = prem?.notes?.trim();
+      if (n) loserNotes.push(n);
     }
 
     await prisma.premiumStore.deleteMany({ where: { handle: { in: loserHandles } } });
 
-    if (!survivorPrem && loserNotes.length > 0) {
+    const mergedNotes = mergePremiumNotesParts(survivorPrem?.notes, ...loserNotes);
+    if (survivorPrem) {
+      if (loserNotes.length > 0 && mergedNotes) {
+        await prisma.premiumStore.update({
+          where: { handle: plan.keep.handle },
+          data: { notes: mergedNotes },
+        });
+      }
+    } else if (mergedNotes) {
       await prisma.premiumStore.create({
-        data: { handle: plan.keep.handle, notes: loserNotes[0] ?? undefined },
+        data: { handle: plan.keep.handle, notes: mergedNotes },
       });
     }
 
@@ -261,6 +312,9 @@ export async function runGeoVerifyPipeline(task: GeoVerifyTask): Promise<void> {
 
   const appendLog = (msg: string) => {
     task.log.push(msg);
+    if (task.log.length > GEO_VERIFY_LOG_MAX_LINES) {
+      task.log.splice(0, task.log.length - GEO_VERIFY_LOG_MAX_LINES);
+    }
   };
 
   try {
@@ -285,6 +339,7 @@ export async function runGeoVerifyPipeline(task: GeoVerifyTask): Promise<void> {
         locationsRemaining: 0,
         elapsedSec: 0,
       };
+      markGeoVerifyTaskFinished(task);
       return;
     }
 
@@ -361,10 +416,12 @@ export async function runGeoVerifyPipeline(task: GeoVerifyTask): Promise<void> {
       locationsRemaining: remaining,
       elapsedSec,
     };
+    markGeoVerifyTaskFinished(task);
   } catch (e: unknown) {
     task.status = 'error';
     task.phase = 'done';
     task.error = String(e);
     appendLog(`Error: ${String(e)}`);
+    markGeoVerifyTaskFinished(task);
   }
 }
