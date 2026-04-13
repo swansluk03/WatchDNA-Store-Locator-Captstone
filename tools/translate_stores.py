@@ -12,7 +12,6 @@ Usage:
     python3 tools/translate_stores.py --dry    # preview, no DB writes
 """
 
-import os
 import re
 import sys
 import time
@@ -26,8 +25,8 @@ from deep_translator import GoogleTranslator
 # Config
 # ---------------------------------------------------------------------------
 NON_LATIN_RE = re.compile(r'[^\x00-\x7F\xC0-\xFF]')  # anything outside Latin-1
-BATCH_SIZE = 20        # translate N strings at once (Google allows ~5000 chars)
-RATE_DELAY = 0.5       # seconds between batches to avoid rate-limits
+BATCH_SIZE = 10        # translate N strings at once (Google allows ~5000 chars)
+RATE_DELAY = 1.5       # seconds between batches to avoid rate-limits
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -58,12 +57,21 @@ def translate_batch(texts: list[str], src: str = 'auto', dest: str = 'en') -> li
         if not text or not text.strip():
             results.append(text)
             continue
-        try:
-            translated = translator.translate(text)
-            results.append(translated if translated else text)
-        except Exception as e:
-            print(f"  WARN: translation failed for '{text[:40]}': {e}")
-            results.append(text)
+        for attempt in range(3):
+            try:
+                translated = translator.translate(text)
+                results.append(translated if translated else text)
+                time.sleep(0.3)  # small delay between individual translations
+                break
+            except Exception as e:
+                if attempt < 2 and 'too many requests' in str(e).lower():
+                    wait = 5 * (attempt + 1)
+                    print(f"  Rate limited, waiting {wait}s...")
+                    time.sleep(wait)
+                else:
+                    print(f"  WARN: translation failed for '{text[:40]}': {e}")
+                    results.append(text)
+                    break
     return results
 
 
