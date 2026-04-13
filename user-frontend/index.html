@@ -1262,9 +1262,21 @@
     let nearestLine = null;
     let nearestMarker = null;
 
+    let nearMeHasError = false;
+
     function setNearMeStatus(msg) {
       const el = document.getElementById('nearMeStatus');
       if (el) el.textContent = msg || '';
+
+      const errorMessages = new Set([
+        'Geolocation not supported.',
+        'Unable to get location.',
+        'Unable to filter nearby locations.',
+        'Unable to search this area.'
+      ]);
+
+      nearMeHasError = !msg || errorMessages.has(msg);
+      syncViewportCountVisibility();
     }
 
     function toLatLng(lat, lng) { return L.latLng(lat, lng); }
@@ -1520,6 +1532,7 @@
           countEl.textContent = `${shown} of ${total} stores in view`;
         }
       }
+      syncViewportCountVisibility();
     }
 
     map.on('moveend', () => {
