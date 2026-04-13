@@ -676,7 +676,7 @@ header::-webkit-scrollbar-thumb {
 
 #sidebar.filters-open #top #inner h2{
   /* Deals with the spacing of the new header text */
-  padding-left: 43px;
+  padding-left: 0px;
 }
 
 /* Verfied Brand indicators */
