@@ -1457,8 +1457,8 @@
       container.innerHTML = '';
 
       const brands = [...brandSet].sort();
+      const VISIBLE_COUNT = 3;
 
-      // Group by first letter
       const groups = {};
       brands.forEach(b => {
         const letter = b[0].toUpperCase();
@@ -1467,16 +1467,18 @@
       });
 
       Object.keys(groups).sort().forEach(letter => {
-        // Letter header (always expanded)
         const header = document.createElement('div');
         header.className = 'brand-group-header';
         header.innerHTML = `<span class="brand-letter">${letter}</span>`;
 
-        // Group container (always visible)
         const group = document.createElement('div');
         group.className = 'brand-group';
 
-        groups[letter].forEach(b => {
+        const allBrands = groups[letter];
+        const visibleBrands = allBrands.slice(0, VISIBLE_COUNT);
+        const hiddenBrands = allBrands.slice(VISIBLE_COUNT);
+
+        function makeLabel(b) {
           const label = document.createElement('label');
           label.style.cssText = 'display:flex; align-items:center; gap:6px; padding:2px 0;';
 
@@ -1491,10 +1493,32 @@
 
           label.appendChild(cb);
           label.appendChild(span);
-          group.appendChild(label);
-        });
+          return label;
+        }
 
-        // Always append header and expanded group (no dropdown behavior)
+        visibleBrands.forEach(b => group.appendChild(makeLabel(b)));
+
+        if (hiddenBrands.length > 0) {
+          const hiddenContainer = document.createElement('div');
+          hiddenContainer.style.display = 'none';
+          hiddenBrands.forEach(b => hiddenContainer.appendChild(makeLabel(b)));
+
+          const toggleBtn = document.createElement('button');
+          toggleBtn.type = 'button';
+          toggleBtn.textContent = `See ${hiddenBrands.length} more`;
+          toggleBtn.style.cssText = 'background:none; border:none; padding:2px 0; font-size:12px; color: var(--color-text-secondary); cursor:pointer; text-decoration:underline;';
+
+          let expanded = false;
+          toggleBtn.addEventListener('click', () => {
+            expanded = !expanded;
+            hiddenContainer.style.display = expanded ? 'block' : 'none';
+            toggleBtn.textContent = expanded ? 'See less' : `See ${hiddenBrands.length} more`;
+          });
+
+          group.appendChild(hiddenContainer);
+          group.appendChild(toggleBtn);
+        }
+
         container.appendChild(header);
         container.appendChild(group);
       });
