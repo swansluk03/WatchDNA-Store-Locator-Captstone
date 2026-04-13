@@ -284,7 +284,11 @@
         'Custom Button URL 1': loc.customButton1Url || '',
         'Custom Button title 2': loc.customButton2Title || '',
         'Custom Button URL 2': loc.customButton2Url || '',
-        '_isPremium': !!loc.isPremium
+        '_isPremium': !!loc.isPremium,
+        // English translations (for non-Latin stores)
+        'Name EN': loc.nameEn || '',
+        'Address Line 1 EN': loc.addressLine1En || '',
+        'City EN': loc.cityEn || '',
       };
     }
 
@@ -726,7 +730,9 @@
       const aboutSectionEl = document.getElementById('detailAboutSection');
       const aboutEl = document.getElementById('detailAbout');
 
-      const name = (row['Name'] || 'Unnamed').trim();
+      const hasEnName = !!row['Name EN'];
+      const name = hasEnName ? row['Name EN'].trim() : (row['Name'] || 'Unnamed').trim();
+      const originalDetailName = hasEnName ? row['Name'].trim() : '';
       const address = buildFullAddress(row);
       const phone = (row['Phone'] || '').trim();
       const fullBrandsText = extractBrandsText(row);
@@ -761,13 +767,23 @@
 
 
       if (nameEl) {
-        nameEl.innerHTML = isVerified
-          ? `${escapeHtml(name)} <span class="verified-location-badge" aria-label="Verified location" title="Verified location">✓</span>`
-          : escapeHtml(name);
+        const verifiedBadge = isVerified
+          ? ` <span class="verified-location-badge" aria-label="Verified location" title="Verified location">✓</span>`
+          : '';
+        const origLine = originalDetailName
+          ? `<div class="store-original-name">${escapeHtml(originalDetailName)}</div>`
+          : '';
+        nameEl.innerHTML = `${escapeHtml(name)}${verifiedBadge}${origLine}`;
       }
 
       if (addressEl) {
-        addressEl.textContent = address || 'Not provided';
+        const enAddr = row['Address Line 1 EN'] || '';
+        const displayAddress = enAddr ? buildFullAddress({
+          ...row,
+          'Address Line 1': enAddr,
+          'City': row['City EN'] || row['City'],
+        }) : address;
+        addressEl.textContent = displayAddress || 'Not provided';
         addressEl.style.whiteSpace = 'pre-line';
       }
 
@@ -1031,6 +1047,9 @@
               row['Address Line 2'] || '',
               row['Country'] || '',
               row['Zip/Postal Code'] || '',
+              row['Name EN'] || '',
+              row['Address Line 1 EN'] || '',
+              row['City EN'] || '',
             ].map(f => String(f).toLowerCase());
             passesText = searchFields.some(field => field.includes(storeInput));
           }
@@ -1377,10 +1396,15 @@
         const item = document.createElement('div');
         item.className = row._isPremium ? 'store verified' : 'store';
 
-        const addressLine = row['Address Line 1'] || '';
+        // Use English translation if available, show original as subtitle
+        const hasEnName = !!row['Name EN'];
+        const displayName = hasEnName ? row['Name EN'] : (row['Name'] || 'Unnamed');
+        const originalName = hasEnName ? row['Name'] : '';
+
+        const addressLine = row['Address Line 1 EN'] || row['Address Line 1'] || '';
 
         const locationParts = [
-          row['City'],
+          row['City EN'] || row['City'],
           row['State/Province/Region'],
           row['Country']
         ].filter(Boolean);
@@ -1419,11 +1443,16 @@
     `
           : '';
 
+        const originalNameHtml = originalName
+          ? `<div class="store-original-name">${escapeHtml(originalName)}</div>`
+          : '';
+
         item.innerHTML = `
     <div class="store-card-row">
       <div class="store-card-content">
         ${verifiedLabel}
-        <strong>${row['Name'] || 'Unnamed'}</strong><br>
+        <strong>${escapeHtml(displayName)}</strong>
+        ${originalNameHtml}
         ${addressLine}<br>
         ${locationLine}
         ${distanceLine}

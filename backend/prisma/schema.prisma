@@ -100,6 +100,11 @@ model Location {
   customBrands            String?
   isPremium               Boolean  @default(false)
 
+  // English translations (for stores with non-Latin names/addresses)
+  nameEn                  String?
+  addressLine1En          String?
+  cityEn                  String?
+
   // Localization (French)
   nameFr                  String?
   pageTitleFr             String?
