@@ -138,6 +138,8 @@
 
   </header>
 
+  <button id="menuToggleBtn" aria-label="Toggle menu" title="Toggle menu">Menu</button>
+
   <div id="map"></div>
 
   <script>
@@ -1883,6 +1885,32 @@
           setTimeout(() => map.invalidateSize({ animate: false }), 320);
         }
       });
+    })();
+
+    (function () {
+      const btn = document.getElementById('menuToggleBtn');
+      const sidebar = document.getElementById('sidebar');
+      const listBtn = document.getElementById('mapToggleBtn');
+      if (!btn || !sidebar || !listBtn) return;
+
+      function syncMenuBtn() {
+        const mapVisible = sidebar.classList.contains('map-visible');
+        btn.style.display = mapVisible ? 'flex' : 'none';
+      }
+
+      btn.addEventListener('click', () => {
+        sidebar.classList.remove('map-visible');
+        listBtn.textContent = 'View Map →';
+        listBtn.classList.remove('list-mode');
+        syncMenuBtn();
+      });
+
+      // Sync when the map toggle button is clicked
+      listBtn.addEventListener('click', () => {
+        setTimeout(syncMenuBtn, 0);
+      });
+
+      syncMenuBtn(); // set initial state on load
     })();
   </script>
 </body>
