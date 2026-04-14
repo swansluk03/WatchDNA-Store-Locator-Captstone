@@ -177,8 +177,7 @@
       // User did not allow browser/application to use their location
       if (!navigator.geolocation) {
         failure({ code: 0 });
-        return; const marker = L.marker([lat, lon], { icon: iconToUse })
-
+        return;
       }
 
       navigator.geolocation.getCurrentPosition(
@@ -1181,6 +1180,41 @@
       }
     }
 
+    function permissionQuerySupported() {
+      return !!(navigator.permissions && navigator.permissions.query);
+    }
+
+    async function getGeolocationPermissionState() {
+      if (!navigator.geolocation) return 'unsupported';
+
+      if (!permissionQuerySupported()) {
+        return 'unknown';
+      }
+
+      try {
+        const result = await navigator.permissions.query({ name: 'geolocation' });
+        return result.state; // 'granted', 'prompt', or 'denied'
+      } catch (err) {
+        return 'unknown';
+      }
+    }
+
+    async function tryAutoLocateOnStartup() {
+      const permissionState = await getGeolocationPermissionState();
+
+      if (permissionState === 'granted') {
+        centerOnUserLocation();
+        return;
+      }
+
+      if (permissionState === 'denied') {
+        setNearMeStatus('Location access is blocked. Use Safari site settings to allow it.');
+        return;
+      }
+
+      setNearMeStatus('Tap the location button to show nearby locations.');
+    }
+
     function centerOnUserLocation() {
       if (!navigator.geolocation) {
         setNearMeStatus('Geolocation not supported.');
@@ -1192,6 +1226,12 @@
       getUserLatLng(
         (ll) => {
           showUserMarker(ll);
+
+          try {
+            localStorage.setItem('watchdna_location_enabled', 'true');
+          } catch (e) {
+            console.warn('Could not persist location preference.', e);
+          }
 
           map.once('moveend', () => {
             try {
@@ -1218,10 +1258,11 @@
         },
         (err) => {
           const m = {
-            1: 'Location Permissions Denied.',
-            2: 'Position Unavailable.',
-            3: 'Request Timed Out.'
+            1: 'Location access was denied. Tap the location button to try again.',
+            2: 'Position unavailable.',
+            3: 'Request timed out.'
           };
+
           setNearMeStatus(m[err.code] || 'Unable to get location.');
           syncViewportCountVisibility();
         }
@@ -1857,7 +1898,7 @@
           const t = INITIAL.type.toLowerCase();
         }
         applyFilter();
-        centerOnUserLocation();
+        tryAutoLocateOnStartup();
 
         // Do not pre-check checkboxes from URL params; users must explicitly
         // select stores using the checkbox controls.
