@@ -12,12 +12,6 @@ npm run dev
 
 Default dev URL: http://localhost:5173
 
-If your backend is running on a different host, set `VITE_API_URL` in a local `.env` file:
-
-```
-VITE_API_URL=http://localhost:3001
-```
-
 Key locations in this folder:
 
 - `src/pages/` — Page components (Login, Dashboard, Uploads, UploadDetail, Scraper)

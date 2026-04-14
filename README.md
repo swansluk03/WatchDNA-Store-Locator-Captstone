@@ -4,6 +4,7 @@ Welcome to the Capstone Project Repo! This project includes:
 - **Python tools** for CSV validation and web scraping
 - **Admin Panel** (Backend + Frontend) for managing store locations
 - **Store Locator** integration system
+- **User Frontend** Map + Store Locator for WatchDNA users
 
 ## Project Structure
 
@@ -12,7 +13,7 @@ WatchDNA-Store-Locator-Captstone/
 ├── backend/              # Admin panel API (Node.js + Express + Prisma)
 ├── admin-frontend/       # Admin panel UI (React + TypeScript + Vite)
 ├── tools/                # Python validation & scraping scripts
-├── locations.csv         # Store location data
+├── user-frontend         # Map Frontend UI (HTML + CSS + Leaflet JS + OSM)
 └── venv/                 # Python virtual environment
 ```
 
@@ -38,41 +39,29 @@ npm run seed-admin
 npm run dev
 ```
 
-The backend will start on `http://localhost:3001`
+The Map Frontend will also start on `http://localhost:3001`, with the initialization of the backend.
+
+### 2. Admin Panel Setup
+
+```bash
+cd admin-frontend
+npm install
+npm run dev
+```
+
+The Admin Panel frontend will start on `http://localhost:5173`
 
 **Default admin credentials:**
 - Username: `admin`
 - Password: `admin123`
 
-### 2. Frontend Setup
-
-In a **new terminal**:
-# WatchDNA Store Locator
-
-Short overview and pointers to component READMEs.
-
-This repository contains the admin backend, admin frontend, Python tools, and prototype code used for the WatchDNA Store Locator capstone.
-
-See folder-specific READMEs for setup and usage:
-- [backend/README.md](backend/README.md)
-- [admin-frontend/README.md](admin-frontend/README.md)
-
-Top-level layout:
-
-```
-WatchDNA-Store-Locator-Captstone/
-├─ backend/              # Backend API (see backend/README.md)
-├─ admin-frontend/       # Admin UI (see admin-frontend/README.md)
-├─ tools/                # Python scripts (validation & scraping)
-├─ Prototypes/           # Experimental scrapers and demos
-├─ uploads/              # Uploaded CSVs and exports
-├─ locations.csv         # Example location data
-└─ TECHNICAL_DOCUMENTATION.md
-```
-
 Quick pointers:
-- Start backend: `cd backend && npm install && npm run dev`
-- Start frontend: `cd admin-frontend && npm install && npm run dev`
+- Start backend & map frontend: `cd backend && npm install && npm run dev`
+- Start admin panel frontend: `cd admin-frontend && npm install && npm run dev`
 
 For development details, run the commands in the relevant folder and consult that folder's README.
    # or: brew install direnv       # Mac
+
+Note: the map-frontend is deployed on Vercel under the URL ```https://dealer-fetcher.vercel.app```. The admin-panel frontend is live on ```https://admin-console-production.up.railway.app/login```.
+
+The map is live on the shopify site as an iframe, and the backend (Admin Panel and Scraper) is live on shopify as an app. 

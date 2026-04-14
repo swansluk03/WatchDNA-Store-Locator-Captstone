@@ -275,7 +275,7 @@ WatchDNA-Store-Locator-Captstone/
 ### 1. Clone Repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/swansluk03/WatchDNA-Store-Locator-Captstone
 cd WatchDNA-Store-Locator-Captstone
 ```
 
@@ -302,9 +302,6 @@ npm run seed-admin
 # Start development server
 npm run dev
 ```
-
-Backend will run on `http://localhost:3001`
-
 ### 3. Frontend Setup
 
 In a new terminal:
@@ -353,15 +350,11 @@ NODE_ENV=development
 UPLOAD_DIR=./uploads
 PYTHON_PATH=python
 
-# Authentication
-JWT_SECRET=change_this_to_random_secret_in_production
-JWT_EXPIRES_IN=7d
-
 # Optional: Mapbox for future map features
 MAPBOX_SECRET=your_mapbox_token_here
 ```
 
-#### Frontend .env (optional)
+#### Admin Panel Frontend .env (optional)
 
 ```bash
 VITE_API_URL=http://localhost:3001

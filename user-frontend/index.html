@@ -700,6 +700,8 @@
       return '#';
     }
 
+    let prePinMapVisible = false; // tracks map-visible state before a pin was clicked
+
     function setDetailPanelVisible(visible) {
       const sidebar = document.getElementById('sidebar');
       const panel = document.getElementById('storeDetailPanel');
@@ -712,7 +714,16 @@
         panel.setAttribute('aria-hidden', 'false');
         //listContainer.classList.add('hidden');
         //listContainer.style.display = 'none';
-      } else {
+        if (sidebar.classList.contains('map-visible')) {
+          sidebar.classList.remove('map-visible');
+          if (listBtn) {
+            listBtn.textContent = 'View Map →';
+            listBtn.classList.remove('list-mode');
+          }
+          if (menuBtn) menuBtn.style.display = 'none';
+        }
+      }
+      else {
         sidebar.classList.remove('store-focused');
         panel.classList.add('hidden');
         panel.setAttribute('aria-hidden', 'true');
