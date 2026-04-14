@@ -1180,51 +1180,88 @@
       }
     }
 
-    function permissionQuerySupported() {
-      return !!(navigator.permissions && navigator.permissions.query);
+    function isTouchLikeDevice() {
+      return (
+        window.matchMedia('(pointer: coarse)').matches ||
+        'ontouchstart' in window ||
+        navigator.maxTouchPoints > 0
+      );
     }
 
-    async function getGeolocationPermissionState() {
-      if (!navigator.geolocation) return 'unsupported';
+    let startupGestureArmed = false;
+    let startupLocateAttempted = false;
+    let startupGestureCleanup = null;
 
-      if (!permissionQuerySupported()) {
-        return 'unknown';
+    function clearStartupGestureListeners() {
+      if (typeof startupGestureCleanup === 'function') {
+        startupGestureCleanup();
       }
-
-      try {
-        const result = await navigator.permissions.query({ name: 'geolocation' });
-        return result.state; // 'granted', 'prompt', or 'denied'
-      } catch (err) {
-        return 'unknown';
-      }
+      startupGestureCleanup = null;
+      startupGestureArmed = false;
     }
 
-    async function tryAutoLocateOnStartup() {
-      const permissionState = await getGeolocationPermissionState();
+    function armStartupGestureLocate() {
+      if (startupGestureArmed || startupLocateAttempted || !navigator.geolocation) return;
 
-      if (permissionState === 'granted') {
-        centerOnUserLocation();
-        return;
-      }
+      const triggerFromGesture = () => {
+        clearStartupGestureListeners();
+        if (startupLocateAttempted) return;
+        startupLocateAttempted = true;
+        centerOnUserLocation({ triggeredByUserGesture: true });
+      };
 
-      if (permissionState === 'denied') {
-        setNearMeStatus('Location access is blocked. Use Safari site settings to allow it.');
-        return;
-      }
+      const onTouchEnd = () => triggerFromGesture();
+      const onClick = () => triggerFromGesture();
 
-      setNearMeStatus('Tap the location button to show nearby locations.');
+      document.addEventListener('touchend', onTouchEnd, { passive: true, once: true });
+      document.addEventListener('click', onClick, { once: true });
+
+      startupGestureCleanup = () => {
+        document.removeEventListener('touchend', onTouchEnd);
+        document.removeEventListener('click', onClick);
+      };
+
+      startupGestureArmed = true;
     }
 
-    function centerOnUserLocation() {
+    function tryAutoLocateOnStartup() {
       if (!navigator.geolocation) {
         setNearMeStatus('Geolocation not supported.');
         return;
+      }
+
+      if (isTouchLikeDevice()) {
+        setNearMeStatus('Tap anywhere or use the location button to show nearby locations.');
+        armStartupGestureLocate();
+        return;
+      }
+
+      startupLocateAttempted = true;
+      centerOnUserLocation({ triggeredByUserGesture: false, suppressDeniedMessage: true });
+    }
+
+    function centerOnUserLocation(options = {}) {
+      const {
+        triggeredByUserGesture = false,
+        suppressDeniedMessage = false
+      } = options;
+
+      if (!navigator.geolocation) {
+        setNearMeStatus('Geolocation not supported.');
+        return;
+      }
+
+      if (triggeredByUserGesture) {
+        clearStartupGestureListeners();
       }
 
       setNearMeStatus('Locating...');
 
       getUserLatLng(
         (ll) => {
+          clearStartupGestureListeners();
+          startupLocateAttempted = true;
+
           showUserMarker(ll);
 
           try {
@@ -1257,8 +1294,23 @@
           });
         },
         (err) => {
+          const denied = err && err.code === 1;
+
+          if (denied && isTouchLikeDevice() && !triggeredByUserGesture) {
+            setNearMeStatus('Tap anywhere or use the location button to enable location.');
+            armStartupGestureLocate();
+            syncViewportCountVisibility();
+            return;
+          }
+
+          if (denied && suppressDeniedMessage) {
+            setNearMeStatus('Use the location button to enable nearby results.');
+            syncViewportCountVisibility();
+            return;
+          }
+
           const m = {
-            1: 'Location access was denied. Tap the location button to try again.',
+            1: 'Location access was denied. Use the location button to try again.',
             2: 'Position unavailable.',
             3: 'Request timed out.'
           };
@@ -1312,7 +1364,7 @@
 
         locateBtn.addEventListener('click', (e) => {
           e.preventDefault();
-          centerOnUserLocation();
+          centerOnUserLocation({ triggeredByUserGesture: true });
         });
 
         return container;
