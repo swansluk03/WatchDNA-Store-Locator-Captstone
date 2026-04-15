@@ -14,7 +14,7 @@ npm run seed-admin
 npm run dev
 ```
 
-Default dev server: http://localhost:3001
+Note that when this is run, you may open user-frontend on `http://localhost:3001`
 
 Key files in this folder:
 
@@ -31,16 +31,6 @@ Common API endpoints (local to backend):
 - `POST /api/uploads` — Upload CSV (authenticated)
 - `GET  /api/uploads` — List uploads
 - `GET  /health` — Health check
-
-Testing examples (use from project root):
-
-```powershell
-# Login
-curl -X POST http://localhost:3001/api/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"admin123"}'
-
-# Upload (replace token and path)
-curl -X POST http://localhost:3001/api/uploads -H "Authorization: Bearer <TOKEN>" -F "file=@../locations.csv"
-```
 
 Notes:
 - This README only documents backend-specific setup and endpoints. See the repository root README and `admin-frontend/README.md` for other components.

@@ -39,7 +39,7 @@ npm run seed-admin
 npm run dev
 ```
 
-The Map Frontend will also start on `http://localhost:3001`, with the initialization of the backend.
+This is the first step to opening the admin panel. The Map Frontend will also start on `http://localhost:3001`, with the initialization of the backend. 
 
 ### 2. Admin Panel Setup
 
@@ -49,7 +49,7 @@ npm install
 npm run dev
 ```
 
-The Admin Panel frontend will start on `http://localhost:5173`
+With step 1 and step 2, the Admin Panel frontend will start on `http://localhost:5173`
 
 **Default admin credentials:**
 - Username: `admin`
