@@ -489,10 +489,12 @@ export class UploadService {
         await prisma.validationLog.createMany({ data: logs });
       }
 
+      let importResult: ImportResult | null = null;
+      let importError: string | null = null;
       if (updateData.status === 'valid') {
         logger.info(`[Upload ${uploadId}] Importing to DB...`);
         try {
-          const importResult = await locationService.importFromCSV(filePath, uploadId);
+          importResult = await locationService.importFromCSV(filePath, uploadId);
           logger.info(
             `[Upload ${uploadId}] Import done — new: ${importResult.newCount}, updated: ${importResult.updatedCount}, ` +
               `unchanged: ${importResult.unchangedCount}`
@@ -514,12 +516,27 @@ export class UploadService {
                 `(skipped incomplete or DB errors); see import logs / errors on upload`
             );
           }
-        } catch (importError: any) {
-          logger.error(`[Upload ${uploadId}] Import failed:`, importError.message);
+        } catch (err: unknown) {
+          importError = err instanceof Error ? err.message : String(err);
+          logger.error(`[Upload ${uploadId}] Import failed:`, importError);
+          await prisma.upload.update({
+            where: { id: uploadId },
+            data: {
+              status: 'failed',
+              validationErrors: JSON.stringify([{ issue: 'import_error', message: importError }]),
+            },
+          });
         }
       }
 
-      return { success: true, uploadId, validationResult };
+      const importSucceeded = updateData.status !== 'valid' || importResult !== null;
+      return {
+        success: importSucceeded,
+        uploadId,
+        validationResult,
+        importResult,
+        importError,
+      };
 
     } catch (error: any) {
       logger.error(`[Upload ${uploadId}] Processing failed:`, error.message);

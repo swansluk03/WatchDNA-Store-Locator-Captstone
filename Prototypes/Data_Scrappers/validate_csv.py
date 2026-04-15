@@ -82,6 +82,35 @@ EXIT_SCHEMA = 2
 EXIT_DATA = 3
 EXIT_EXCEPTION = 4
 
+
+def _lowercase_http_url_scheme(url_str: str) -> str:
+    """Normalize http(s) scheme to lowercase for consistent storage (e.g. HTTP:// -> http://)."""
+    if not url_str:
+        return url_str
+    s = str(url_str).strip()
+    m = re.match(r"(?i)^(https?)(://.*)$", s)
+    if m:
+        return m.group(1).lower() + m.group(2)
+    return s
+
+
+def fix_common_url_scheme_issues(url_str: str) -> str:
+    """
+    Insert missing // after http: or https: when a host or path follows immediately
+    (e.g. https:www.example.com -> https://www.example.com).
+    Normalizes http/https scheme to lowercase.
+    """
+    if not url_str:
+        return url_str
+    s = str(url_str).strip()
+    if re.match(r"(?i)^https?://", s):
+        return _lowercase_http_url_scheme(s)
+    m = re.match(r"(?i)^(https?:)(?!//)(.+)$", s)
+    if m:
+        scheme = m.group(1).lower()
+        return _lowercase_http_url_scheme(f"{scheme}//{m.group(2)}")
+    return s
+
 # Warnings
 MAX_ROWS_WARNING = 10000
 COORDINATE_PRECISION_WARNING = 7
@@ -233,12 +262,14 @@ class CSVValidator:
             return True, "", None  # Empty URLs are valid (optional field)
         url_str = str(value).strip()
         url_str = url_str.replace('\\/', '/').replace('\\', '/')
+        url_str = fix_common_url_scheme_issues(url_str)
         url_str = resolve_partial_url(url_str, url_base)
         if url_str and not urlparse(url_str).scheme:
             url_str = f"https://{url_str}"
         parsed = urlparse(url_str)
         if not (parsed.scheme and parsed.netloc):
             return False, None, "invalid_format"
+        url_str = _lowercase_http_url_scheme(url_str)
         if check_http:
             try:
                 import requests
@@ -505,6 +536,26 @@ class CSVValidator:
         # Return only keys that have duplicates
         return [(key, rows) for key, rows in duplicates_map.items() if len(rows) > 1]
 
+    def dedupe_rows_by_key(
+        self, rows: List[Dict[str, str]], key_fields: List[str]
+    ) -> Tuple[List[Dict[str, str]], int]:
+        """
+        Keep the first row for each non-empty key tuple; drop subsequent duplicates.
+        Rows with any empty key field are always kept (not deduped).
+        """
+        seen: Set[Tuple[str, ...]] = set()
+        out: List[Dict[str, str]] = []
+        removed = 0
+        for row in rows:
+            key = tuple((row.get(f) or "").strip() for f in key_fields)
+            if all(key):
+                if key in seen:
+                    removed += 1
+                    continue
+                seen.add(key)
+            out.append(row)
+        return out, removed
+
     def remove_duplicates_from_file(self, file_path: str, output_path: str = None) -> int:
         """
         Remove duplicate rows from a CSV file, keeping the first occurrence.
@@ -679,6 +730,7 @@ class CSVValidator:
                     ))
 
                 # Auto-fix data quality issues if requested
+                dedup_removed = 0
                 if auto_fix:
                     print("🔧 Auto-fixing data quality issues...")
                     fixes_count = 0
@@ -701,8 +753,18 @@ class CSVValidator:
                                     if normalized_url and normalized_url != url_value:
                                         row[url_field] = normalized_url
                                         fixes_count += 1
-                    
-                    if fixes_count > 0:
+
+                    all_rows, dedup_removed = self.dedupe_rows_by_key(
+                        all_rows, list(DEFAULT_DUPLICATE_KEY)
+                    )
+                    if dedup_removed > 0:
+                        print(
+                            f"✅ Removed {dedup_removed} duplicate row(s) "
+                            f"(same {', '.join(DEFAULT_DUPLICATE_KEY)}, kept first)"
+                        )
+                        print()
+
+                    if fixes_count > 0 or dedup_removed > 0:
                         # Write fixed data back to file
                         with open(file_path, 'w', newline='', encoding='utf-8') as f:
                             writer = csv.DictWriter(f, fieldnames=reader.fieldnames, lineterminator='\n')
@@ -716,8 +778,9 @@ class CSVValidator:
                         with open(file_path, 'wb') as f:
                             f.write(content)
                         
-                        print(f"✅ Fixed {fixes_count} data quality issue(s)")
-                        print()
+                        if fixes_count > 0:
+                            print(f"✅ Fixed {fixes_count} data quality issue(s)")
+                            print()
                         
                         # Re-read the fixed file for validation
                         with open(file_path, 'r', newline='', encoding='utf-8') as f:

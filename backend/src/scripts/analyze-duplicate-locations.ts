@@ -2,12 +2,172 @@
  * Report likely duplicate Location rows (same name, coords, address key) and
  * similar addresses (normalized fingerprint, substring overlap, optional pg_trgm).
  *
- * Usage: npm run analyze-duplicates
- *     or npx ts-node src/scripts/analyze-duplicate-locations.ts
+ * Use --json-out <file> or --csv-out <file> to emit a machine-readable candidate-pairs
+ * report suitable for spreadsheet review or a future admin UI.  Each pair includes
+ * signal flags (tripletWouldMerge, sameRoundedCoords, sameAddressFp, etc.) computed
+ * with the same helpers used by the live import and merge-CLI paths.
+ *
+ * Usage:
+ *   npm run analyze-duplicates
+ *   npx ts-node src/scripts/analyze-duplicate-locations.ts
+ *   npx ts-node src/scripts/analyze-duplicate-locations.ts --json-out /tmp/dupes.json
+ *   npx ts-node src/scripts/analyze-duplicate-locations.ts --csv-out /tmp/dupes.csv
  */
 
 import 'dotenv/config';
+import fs from 'fs';
+import path from 'path';
 import prisma from '../lib/prisma';
+import { dedupeAddressFingerprint } from '../utils/address-dedupe';
+import { normalizeCountry } from '../utils/country';
+import {
+  haversineDistanceMeters,
+  isUnusableScraperCoordinate,
+  namesSimilarForDedupe,
+  normalizeNameForDedupe,
+} from '../utils/geo-dedupe';
+import {
+  addressesShareStreetNumber,
+  buildDedupPlans,
+  fingerprintGroupKey,
+  GEO_PROXIMITY_M,
+  type MergeStoreRow,
+} from '../utils/location-merge-core';
+
+// ─── CLI flags ────────────────────────────────────────────────────────────────
+
+function argValue(flag: string): string | null {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1]! : null;
+}
+
+const jsonOutPath = argValue('--json-out');
+const csvOutPath = argValue('--csv-out');
+
+// ─── Candidate pair type ──────────────────────────────────────────────────────
+
+/** A flagged pair of likely-duplicate rows for human triage. */
+type CandidatePair = {
+  handleA: string;
+  handleB: string;
+  nameA: string;
+  nameB: string;
+  addressA: string;
+  addressB: string;
+  cityA: string;
+  cityB: string;
+  countryA: string;
+  countryB: string;
+  latA: number;
+  lonA: number;
+  latB: number;
+  lonB: number;
+  distanceMeters: number | null;
+  fpA: string;
+  fpB: string;
+  signal: string;
+  // Pre-computed boolean flags for filtering
+  sameRoundedCoords: boolean;
+  sameAddressFp: boolean;
+  sameNormName: boolean;
+  namesSimilar: boolean;
+  addressSharesStreetNumber: boolean;
+  tripletWouldMerge: boolean;
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function roundedCoordsKey(r: { latitude: number; longitude: number }): string {
+  return `${r.latitude.toFixed(5)}|${r.longitude.toFixed(5)}`;
+}
+
+function computeDistance(a: MergeStoreRow, b: MergeStoreRow): number | null {
+  if (
+    isUnusableScraperCoordinate(a.latitude, a.longitude) ||
+    isUnusableScraperCoordinate(b.latitude, b.longitude)
+  )
+    return null;
+  return haversineDistanceMeters(a.latitude, a.longitude, b.latitude, b.longitude);
+}
+
+function makePair(a: MergeStoreRow, b: MergeStoreRow, signal: string): CandidatePair {
+  const dist = computeDistance(a, b);
+  const fpA = dedupeAddressFingerprint(a.addressLine1);
+  const fpB = dedupeAddressFingerprint(b.addressLine1);
+  const sameRoundedCoords = roundedCoordsKey(a) === roundedCoordsKey(b);
+  const sameAddressFp =
+    fpA.length >= 6 && fpB.length >= 6 && fingerprintGroupKey(a) === fingerprintGroupKey(b);
+  const sameNormName = normalizeNameForDedupe(a.name) === normalizeNameForDedupe(b.name);
+  const similar = namesSimilarForDedupe(a.name, b.name);
+  const sharesStreetNo = addressesShareStreetNumber(a.addressLine1, b.addressLine1);
+  const tripletWouldMerge =
+    sameRoundedCoords &&
+    (sameNormName || similar) &&
+    (sameAddressFp || sharesStreetNo) &&
+    dist !== null &&
+    dist <= GEO_PROXIMITY_M;
+
+  return {
+    handleA: a.handle,
+    handleB: b.handle,
+    nameA: a.name,
+    nameB: b.name,
+    addressA: a.addressLine1,
+    addressB: b.addressLine1,
+    cityA: a.city,
+    cityB: b.city,
+    countryA: a.country,
+    countryB: b.country,
+    latA: a.latitude,
+    lonA: a.longitude,
+    latB: b.latitude,
+    lonB: b.longitude,
+    distanceMeters: dist !== null ? Math.round(dist) : null,
+    fpA,
+    fpB,
+    signal,
+    sameRoundedCoords,
+    sameAddressFp,
+    sameNormName,
+    namesSimilar: similar,
+    addressSharesStreetNumber: sharesStreetNo,
+    tripletWouldMerge,
+  };
+}
+
+// ─── Export writers ───────────────────────────────────────────────────────────
+
+function writeJson(pairs: CandidatePair[], filePath: string): void {
+  const resolved = path.resolve(filePath);
+  fs.writeFileSync(resolved, JSON.stringify(pairs, null, 2), 'utf8');
+  console.log(`\nJSON candidate pairs written to ${resolved} (${pairs.length} pairs)`);
+}
+
+function writeCsv(pairs: CandidatePair[], filePath: string): void {
+  const headers: (keyof CandidatePair)[] = [
+    'handleA', 'handleB', 'nameA', 'nameB', 'addressA', 'addressB',
+    'cityA', 'cityB', 'countryA', 'countryB',
+    'latA', 'lonA', 'latB', 'lonB', 'distanceMeters',
+    'fpA', 'fpB', 'signal',
+    'sameRoundedCoords', 'sameAddressFp', 'sameNormName',
+    'namesSimilar', 'addressSharesStreetNumber', 'tripletWouldMerge',
+  ];
+  const escape = (v: unknown) => {
+    const s = String(v ?? '');
+    return s.includes(',') || s.includes('"') || s.includes('\n')
+      ? `"${s.replace(/"/g, '""')}"`
+      : s;
+  };
+  const lines = [
+    headers.join(','),
+    ...pairs.map((p) => headers.map((h) => escape(p[h])).join(',')),
+  ];
+  const resolved = path.resolve(filePath);
+  fs.writeFileSync(resolved, lines.join('\n'), 'utf8');
+  console.log(`\nCSV candidate pairs written to ${resolved} (${pairs.length} pairs)`);
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
   console.log('=== Duplicate / near-duplicate analysis (Location) ===\n');
@@ -273,6 +433,97 @@ async function main() {
   }
 
   console.log('\nDone.');
+
+  // ─── Optional candidate-pair export ─────────────────────────────────────────
+  if (!jsonOutPath && !csvOutPath) return;
+
+  console.log('\nBuilding candidate-pair export (loading all locations)…');
+
+  const allRaw = await prisma.location.findMany({
+    select: {
+      handle: true,
+      name: true,
+      brands: true,
+      customBrands: true,
+      tags: true,
+      addressLine1: true,
+      city: true,
+      country: true,
+      latitude: true,
+      longitude: true,
+      isPremium: true,
+      updatedAt: true,
+    },
+    orderBy: { handle: 'asc' },
+  });
+  const all = allRaw as MergeStoreRow[];
+
+  const candidatePairs: CandidatePair[] = [];
+  const seen = new Set<string>();
+
+  const addPair = (a: MergeStoreRow, b: MergeStoreRow, signal: string) => {
+    const key = [a.handle, b.handle].sort().join('|');
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidatePairs.push(makePair(a, b, signal));
+  };
+
+  // Emit pairs from the buildDedupPlans merge groups (these are the auto-mergeable ones)
+  const plans = buildDedupPlans(all);
+  const byHandle = new Map(all.map((r) => [r.handle, r]));
+  for (const plan of plans) {
+    for (const loser of plan.remove) {
+      addPair(plan.keep, loser, `auto-merge:${plan.label}`);
+    }
+  }
+
+  // Also emit pairs that share rounded coordinates but are NOT auto-merged (different names/addresses)
+  const byCoordCountry = new Map<string, MergeStoreRow[]>();
+  for (const r of all) {
+    if (isUnusableScraperCoordinate(r.latitude, r.longitude)) continue;
+    const k = `${r.latitude.toFixed(5)}|${r.longitude.toFixed(5)}|${normalizeCountry(r.country)}`;
+    const list = byCoordCountry.get(k) ?? [];
+    list.push(r);
+    byCoordCountry.set(k, list);
+  }
+  for (const group of byCoordCountry.values()) {
+    if (group.length < 2) continue;
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        addPair(group[i]!, group[j]!, 'same-coords:review');
+      }
+    }
+  }
+
+  // And pairs from address-fingerprint groups that are NOT auto-merged (coord spread too wide, etc.)
+  const fpIndex = new Map<string, MergeStoreRow[]>();
+  for (const r of all) {
+    const fp = dedupeAddressFingerprint(r.addressLine1);
+    if (fp.length < 6) continue;
+    const k = fingerprintGroupKey(r);
+    const list = fpIndex.get(k) ?? [];
+    list.push(r);
+    fpIndex.set(k, list);
+  }
+  for (const group of fpIndex.values()) {
+    if (group.length < 2) continue;
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        addPair(group[i]!, group[j]!, 'same-addr-fp:review');
+      }
+    }
+  }
+
+  // Sort: auto-merge candidates first, then by ascending distance
+  candidatePairs.sort((a, b) => {
+    const aAuto = a.signal.startsWith('auto-merge') ? 0 : 1;
+    const bAuto = b.signal.startsWith('auto-merge') ? 0 : 1;
+    if (aAuto !== bAuto) return aAuto - bAuto;
+    return (a.distanceMeters ?? Infinity) - (b.distanceMeters ?? Infinity);
+  });
+
+  if (jsonOutPath) writeJson(candidatePairs, jsonOutPath);
+  if (csvOutPath) writeCsv(candidatePairs, csvOutPath);
 }
 
 main()

@@ -5,6 +5,7 @@ import Papa from 'papaparse';
 import validationService from './validation.service';
 import uploadService from './upload.service';
 import { storeService, UpsertResult } from './store.service';
+import { runScopedPostIngestDedup } from '../utils/location-merge-core';
 import {
   VALIDATION_JOB_RECORDS_SAVE,
   VALIDATION_SCRAPER_JOB_COMPLETION,
@@ -284,6 +285,18 @@ class ScraperService {
               );
               postProcessLogs += formatDbSyncLog(dbSyncResult);
               logger.info(`[Job ${jobId}] DB sync — ${formatDbSyncSummaryLine(dbSyncResult)}`);
+              try {
+                const dedup = await runScopedPostIngestDedup(dbSyncResult.affectedHandles ?? []);
+                if (dedup.mergeGroups > 0) {
+                  postProcessLogs += `\n\n=== POST-IMPORT DEDUPE (${dedup.mode}) ===\nMerged ${dedup.mergeGroups} group(s), removed ${dedup.rowsRemoved} duplicate location(s).`;
+                  logger.info(
+                    `[Job ${jobId}] Post-import dedupe (${dedup.mode}) — ${dedup.mergeGroups} group(s), ${dedup.rowsRemoved} row(s) removed`
+                  );
+                }
+              } catch (dedupErr: any) {
+                postProcessLogs += `\n\n=== POST-IMPORT DEDUPE ===\nFailed: ${dedupErr.message}`;
+                logger.error(`[Job ${jobId}] Post-import dedupe failed:`, dedupErr.message);
+              }
               const rowsInDb = await this.countLocationsForUpload(individualUpload.id);
               await prisma.upload.update({
                 where: { id: individualUpload.id },
@@ -542,6 +555,18 @@ class ScraperService {
         dbUpserted = lastUpsert.upserted;
         editLogSection += `\n\n=== DB SYNC ===\n${formatDbSyncLog(lastUpsert)}`;
         logger.info(`[Job ${jobId}] DB sync (save) — ${formatDbSyncSummaryLine(lastUpsert)}`);
+        try {
+          const dedup = await runScopedPostIngestDedup(lastUpsert.affectedHandles ?? []);
+          if (dedup.mergeGroups > 0) {
+            editLogSection += `\n\n=== POST-IMPORT DEDUPE (${dedup.mode}) ===\nMerged ${dedup.mergeGroups} group(s), removed ${dedup.rowsRemoved} duplicate location(s).`;
+            logger.info(
+              `[Job ${jobId}] Post-import dedupe (${dedup.mode}, save) — ${dedup.mergeGroups} group(s), ${dedup.rowsRemoved} row(s) removed`
+            );
+          }
+        } catch (dedupErr: any) {
+          editLogSection += `\n\n=== POST-IMPORT DEDUPE ===\nFailed: ${dedupErr.message}`;
+          logger.error(`[Job ${jobId}] Post-import dedupe failed:`, dedupErr.message);
+        }
       } catch (dbErr: any) {
         editLogSection += `\n\n=== DB SYNC ===\nFailed: ${dbErr.message}`;
         logger.error(`[Job ${jobId}] DB upsert failed:`, dbErr.message);

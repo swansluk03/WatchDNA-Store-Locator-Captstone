@@ -6,6 +6,7 @@ import prisma from '../lib/prisma';
 import { logger } from '../utils/logger';
 import { parseRowToLocationData } from '../utils/csv-to-location';
 import { storeService } from './store.service';
+import { runScopedPostIngestDedup } from '../utils/location-merge-core';
 import { locationCountryEqualsWhere } from '../utils/location-country-filter';
 import { legacyBrandTextFilterWhere } from '../utils/legacy-brand-filter';
 import { locationTableHasBrandFilterModeColumn } from '../utils/location-brand-filter-column';
@@ -37,6 +38,11 @@ export interface ImportResult {
   skippedCount: number;
   errorCount: number;
   errors: string[];
+  /** Set after successful CSV import: Tier-C dedupe (merge-address-dupes rules), scoped to this ingest. */
+  dedupeMergeGroups?: number;
+  dedupeRowsRemoved?: number;
+  /** `scoped` = neighborhood of touched handles; `global-fallback` = cap exceeded, full table pass. */
+  dedupeMode?: 'scoped' | 'global-fallback' | 'none';
 }
 
 class LocationService {
@@ -96,6 +102,21 @@ class LocationService {
         `[LocationService] Import complete: ${result.newCount} new, ${result.updatedCount} updated, ` +
         `${result.unchangedCount} unchanged, ${result.skippedCount} skipped, ${result.errorCount} errors`
       );
+
+      try {
+        const dedup = await runScopedPostIngestDedup(upsert.affectedHandles ?? []);
+        result.dedupeMergeGroups = dedup.mergeGroups;
+        result.dedupeRowsRemoved = dedup.rowsRemoved;
+        result.dedupeMode = dedup.mode;
+        if (dedup.mergeGroups > 0) {
+          logger.warn(
+            `[LocationService] Post-import dedupe (${dedup.mode}): ${dedup.mergeGroups} merge group(s), ` +
+              `${dedup.rowsRemoved} duplicate row(s) removed`
+          );
+        }
+      } catch (dedupErr: any) {
+        logger.error('[LocationService] Post-import dedupe failed (non-fatal):', dedupErr.message);
+      }
     } catch (error: any) {
       result.success = false;
       result.errors.push(`Failed to read/parse CSV: ${error.message}`);

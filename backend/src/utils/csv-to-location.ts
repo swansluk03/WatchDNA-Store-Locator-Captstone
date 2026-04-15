@@ -39,6 +39,12 @@ export function dedupeStateWhenSameAsCity(
 
 export interface LocationData {
   handle: string;
+  /**
+   * Optional brand-supplied store identifier (column: "BrandStoreId" or "SourceStoreKey").
+   * When two rows in the same batch share the same non-empty key they are treated as the
+   * same store and collapsed before triplet deduplication, even if name/address/geo differ.
+   */
+  sourceStoreKey?: string | null;
   name: string;
   status: boolean;
   addressLine1: string;
@@ -113,8 +119,11 @@ export function parseRowToLocationData(row: Record<string, any>): LocationData |
 
   const { country, phone } = normalizedCountryAndPhoneFromCsvRow(row);
 
+  const rawKey = row['BrandStoreId'] || row['SourceStoreKey'] || null;
+
   return {
     handle: String(row.Handle).trim(),
+    sourceStoreKey: rawKey ? String(rawKey).trim() : null,
     name: String(row.Name).trim(),
     status: row.Status?.toLowerCase() === 'active' || row.Status?.toLowerCase() === 'true' || !row.Status,
     addressLine1: row['Address Line 1'] || '',

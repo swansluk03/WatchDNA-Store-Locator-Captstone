@@ -10,6 +10,7 @@
     "create-admin": "ts-node src/scripts/create-admin.ts",
     "seed-admin": "ts-node src/scripts/seed-admin.ts",
     "import-data": "ts-node src/scripts/import-initial-data.ts",
+    "import-csv-locations": "ts-node src/scripts/import-csv-locations.ts",
     "import-master": "ts-node src/scripts/import-master-csv.ts",
     "export-data": "ts-node src/scripts/export-sqlite-data.ts",
     "import-postgres": "ts-node src/scripts/import-to-postgres.ts",

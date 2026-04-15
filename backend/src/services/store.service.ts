@@ -24,7 +24,6 @@ import {
   pickNearestWithin,
   PROXIMITY_MERGE_MAX_METERS,
   PROXIMITY_MERGE_NAME_MATCH_MAX_METERS,
-  PROXIMITY_MERGE_SIMILAR_NAME_MAX_METERS,
   ADDRESS_FP_EXACT_MAX_METERS,
   ADDRESS_FP_CONTAIN_MAX_METERS,
 } from '../utils/geo-dedupe';
@@ -38,7 +37,22 @@ import { logger } from '../utils/logger';
 import { buildMasterExportWhere, type MasterExportFilters } from '../utils/master-export-filters';
 import { legacyBrandTextFilterWhere } from '../utils/legacy-brand-filter';
 
-const BATCH_SIZE = 500;
+/**
+ * Rows per interactive transaction for {@link batchUpsertLocations} / resilient path.
+ * Keep moderate so each transaction finishes within {@link LOCATION_UPSERT_TRANSACTION_OPTIONS}
+ * on remote Postgres (e.g. Railway proxy); oversized batches hit Prisma's default 5s transaction
+ * timeout and trigger per-row fallback (many more round trips).
+ */
+const BATCH_SIZE = 120;
+
+/**
+ * Interactive `prisma.$transaction` defaults are maxWait 2s / timeout 5s — too low for dozens of
+ * upserts over the public internet. Longer timeout keeps batched work without falling back.
+ */
+const LOCATION_UPSERT_TRANSACTION_OPTIONS = {
+  maxWait: 15_000,
+  timeout: 120_000,
+} as const;
 
 /** How incoming rows merge with existing DB rows when `mergeOnUpdate` is true. */
 export type BatchUpsertMergeKind = 'scraper' | 'manual';
@@ -54,6 +68,12 @@ type MergeRowFn = (
 
 /** ~50 metres expressed as degrees of latitude — matches the tolerance in updateMasterRecords. */
 const COORD_TOLERANCE_DEG = 0.00045;
+
+/**
+ * Rows that share the same 5dp rounded lat/lon lie within ~1–2 m; allow slack for float vs DB numeric.
+ * Used only after the SQL filter already matched ROUND(..., 5) — not a wide proximity merge.
+ */
+const ROUNDED_COORD_MATCH_MAX_METERS = 25;
 
 /** CSV-shaped row for completeness check from parsed LocationData. */
 function csvRowFromLocationData(loc: LocationData): Record<string, string> {
@@ -74,6 +94,116 @@ function csvRowFromLocationData(loc: LocationData): Record<string, string> {
  * so two imports that only differ by country spelling or brand-supplied id still target one loc_* key
  * (computeStableHandleFromRow also normalizes country internally — this uses already-normalized fields).
  */
+/** Minimal shape for name + address + coordinate dedupe alignment. */
+type DedupePoint = {
+  name: string;
+  addressLine1: string;
+  city: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+};
+
+function toDedupePoint(row: LocationData): DedupePoint {
+  return {
+    name: row.name,
+    addressLine1: row.addressLine1,
+    city: row.city,
+    country: row.country,
+    latitude: row.latitude,
+    longitude: row.longitude,
+  };
+}
+
+/**
+ * True when two address lines refer to the same place (normalized equality, fingerprint equality,
+ * or safe containment on deduped / raw fingerprints).
+ * Short lines (e.g. "1 A") align on exact trimmed case-insensitive equality even when under 4 chars.
+ */
+function addressesAlignForDedupe(aLine1: string, bLine1: string): boolean {
+  const a = (aLine1 ?? '').trim().toLowerCase();
+  const b = (bLine1 ?? '').trim().toLowerCase();
+  if (a.length > 0 && b.length > 0 && a === b) return true;
+  const inFp = dedupeAddressFingerprint(aLine1);
+  const exFp = dedupeAddressFingerprint(bLine1);
+  if (inFp.length > 0 && exFp.length > 0 && inFp === exFp) return true;
+  if (inFp.length >= 6 && exFp.length >= 6) {
+    if (safeAddressFingerprintContainment(inFp, exFp) || safeAddressFingerprintContainment(exFp, inFp)) {
+      return true;
+    }
+  }
+  const inRaw = addressFingerprintLine1(aLine1);
+  const exRaw = addressFingerprintLine1(bLine1);
+  if (inRaw.length > 0 && exRaw.length > 0 && inRaw === exRaw) return true;
+  if (inRaw.length >= 6 && exRaw.length >= 6) {
+    if (safeAddressFingerprintContainment(inRaw, exRaw) || safeAddressFingerprintContainment(exRaw, inRaw)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Name + address alignment + distance cap (m). Used for fingerprint SQL paths with a caller-chosen
+ * radius so {@link ADDRESS_FP_EXACT_MAX_METERS} / {@link ADDRESS_FP_CONTAIN_MAX_METERS} stay
+ * consistent with {@link pickNearestWithin}.
+ */
+function dedupeTripletWithinMeters(a: DedupePoint, b: DedupePoint, maxMeters: number): boolean {
+  if (!countriesMatchForDedupe(a.country, b.country)) return false;
+  const nameOk =
+    normalizeNameForDedupe(a.name) === normalizeNameForDedupe(b.name) ||
+    namesSimilarForDedupe(a.name, b.name);
+  if (!nameOk) return false;
+  if (!addressesAlignForDedupe(a.addressLine1, b.addressLine1)) return false;
+  if (
+    isUnusableScraperCoordinate(a.latitude, a.longitude) ||
+    isUnusableScraperCoordinate(b.latitude, b.longitude)
+  ) {
+    return false;
+  }
+  const d = haversineDistanceMeters(a.latitude, a.longitude, b.latitude, b.longitude);
+  return d <= maxMeters;
+}
+
+/**
+ * Same physical store for scrape/CSV dedupe: similar name, similar address, and nearby coordinates.
+ * Avoids merging different retailers in the same mall or block.
+ */
+function tripletAllowsMerge(a: DedupePoint, b: DedupePoint): boolean {
+  return dedupeTripletWithinMeters(a, b, PROXIMITY_MERGE_NAME_MATCH_MAX_METERS);
+}
+
+/** Same country + usable coords + distance cap (no name/address checks). */
+function sameCountryWithinMeters(
+  lat: number,
+  lon: number,
+  incomingCountry: string,
+  lat2: number,
+  lon2: number,
+  country2: string,
+  maxMeters: number
+): boolean {
+  if (!countriesMatchForDedupe(incomingCountry, country2)) return false;
+  if (isUnusableScraperCoordinate(lat, lon) || isUnusableScraperCoordinate(lat2, lon2)) return false;
+  return haversineDistanceMeters(lat, lon, lat2, lon2) <= maxMeters;
+}
+
+/** Same city + country + {@link addressesAlignForDedupe} + distance (batch collapse without name match). */
+function batchAddressAlignedWithinMeters(a: LocationData, b: LocationData, maxMeters: number): boolean {
+  if (!countriesMatchForDedupe(a.country, b.country)) return false;
+  if (a.city.trim().toLowerCase() !== b.city.trim().toLowerCase()) return false;
+  if (!addressesAlignForDedupe(a.addressLine1, b.addressLine1)) return false;
+  return sameCountryWithinMeters(
+    a.latitude,
+    a.longitude,
+    a.country,
+    b.latitude,
+    b.longitude,
+    b.country,
+    maxMeters
+  );
+}
+
 function applyStableHandleToCompleteParsedRow(loc: LocationData): LocationData {
   if (!isRowCompleteForDb(csvRowFromLocationData(loc))) return loc;
   try {
@@ -92,32 +222,18 @@ function applyStableHandleToCompleteParsedRow(loc: LocationData): LocationData {
 }
 
 /**
- * Nearest existing Location within {@link PROXIMITY_MERGE_MAX_METERS} and same normalized country.
- * Distance-ranked so geocode drift and dense retail behave predictably.
+ * Nearest existing Location after coordinate / fingerprint SQL passes.
  *
- * When `incomingName` is provided and the strict 75 m pass finds nothing:
- * - Pass 2 (exact name): same city + within {@link PROXIMITY_MERGE_NAME_MATCH_MAX_METERS} (300 m).
- * - Pass 3 (similar name): same city + address fingerprint containment between incoming and candidate
- *   + within {@link ADDRESS_FP_CONTAIN_MAX_METERS} (150 m).
- *
- * Name similarity narrows the candidate pool; address (+ city) agreement decides the merge.
- * This prevents two same-brand stores in one city from collapsing on name + loose distance alone.
- * Pass `incomingCity` and `incomingAddressFp` (from resolveExistingMatchForRow) to enable address gates.
+ * - Pass A: exact normalized name + same city + full triplet + within 300 m.
+ * - Pass B: similar name + same city + triplet rules at {@link ADDRESS_FP_CONTAIN_MAX_METERS} (150 m).
+ * - Pass C: same country + within {@link PROXIMITY_MERGE_MAX_METERS} m (75 m) — no name/address agreement
+ *   (last-resort pure proximity; runs only after A and B find nothing).
  */
-async function findNearestLocationForDedupe(
-  lat: number,
-  lon: number,
-  country: string,
-  incomingName?: string,
-  incomingCity?: string,
-  incomingAddressFp?: string
-): Promise<ExistingLocationSnapshot | null> {
+async function findNearestLocationForDedupe(row: LocationData): Promise<ExistingLocationSnapshot | null> {
+  const { latitude: lat, longitude: lon, country, name: incomingName, city: incomingCity } = row;
   if (isUnusableScraperCoordinate(lat, lon)) return null;
 
-  const queryRadius = incomingName
-    ? PROXIMITY_MERGE_NAME_MATCH_MAX_METERS
-    : PROXIMITY_MERGE_MAX_METERS;
-  const box = boundingBoxForRadiusMeters(lat, lon, queryRadius);
+  const box = boundingBoxForRadiusMeters(lat, lon, PROXIMITY_MERGE_NAME_MATCH_MAX_METERS);
   const candidates = await prisma.location.findMany({
     where: {
       latitude: { gte: box.latMin, lte: box.latMax },
@@ -143,59 +259,74 @@ async function findNearestLocationForDedupe(
   });
 
   const sameCountry = candidates.filter((c) => countriesMatchForDedupe(c.country, country));
+  const incomingCityNorm = incomingCity.trim().toLowerCase();
+  const incomingPoint = toDedupePoint(row);
 
-  // Pass 1: strict 75 m radius, no name requirement.
-  const nearest = pickNearestWithin(sameCountry, lat, lon, PROXIMITY_MERGE_MAX_METERS);
-  if (nearest) {
-    const { latitude: _lat, longitude: _lon, ...snapshot } = nearest;
+  // Pass A: exact normalized name + same city + full triplet (incl. address alignment).
+  const nameMatched = sameCountry.filter((c) => {
+    if (normalizeNameForDedupe(c.name) !== normalizeNameForDedupe(incomingName)) return false;
+    if (c.city.trim().toLowerCase() !== incomingCityNorm) return false;
+    const p: DedupePoint = {
+      name: c.name,
+      addressLine1: c.addressLine1,
+      city: c.city,
+      country: c.country,
+      latitude: c.latitude,
+      longitude: c.longitude,
+    };
+    return tripletAllowsMerge(incomingPoint, p);
+  });
+  const nameNearest = pickNearestWithin(nameMatched, lat, lon, PROXIMITY_MERGE_NAME_MATCH_MAX_METERS);
+  if (nameNearest) {
+    logger.info(
+      `[storeService] Name-match dedupe (${PROXIMITY_MERGE_NAME_MATCH_MAX_METERS}m, triplet): ` +
+        `"${incomingName}" → existing "${nameNearest.name}" (${nameNearest.handle})`
+    );
+    const { latitude: _lat, longitude: _lon, ...snapshot } = nameNearest;
     return snapshot;
   }
 
-  if (incomingName) {
-    const normIncoming = normalizeNameForDedupe(incomingName);
-    const incomingCityNorm = incomingCity?.trim().toLowerCase() ?? null;
-
-    // Pass 2: exact name match — require same city when provided.
-    const nameMatched = sameCountry.filter((c) => {
-      if (normalizeNameForDedupe(c.name) !== normIncoming) return false;
-      if (incomingCityNorm !== null && c.city.trim().toLowerCase() !== incomingCityNorm) return false;
-      return true;
-    });
-    const nameNearest = pickNearestWithin(nameMatched, lat, lon, PROXIMITY_MERGE_NAME_MATCH_MAX_METERS);
-    if (nameNearest) {
-      logger.info(
-        `[storeService] Name-match dedupe (${PROXIMITY_MERGE_NAME_MATCH_MAX_METERS}m, city-gated): ` +
-          `"${incomingName}" → existing "${nameNearest.name}" (${nameNearest.handle})`
-      );
-      const { latitude: _lat, longitude: _lon, ...snapshot } = nameNearest;
-      return snapshot;
-    }
-
-    // Pass 3: similar name — require same city AND address fingerprint containment.
-    // Tighter radius (150 m) because similar-name without exact address is a weaker signal.
-    const similarMatched = sameCountry.filter((c) => {
-      if (!namesSimilarForDedupe(incomingName, c.name)) return false;
-      if (incomingCityNorm !== null && c.city.trim().toLowerCase() !== incomingCityNorm) return false;
-      if (incomingAddressFp) {
-        const cFp = dedupeAddressFingerprint(c.addressLine1);
-        if (!safeAddressFingerprintContainment(incomingAddressFp, cFp)) return false;
-      }
-      return true;
-    });
-    const similarNearest = pickNearestWithin(
-      similarMatched,
-      lat,
-      lon,
-      ADDRESS_FP_CONTAIN_MAX_METERS
+  // Pass B: similar name + same city + full triplet (address rules match {@link addressesAlignForDedupe},
+  // including raw vs deduped fingerprints — avoids dedupe-only containment pre-filter disagreeing with triplet).
+  const similarMatched = sameCountry.filter((c) => {
+    if (!namesSimilarForDedupe(incomingName, c.name)) return false;
+    if (c.city.trim().toLowerCase() !== incomingCityNorm) return false;
+    const p: DedupePoint = {
+      name: c.name,
+      addressLine1: c.addressLine1,
+      city: c.city,
+      country: c.country,
+      latitude: c.latitude,
+      longitude: c.longitude,
+    };
+    return dedupeTripletWithinMeters(incomingPoint, p, ADDRESS_FP_CONTAIN_MAX_METERS);
+  });
+  const similarNearest = pickNearestWithin(
+    similarMatched,
+    lat,
+    lon,
+    ADDRESS_FP_CONTAIN_MAX_METERS
+  );
+  if (similarNearest) {
+    logger.info(
+      `[storeService] Similar-name dedupe (triplet @ ${ADDRESS_FP_CONTAIN_MAX_METERS}m): ` +
+        `"${incomingName}" → existing "${similarNearest.name}" (${similarNearest.handle})`
     );
-    if (similarNearest) {
-      logger.info(
-        `[storeService] Similar-name dedupe (address-gated, ${ADDRESS_FP_CONTAIN_MAX_METERS}m): ` +
-          `"${incomingName}" → existing "${similarNearest.name}" (${similarNearest.handle})`
-      );
-      const { latitude: _lat, longitude: _lon, ...snapshot } = similarNearest;
-      return snapshot;
-    }
+    const { latitude: _lat, longitude: _lon, ...snapshot } = similarNearest;
+    return snapshot;
+  }
+
+  const proximityOnly = sameCountry.filter((c) =>
+    sameCountryWithinMeters(lat, lon, country, c.latitude, c.longitude, c.country, PROXIMITY_MERGE_MAX_METERS)
+  );
+  const proximityNearest = pickNearestWithin(proximityOnly, lat, lon, PROXIMITY_MERGE_MAX_METERS);
+  if (proximityNearest) {
+    logger.info(
+      `[storeService] Proximity-only dedupe (${PROXIMITY_MERGE_MAX_METERS}m, same country): ` +
+        `"${incomingName}" → existing "${proximityNearest.name}" (${proximityNearest.handle})`
+    );
+    const { latitude: _lat, longitude: _lon, ...snapshot } = proximityNearest;
+    return snapshot;
   }
 
   return null;
@@ -217,6 +348,11 @@ export interface UpsertResult {
   failed?: number;
   /** Rows excluded by requireCompleteForDb before parse. */
   skippedIncomplete?: number;
+  /**
+   * Distinct Location.handle values written in this run (after remap / batch collapse).
+   * Used for scoped Tier-C dedupe so only rows near or matching these need full consideration.
+   */
+  affectedHandles?: string[];
 }
 
 type ExistingLocationSnapshot = {
@@ -263,15 +399,15 @@ const existingSelect = {
 } as const;
 
 /**
- * Existing row with same coordinates rounded to 5 dp and same country (scrapers often drift only in address text / handle hash).
+ * Existing row with same coordinates rounded to 5 dp and same country.
+ * Name/address may drift vs the incoming row; pick the nearest true coordinate within a tight radius
+ * (same rounding cell is ~1–2 m — see {@link ROUNDED_COORD_MATCH_MAX_METERS}).
  */
-async function findByRoundedCoords(
-  lat: number,
-  lon: number,
-  country: string
-): Promise<ExistingLocationSnapshot | null> {
+async function findByRoundedCoords(incoming: LocationData): Promise<ExistingLocationSnapshot | null> {
+  const lat = incoming.latitude;
+  const lon = incoming.longitude;
   if (isUnusableScraperCoordinate(lat, lon)) return null;
-  const c = normalizeCountry(country);
+  const c = normalizeCountry(incoming.country);
   const rows = await prisma.$queryRaw<LocationMatchRow[]>`
     SELECT
       "handle", "name", "brands", "customBrands",
@@ -287,21 +423,22 @@ async function findByRoundedCoords(
   `;
   if (rows.length === 0) return null;
   if (rows.length === 1) return matchRowToSnapshot(rows[0]);
-  const nearest = pickNearestWithin(rows, lat, lon, PROXIMITY_MERGE_MAX_METERS * 2);
-  return matchRowToSnapshot(nearest ?? rows[0]);
+  const nearest = pickNearestWithin(rows, lat, lon, ROUNDED_COORD_MATCH_MAX_METERS);
+  return nearest ? matchRowToSnapshot(nearest) : null;
 }
 
 /**
  * Existing row with same normalized address line1 fingerprint + city + country as analyze-duplicate-locations.ts.
+ * Rows are filtered by distance ≤ {@link ADDRESS_FP_EXACT_MAX_METERS} only (SQL already matched address + city;
+ * name may differ, e.g. legal vs display name).
  */
-async function findByAddressFingerprint(
-  fpRaw: string,
-  fpDeduped: string,
-  city: string,
-  country: string,
-  lat: number,
-  lon: number
-): Promise<ExistingLocationSnapshot | null> {
+async function findByAddressFingerprint(incoming: LocationData): Promise<ExistingLocationSnapshot | null> {
+  const fpRaw = addressFingerprintLine1(incoming.addressLine1);
+  const fpDeduped = dedupeAddressFingerprint(incoming.addressLine1);
+  const lat = incoming.latitude;
+  const lon = incoming.longitude;
+  const city = incoming.city;
+  const country = incoming.country;
   if (Math.max(fpRaw.length, fpDeduped.length) < 6 || isUnusableScraperCoordinate(lat, lon)) {
     return null;
   }
@@ -324,37 +461,28 @@ async function findByAddressFingerprint(
     LIMIT 40
   `;
   if (rows.length === 0) return null;
-  if (rows.length === 1) {
-    // Guard: if both sides have valid coordinates, reject matches that are too far apart.
-    // Prevents "23 High St" in one district merging with "23 High St" across the same city.
-    const r = rows[0];
-    if (
-      !isUnusableScraperCoordinate(lat, lon) &&
-      !isUnusableScraperCoordinate(r.latitude, r.longitude) &&
-      haversineDistanceMeters(lat, lon, r.latitude, r.longitude) > ADDRESS_FP_EXACT_MAX_METERS
-    ) {
-      return null;
-    }
-    return matchRowToSnapshot(r);
-  }
-  // Multiple candidates with the same fingerprint: pick the nearest within the guard radius.
-  // Do NOT fall back to rows[0] — if nothing is close enough, it is safer to create a new record.
-  const nearest = pickNearestWithin(rows, lat, lon, ADDRESS_FP_EXACT_MAX_METERS);
+  const aligned = rows.filter((r) =>
+    sameCountryWithinMeters(lat, lon, country, r.latitude, r.longitude, r.country, ADDRESS_FP_EXACT_MAX_METERS)
+  );
+  if (aligned.length === 0) return null;
+  if (aligned.length === 1) return matchRowToSnapshot(aligned[0]);
+  const nearest = pickNearestWithin(aligned, lat, lon, ADDRESS_FP_EXACT_MAX_METERS);
   return nearest ? matchRowToSnapshot(nearest) : null;
 }
 
 /**
  * Same city + country, and one address fingerprint contains the other (e.g. "marinamall" vs "marinamall18st").
  * Stricter than analyze "similar pairs"; requires min length to reduce false merges.
+ * Requires name + address alignment and distance ≤ {@link ADDRESS_FP_CONTAIN_MAX_METERS} (aligned with
+ * {@link pickNearestWithin} below, not the generic 300 m triplet cap).
  */
-async function findByContainedFingerprint(
-  fpRaw: string,
-  fpDeduped: string,
-  city: string,
-  country: string,
-  lat: number,
-  lon: number
-): Promise<ExistingLocationSnapshot | null> {
+async function findByContainedFingerprint(incoming: LocationData): Promise<ExistingLocationSnapshot | null> {
+  const fpRaw = addressFingerprintLine1(incoming.addressLine1);
+  const fpDeduped = dedupeAddressFingerprint(incoming.addressLine1);
+  const lat = incoming.latitude;
+  const lon = incoming.longitude;
+  const city = incoming.city;
+  const country = incoming.country;
   if (
     Math.max(fpRaw.length, fpDeduped.length) < MIN_ADDRESS_FP_CONTAIN_LEN ||
     isUnusableScraperCoordinate(lat, lon)
@@ -363,6 +491,7 @@ async function findByContainedFingerprint(
   }
   const c = normalizeCountry(country);
   const cityNormContain = city.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const incomingPoint = toDedupePoint(incoming);
   const rows = await prisma.$queryRaw<LocationMatchRow[]>`
     SELECT
       "handle", "name", "brands", "customBrands",
@@ -406,9 +535,23 @@ async function findByContainedFingerprint(
     );
   });
   if (filtered.length === 0) return null;
-  if (filtered.length === 1) {
-    // Guard: contained fingerprints are a weaker signal than exact matches, so use a tighter radius.
-    const r = filtered[0];
+  const aligned = filtered.filter((r) =>
+    dedupeTripletWithinMeters(
+      incomingPoint,
+      {
+        name: r.name,
+        addressLine1: r.addressLine1,
+        city: r.city,
+        country: r.country,
+        latitude: r.latitude,
+        longitude: r.longitude,
+      },
+      ADDRESS_FP_CONTAIN_MAX_METERS
+    )
+  );
+  if (aligned.length === 0) return null;
+  if (aligned.length === 1) {
+    const r = aligned[0];
     if (
       !isUnusableScraperCoordinate(lat, lon) &&
       !isUnusableScraperCoordinate(r.latitude, r.longitude) &&
@@ -418,9 +561,7 @@ async function findByContainedFingerprint(
     }
     return matchRowToSnapshot(r);
   }
-  // Multiple containment candidates: pick nearest within the contain radius.
-  // Do NOT fall back to filtered[0] — if nothing is close enough, create a new record.
-  const nearest = pickNearestWithin(filtered, lat, lon, ADDRESS_FP_CONTAIN_MAX_METERS);
+  const nearest = pickNearestWithin(aligned, lat, lon, ADDRESS_FP_CONTAIN_MAX_METERS);
   return nearest ? matchRowToSnapshot(nearest) : null;
 }
 
@@ -430,9 +571,11 @@ async function resolveExistingMatchForRow(
   fpCache: Map<string, ExistingLocationSnapshot | null>
 ): Promise<ExistingLocationSnapshot | null> {
   const c = normalizeCountry(row.country);
-  const coordKey = `${row.latitude.toFixed(5)}|${row.longitude.toFixed(5)}|${c}`;
+  // Include name + deduped address so cache entries are not reused across different tenants at the
+  // same rounded pin (wider key space than coords-only, but avoids incorrect merge suggestions).
+  const coordKey = `${row.latitude.toFixed(5)}|${row.longitude.toFixed(5)}|${c}|${normalizeNameForDedupe(row.name)}|${dedupeAddressFingerprint(row.addressLine1)}`;
   if (!coordCache.has(coordKey)) {
-    const hit = await findByRoundedCoords(row.latitude, row.longitude, row.country);
+    const hit = await findByRoundedCoords(row);
     coordCache.set(coordKey, hit);
   }
   const coordHit = coordCache.get(coordKey);
@@ -441,25 +584,11 @@ async function resolveExistingMatchForRow(
   const fp = addressFingerprintLine1(row.addressLine1);
   const fpDed = dedupeAddressFingerprint(row.addressLine1);
   if (Math.max(fp.length, fpDed.length) >= 6) {
-    const fpKey = `${fp}|${fpDed}|${row.city.trim().toLowerCase()}|${c}`;
+    const fpKey = `${fp}|${fpDed}|${row.city.trim().toLowerCase()}|${c}|${normalizeNameForDedupe(row.name)}`;
     if (!fpCache.has(fpKey)) {
-      let hit = await findByAddressFingerprint(
-        fp,
-        fpDed,
-        row.city,
-        row.country,
-        row.latitude,
-        row.longitude
-      );
+      let hit = await findByAddressFingerprint(row);
       if (!hit) {
-        hit = await findByContainedFingerprint(
-          fp,
-          fpDed,
-          row.city,
-          row.country,
-          row.latitude,
-          row.longitude
-        );
+        hit = await findByContainedFingerprint(row);
       }
       fpCache.set(fpKey, hit);
     }
@@ -467,11 +596,19 @@ async function resolveExistingMatchForRow(
     if (fpHit) return fpHit;
   }
 
-  return findNearestLocationForDedupe(row.latitude, row.longitude, row.country, row.name, row.city, fpDed);
+  return findNearestLocationForDedupe(row);
 }
 
 /**
- * Merge multiple incoming rows in one batch that target the same place (same 5dp coords or same address fingerprint + city + country).
+ * Merge incoming rows in one batch that describe the same physical store.
+ *
+ * Union when any of:
+ * - Same non-empty {@link LocationData.sourceStoreKey} (brand id)
+ * - Same rounded coordinates (5 dp) + country (catches duplicate rows before name/address normalize)
+ * - Same deduped address fingerprint + city + country (St vs Street, etc.)
+ * - Same city + country + {@link addressesAlignForDedupe} within {@link ADDRESS_FP_EXACT_MAX_METERS} m
+ *   (Main St vs Main Street in one batch without requiring name match)
+ * - Full {@link tripletAllowsMerge} (name + address + proximity), same as DB-side dedupe
  */
 function collapseBatchRowsByIdentity(
   rows: LocationData[],
@@ -502,36 +639,33 @@ function collapseBatchRowsByIdentity(
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       if (!countriesMatchForDedupe(rows[i].country, rows[j].country)) continue;
-      if (coordKey(rows[i]) === coordKey(rows[j])) union(i, j);
-      else if (
+      // Brand-supplied key match: trust the source that these are the same store even when
+      // name/address/geo disagree (e.g. two scraper runs with different address formats).
+      const keyI = rows[i].sourceStoreKey?.trim();
+      const keyJ = rows[j].sourceStoreKey?.trim();
+      if (keyI && keyJ && keyI === keyJ) {
+        union(i, j);
+        continue;
+      }
+      if (coordKey(rows[i]) === coordKey(rows[j])) {
+        union(i, j);
+        continue;
+      }
+      if (
         dedupeAddressFingerprint(rows[i].addressLine1).length >= 6 &&
+        dedupeAddressFingerprint(rows[j].addressLine1).length >= 6 &&
         addrKey(rows[i]) === addrKey(rows[j])
       ) {
         union(i, j);
-      } else if (
-        rows[i].city.trim().toLowerCase() === rows[j].city.trim().toLowerCase() &&
-        countriesMatchForDedupe(rows[i].country, rows[j].country)
-      ) {
-        const di = dedupeAddressFingerprint(rows[i].addressLine1);
-        const dj = dedupeAddressFingerprint(rows[j].addressLine1);
-        if (safeAddressFingerprintContainment(di, dj)) {
-          union(i, j);
-        }
-      } else if (
-        countriesMatchForDedupe(rows[i].country, rows[j].country) &&
-        rows[i].city.trim().toLowerCase() === rows[j].city.trim().toLowerCase() &&
-        namesSimilarForDedupe(rows[i].name, rows[j].name) &&
-        !isUnusableScraperCoordinate(rows[i].latitude, rows[i].longitude) &&
-        !isUnusableScraperCoordinate(rows[j].latitude, rows[j].longitude) &&
-        haversineDistanceMeters(
-          rows[i].latitude,
-          rows[i].longitude,
-          rows[j].latitude,
-          rows[j].longitude
-        ) <= PROXIMITY_MERGE_NAME_MATCH_MAX_METERS
+        continue;
+      }
+      if (
+        batchAddressAlignedWithinMeters(rows[i], rows[j], ADDRESS_FP_EXACT_MAX_METERS)
       ) {
         union(i, j);
+        continue;
       }
+      if (tripletAllowsMerge(toDedupePoint(rows[i]), toDedupePoint(rows[j]))) union(i, j);
     }
   }
 
@@ -662,7 +796,7 @@ export const storeService = {
    * - Preserves existing isPremium values; re-applies from PremiumStore for
    *   any handle that matches.
    * - Optionally stamps all rows with an uploadId.
-   * - failFast: true (default) — one transaction per 500-row batch; on failure falls back to per-row upserts for that batch.
+   * - failFast: true (default) — one transaction per batch ({@link BATCH_SIZE} rows); on failure falls back to per-row upserts for that batch.
    * - failFast: false — per-row upsert with try/catch for every row.
    * - requireCompleteForDb — only rows passing isRowCompleteForDb are upserted (incomplete stay on CSV only).
    * - mergeOnUpdate — union brands with existing; intra-batch collapse. Scraper: keep DB phone. Manual: use mergeKind `manual` so CSV phone applies when non-empty.
@@ -710,6 +844,7 @@ export const storeService = {
         addressChanged: [],
         infoChanged: [],
         skippedIncomplete: requireComplete ? skippedIncomplete : undefined,
+        affectedHandles: [],
       };
     }
 
@@ -756,6 +891,8 @@ export const storeService = {
     const mergeRow: MergeRowFn =
       mergeKind === 'manual' ? mergeLocationDataForManualImport : mergeLocationDataForUpdate;
 
+    const affectedHandles = new Set<string>();
+
     const upsertPayload = (row: LocationData) => ({
       where: { handle: row.handle },
       update: {
@@ -788,6 +925,8 @@ export const storeService = {
     for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
       const batch = parsed.slice(i, i + BATCH_SIZE);
       const batchHandles = batch.map((r) => r.handle);
+      /** At most one create/update/unchanged tally per handle in this sub-batch (finalBatch can list a handle more than once). */
+      const tallySeen = new Set<string>();
 
       const existingRecords = await prisma.location.findMany({
         where: { handle: { in: batchHandles } },
@@ -833,13 +972,19 @@ export const storeService = {
       const snapByHandle = new Map(snapshots.map((s) => [s.handle, s]));
 
       try {
-        await prisma.$transaction(async (tx) => {
-          for (const row of finalBatch) {
-            await tx.location.upsert(upsertPayload(row));
-          }
-        });
+        await prisma.$transaction(
+          async (tx) => {
+            for (const row of finalBatch) {
+              await tx.location.upsert(upsertPayload(row));
+            }
+          },
+          LOCATION_UPSERT_TRANSACTION_OPTIONS
+        );
         for (const row of finalBatch) {
           premiumHandles.add(row.handle);
+          affectedHandles.add(row.handle);
+          if (tallySeen.has(row.handle)) continue;
+          tallySeen.add(row.handle);
           const existing = snapByHandle.get(row.handle);
           if (!existing) {
             newStores.push(row.name);
@@ -856,7 +1001,8 @@ export const storeService = {
             }
           }
         }
-        upserted += batch.length;
+        // Distinct locations written (finalBatch can list the same handle more than once after collapse).
+        upserted += uniqueHandles.length;
       } catch (err: any) {
         logger.error(
           `[storeService] Batch transaction failed (${batch.length} input rows), per-row fallback:`,
@@ -867,8 +1013,11 @@ export const storeService = {
           try {
             await prisma.location.upsert(upsertPayload(row));
             premiumHandles.add(row.handle);
-            upserted++;
+            affectedHandles.add(row.handle);
+            if (tallySeen.has(row.handle)) continue;
+            tallySeen.add(row.handle);
             tallyAfterUpsert(row, preExisting);
+            upserted++;
           } catch (rowErr: any) {
             failed++;
             dbErrors.push(`Error importing ${row.name || row.handle}: ${rowErr.message}`);
@@ -892,9 +1041,9 @@ export const storeService = {
       infoChanged,
     };
     if (dbErrors.length > 0 || failed > 0) {
-      return { ...base, dbErrors, failed };
+      return { ...base, dbErrors, failed, affectedHandles: [...affectedHandles] };
     }
-    return base;
+    return { ...base, affectedHandles: [...affectedHandles] };
   },
 
   /** Per-row upsert with try/catch so one bad row does not roll back the batch. */
@@ -920,9 +1069,12 @@ export const storeService = {
     const mergeRow: MergeRowFn =
       mergeKind === 'manual' ? mergeLocationDataForManualImport : mergeLocationDataForUpdate;
 
+    const affectedHandles = new Set<string>();
+
     for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
       const batch = parsed.slice(i, i + BATCH_SIZE);
       const batchHandles = batch.map((r) => r.handle);
+      const tallySeen = new Set<string>();
 
       const existingRecords = await prisma.location.findMany({
         where: { handle: { in: batchHandles } },
@@ -970,17 +1122,25 @@ export const storeService = {
       for (const row of finalBatch) {
         const preExisting = snapByHandle.get(row.handle);
         try {
-          await prisma.location.upsert({
-            where: { handle: row.handle },
-            update: {
-              ...row,
-              ...(uploadId ? { uploadId } : {}),
+          await prisma.$transaction(
+            async (tx) => {
+              await tx.location.upsert({
+                where: { handle: row.handle },
+                update: {
+                  ...row,
+                  ...(uploadId ? { uploadId } : {}),
+                },
+                create: {
+                  ...row,
+                  ...(uploadId ? { uploadId } : {}),
+                },
+              });
             },
-            create: {
-              ...row,
-              ...(uploadId ? { uploadId } : {}),
-            },
-          });
+            LOCATION_UPSERT_TRANSACTION_OPTIONS
+          );
+          affectedHandles.add(row.handle);
+          if (tallySeen.has(row.handle)) continue;
+          tallySeen.add(row.handle);
           successfulHandles.push(row.handle);
           upserted++;
 
@@ -1020,6 +1180,7 @@ export const storeService = {
       infoChanged,
       dbErrors,
       failed,
+      affectedHandles: [...affectedHandles],
     };
   },
 
