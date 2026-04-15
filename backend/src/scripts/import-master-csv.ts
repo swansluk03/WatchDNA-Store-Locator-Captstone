@@ -7,8 +7,11 @@
  *   - Admin edits and saveJobRecords also write directly to the DB.
  *
  * Run this script ONLY when you need to:
- *   a) Bootstrap a fresh database from an existing master_stores.csv backup.
- *   b) Recover from a catastrophic DB loss using a known-good CSV export.
+ *   a) Bootstrap a fresh database from a CSV export (admin download or GET /backend/uploads/master_stores.csv).
+ *   b) Recover from a catastrophic DB loss using a known-good export.
+ *
+ * Set MASTER_IMPORT_CSV to an absolute path, or place the export at backend/uploads/master_stores.csv
+ * (that path is not committed; the DB is the source of truth).
  *
  * WARNING: This performs a full TRUNCATE of the Location table before inserting.
  * All rows currently in the DB will be permanently deleted.
@@ -23,13 +26,22 @@ import prisma from '../lib/prisma';
 import { parseRowToLocationData } from '../utils/csv-to-location';
 
 const BATCH_SIZE = 500;
-const CSV_PATH = path.join(__dirname, '..', '..', 'uploads', 'master_stores.csv');
+
+function resolveMasterImportPath(): string {
+  const fromEnv = process.env.MASTER_IMPORT_CSV?.trim();
+  if (fromEnv) return path.resolve(fromEnv);
+  return path.join(__dirname, '..', '..', 'uploads', 'master_stores.csv');
+}
 
 async function importMasterCSV() {
   console.log('Starting master CSV import...\n');
 
+  const CSV_PATH = resolveMasterImportPath();
   if (!fs.existsSync(CSV_PATH)) {
-    throw new Error(`CSV not found at: ${CSV_PATH}`);
+    throw new Error(
+      `CSV not found at: ${CSV_PATH}\n` +
+        'Export from the running API (e.g. GET /backend/uploads/master_stores.csv) or set MASTER_IMPORT_CSV to your export file path.'
+    );
   }
 
   const fileContent = fs.readFileSync(CSV_PATH, 'utf-8');

@@ -1549,12 +1549,12 @@
 
         console.log('Markers added:', allMarkers.length);
         if (allMarkers.length === 0) {
-          showBanner('No markers loaded — check that master_stores.csv has data rows with numeric Latitude/Longitude.');
+          showBanner('No markers loaded — ensure the backend is running and locations in the DB have numeric Latitude/Longitude (CSV is generated from the database).');
         }
       })
       .catch(err => {
         console.error('Error loading CSV:', err);
-        alert('Failed to load master_stores.csv. Serve via http://localhost and ensure the CSV file exists at backend/uploads/master_stores.csv.');
+        alert('Failed to load store CSV from the server. Run the backend and open this page via http://localhost (the CSV is generated from the database, not a static file).');
       });
   </script>
 </body>

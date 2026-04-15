@@ -21,7 +21,7 @@
 ### 📁 Local Files (ACTIVE)
 - Uploaded CSVs: `backend/uploads/*.csv`
 - Scraped CSVs: `backend/uploads/scraped/*.csv`
-- Master CSV: `master_stores.csv` (root directory)
+- Master store data lives in PostgreSQL only. Export a snapshot from the admin UI or `GET /backend/uploads/master_stores.csv` (generated from the DB) when you need a CSV file for backup or `import-master`.
 
 ---
 

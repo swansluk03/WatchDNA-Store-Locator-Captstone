@@ -181,7 +181,7 @@ WatchDNA-Store-Locator-Captstone/
 │   │   ├── schema.prisma             # Database schema
 │   │   └── migrations/               # Database migrations
 │   │
-│   ├── uploads/                      # Temporary file storage
+│   ├── uploads/                      # Uploaded/scraped CSVs (master data lives in DB; export when needed)
 │   ├── package.json                  # Dependencies
 │   ├── tsconfig.json                 # TypeScript config
 │   ├── .env.example                  # Environment template
@@ -237,7 +237,6 @@ WatchDNA-Store-Locator-Captstone/
 ├── prototype.html                    # Interactive map demo (root)
 ├── locations.csv                     # Store location data
 ├── locations2.csv                    # Alternate store data
-├── master_stores.csv                 # Master store list
 ├── requirements.txt                  # Python dependencies
 ├── README.md                         # Main documentation
 ├── PHASE1_COMPLETE.md                # Phase 1 summary
@@ -245,10 +244,8 @@ WatchDNA-Store-Locator-Captstone/
 ├── server.js                         # Simple server entry (root)
 ├── .env.example                      # Environment template
 ├── TECHNICAL_DOCUMENTATION.md        # This file
-├── uploads/                          # Uploaded CSVs and exports
-│   └── master_stores.csv
 └── user-frontend/                    # Lightweight frontend prototype
-  └── prototype.html
+    └── prototype.html
 ```
 
 ### Key Directories Explained
