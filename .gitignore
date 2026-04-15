@@ -10,3 +10,8 @@ backend/.env
 Prototypes/Data_Scrappers/output/
 output/
 .claude/
+
+# Master export is generated from the DB — do not commit snapshots
+/master_stores.csv
+backend/uploads/master_stores.csv
+backend/uploads/master_stores.csv.backup

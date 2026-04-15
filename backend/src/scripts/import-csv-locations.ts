@@ -4,9 +4,8 @@
  * (batch upsert, dedupe, merge with existing stores — same as scraper output).
  *
  * Usage (from backend/):
- *   npm run import-csv-locations
- *   npm run import-csv-locations -- ../locations2.csv
- *   npm run import-csv-locations -- /absolute/path/to/file.csv
+ *   npm run import-data -- ./path/to/stores.csv
+ *   IMPORT_CSV_PATH=./stores.csv npm run import-data
  */
 
 import path from 'path';
@@ -15,18 +14,25 @@ import uploadService from '../services/upload.service';
 import prisma from '../lib/prisma';
 import { logger } from '../utils/logger';
 
-function defaultCsvPath(): string {
-  const repoRoot = path.resolve(__dirname, '..', '..', '..');
-  return path.join(repoRoot, 'locations2.csv');
-}
-
-function resolveCsvPath(arg: string | undefined): string {
-  if (!arg) return defaultCsvPath();
-  return path.isAbsolute(arg) ? arg : path.resolve(process.cwd(), arg);
+function resolveCsvPath(): string {
+  const fromArg = process.argv[2]?.trim();
+  if (fromArg) {
+    return path.isAbsolute(fromArg) ? fromArg : path.resolve(process.cwd(), fromArg);
+  }
+  const fromEnv = process.env.IMPORT_CSV_PATH?.trim();
+  if (fromEnv) {
+    return path.isAbsolute(fromEnv) ? fromEnv : path.resolve(process.cwd(), fromEnv);
+  }
+  console.error(
+    'Missing CSV path.\n' +
+      '  npm run import-data -- <path-to.csv>\n' +
+      '  or set IMPORT_CSV_PATH to a CSV file.'
+  );
+  throw new Error('Missing CSV path');
 }
 
 async function main() {
-  const csvPath = resolveCsvPath(process.argv[2]);
+  const csvPath = resolveCsvPath();
 
   try {
     await fs.access(csvPath);

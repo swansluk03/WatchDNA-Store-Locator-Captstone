@@ -38,7 +38,7 @@ async function resetDatabase() {
     console.log('\n🎉 Database reset complete!');
     console.log('\n📝 Next steps:');
     console.log('  1. Run: npm run seed-admin (to create admin user)');
-    console.log('  2. Run: npm run import-data (to import locations.csv)');
+    console.log('  2. Run: npm run import-data -- ./path/to/stores.csv (validate + import CSV)');
     console.log('  3. Or upload CSVs via admin panel');
 
   } catch (error: any) {

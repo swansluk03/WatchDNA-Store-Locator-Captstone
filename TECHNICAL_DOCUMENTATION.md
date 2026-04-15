@@ -168,11 +168,9 @@ WatchDNA-Store-Locator-Captstone/
 │   │   │   ├── auth.middleware.ts    # JWT verification
 │   │   │   └── upload.middleware.ts  # File upload config
 │   │   │
-│   │   ├── scripts/                  # Utility scripts
-│   │   │   ├── seed-admin.ts         # Create default admin
-│   │   │   ├── create-admin.ts       # Interactive admin creation
-│   │   │   ├── import-initial-data.ts # Import CSV to DB
-│   │   │   ├── export-sqlite-data.ts # Export data
+│   │   ├── scripts/                  # Utility scripts (see package.json)
+│   │   │   ├── import-csv-locations.ts # Validate + import a store CSV (same as admin upload)
+│   │   │   ├── import-master-csv.ts  # DR: truncate + load from CSV (rare)
 │   │   │   └── reset-database.ts     # Database reset
 │   │   │
 │   │   └── server.ts                 # Express application entry
@@ -234,18 +232,16 @@ WatchDNA-Store-Locator-Captstone/
 │       ├── viewport_grid.py          # Viewport simulation
 │       └── brand_configs.json        # Brand configurations
 │
-├── prototype.html                    # Interactive map demo (root)
-├── locations.csv                     # Store location data
-├── locations2.csv                    # Alternate store data
+├── locations.csv / locations2.csv    # Optional local CSVs (not required; import via CLI path)
 ├── requirements.txt                  # Python dependencies
 ├── README.md                         # Main documentation
 ├── PHASE1_COMPLETE.md                # Phase 1 summary
 ├── RESET_GUIDE.md                    # Reset guide
-├── server.js                         # Simple server entry (root)
 ├── .env.example                      # Environment template
 ├── TECHNICAL_DOCUMENTATION.md        # This file
-└── user-frontend/                    # Lightweight frontend prototype
-    └── prototype.html
+└── user-frontend/                    # Map prototype (Express serves prototype.html at /)
+    ├── prototype.html
+    └── index.html
 ```
 
 ### Key Directories Explained
@@ -917,7 +913,7 @@ npm run dev
 3. **Terminal 3 - Python (if needed):**
 ```bash
 source venv/bin/activate
-python tools/validate_csv.py locations.csv
+python tools/validate_csv.py path/to/your.csv
 ```
 
 ### Available NPM Scripts
@@ -930,12 +926,13 @@ npm run build            # Build for production
 npm start                # Run production build
 npm run seed-admin       # Create default admin user
 npm run create-admin     # Interactive admin creation
-npm run import-data      # Import CSV to database
-npm run export-data      # Export database data
+npm run import-data      # Validate + import CSV (pass path: npm run import-data -- ./file.csv)
 npm run reset-db         # Reset database
 npx prisma studio        # Open database GUI
 npx prisma migrate dev   # Create database migration
 ```
+
+Store CSV export is not an npm script: use the admin download or `GET /backend/uploads/master_stores.csv` (implemented in `server.ts` via `storeService.generateDownloadCSV()`).
 
 #### Frontend Scripts
 
@@ -974,7 +971,7 @@ npx prisma studio
 3. **Test CSV Validation:**
 ```bash
 source venv/bin/activate
-python tools/validate_csv.py locations.csv
+python tools/validate_csv.py path/to/your.csv
 ```
 
 4. **Test Frontend:**
@@ -995,6 +992,7 @@ npx prisma studio
 cd backend
 npm run reset-db
 npm run seed-admin
+npm run import-data -- ./path/to/stores.csv   # optional: reload from CSV
 ```
 
 **Create Migration:**

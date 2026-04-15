@@ -41,11 +41,11 @@ npm run reset-db
 # Create admin user
 npm run seed-admin
 
-# Import locations from CSV
-npm run import-data
+# Import locations from CSV (path required)
+npm run import-data -- /path/to/your-stores.csv
 ```
 
-**Result:** Fresh database with locations from `locations.csv`
+**Result:** Fresh database with locations from the CSV you passed.
 
 ---
 
@@ -65,7 +65,7 @@ rm -rf migrations/sqlite-export.json
 
 # 3. Re-initialize
 npm run seed-admin
-npm run import-data
+npm run import-data -- /path/to/your-stores.csv
 ```
 
 **Result:** Completely fresh start
@@ -95,7 +95,7 @@ npx prisma db execute --stdin <<< "DELETE FROM \"Location\";"
 
 **Then re-import:**
 ```bash
-npm run import-data
+npm run import-data -- /path/to/your-stores.csv
 ```
 
 ---
@@ -126,14 +126,15 @@ npx prisma db execute --stdin <<< "DELETE FROM \"ValidationLog\";"
 ```bash
 cd backend
 
-# 1. Export data first (safety backup)
-npm run export-data
+# 1. Optional: export stores as CSV (with backend running — same payload as admin download)
+# curl -sS "http://localhost:3001/backend/uploads/master_stores.csv" -o ../stores-backup.csv
 
 # 2. Reset database schema
 npx prisma migrate reset --force
 
-# 3. Re-import data
-npm run import-postgres
+# 3. Re-create admin and re-import from CSV
+npm run seed-admin
+npm run import-data -- ../stores-backup.csv
 ```
 
 **Warning:** This deletes EVERYTHING including table structure!
@@ -147,7 +148,7 @@ npm run import-postgres
 cd backend
 npm run reset-db
 npm run seed-admin
-npm run import-data
+npm run import-data -- /path/to/your-stores.csv
 ```
 
 ### "I want to test the scraper from scratch"
@@ -169,7 +170,8 @@ npx prisma db execute --stdin <<< "DELETE FROM \"Location\";"
 ```bash
 cd backend
 npm run reset-db
-npm run import-postgres  # Imports from sqlite-export.json
+npm run seed-admin
+npm run import-data -- /path/to/your-exported-stores.csv
 ```
 
 ---
@@ -178,7 +180,7 @@ npm run import-postgres  # Imports from sqlite-export.json
 
 Before resetting:
 
-- [ ] **Backup your data:** Run `npm run export-data` first
+- [ ] **Backup your data:** e.g. download from admin, or `curl` `GET /backend/uploads/master_stores.csv` while the API is running
 - [ ] **Check Supabase dashboard:** Verify you're resetting the right database
 - [ ] **Save admin password:** You'll need to re-create the admin user
 - [ ] **Check uploads folder:** Any important CSV files backed up?
@@ -197,14 +199,10 @@ npm run reset-db
 # Create admin user
 npm run seed-admin
 
-# Import locations from CSV
-npm run import-data
+# Import locations from CSV (path required)
+npm run import-data -- ./stores.csv
 
-# Export database to JSON (backup)
-npm run export-data
-
-# Import from backup
-npm run import-postgres
+# Export all stores as CSV: admin panel download, or curl GET /backend/uploads/master_stores.csv
 
 # View database directly
 npx prisma db execute --stdin <<< "SELECT COUNT(*) FROM \"Location\";"
@@ -216,5 +214,5 @@ npx prisma db execute --stdin <<< "SELECT COUNT(*) FROM \"Location\";"
 
 - **Can't delete data:** Check Prisma Studio for foreign key constraints
 - **Lost admin password:** Run `npm run seed-admin` to recreate admin user
-- **Accidentally deleted everything:** Run `npm run import-postgres` if you have the export file
+- **Accidentally deleted everything:** Restore from a CSV backup with `npm run import-data -- ./your-backup.csv` after `seed-admin`
 - **Supabase connection issues:** Check `.env` file has correct connection strings

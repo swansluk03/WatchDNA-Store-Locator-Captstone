@@ -7,6 +7,7 @@
  *
  * Live database (Prisma / DATABASE_URL):
  *   npm run verify-countries -- --db
+ *   (There is no separate verify-countries-db script; pass --db as above.)
  */
 
 import 'dotenv/config';
