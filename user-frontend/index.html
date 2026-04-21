@@ -485,14 +485,9 @@
       return parts.join('\n');
     }
 
-    // Brand level paid visibility (demo)
-    // A brand can approve up to 'maxApproved' locations to show that brand even if the location isnt verified
-    const BRAND_VISIBILITY_CONFIG = {
-      "OMEGA": {
-        maxApproved: 5,
-        approvedHandles: ["7426", "6416", "3229", "6917170001", "O1825152"]
-      }
-    };
+    function getApprovedBrandsList(row) {
+      return brandsFromCustomBrandsField(row['Custom Brands']);
+    }
 
     // Brands that should show a verified indicator (demo list)
     const VERIFIED_BRANDS = new Set([
@@ -543,7 +538,7 @@
       return list.map(b => {
         const clean = b.trim();
         const key = clean.toUpperCase();
-        const isVerifiedBrand = VERIFIED_BRANDS.has(key);
+        const isVerifiedBrand = isLocationApprovedForBrand(row, clean);
         const check = isVerifiedBrand ? ` <span class="verified-check" title="Verified brand">✓</span>` : "";
         const href = brandLinks.get(key);
 
@@ -595,28 +590,10 @@
     }
 
     function isLocationApprovedForBrand(row, brandName) {
-      const cfg = BRAND_VISIBILITY_CONFIG[String(brandName || "").toUpperCase()];
-      if (!cfg) return false;
+      const approvedBrands = getApprovedBrandsList(row);
+      const brandKey = String(brandName || '').trim().toUpperCase();
 
-      const maxApproved = Number(cfg.maxApproved || 0);
-      const approvedCount =
-        (cfg.approvedHandles?.length || 0) + (cfg.approvedNames?.length || 0);
-
-      if (maxApproved > 0 && approvedCount > maxApproved) {
-      }
-
-      const handle = normalizeKey(row["Handle"]);
-      const name = normalizeKey(row["Name"]);
-
-      const handleApproved = (cfg.approvedHandles || [])
-        .slice(0, maxApproved || undefined)
-        .some(h => normalizeKey(h) === handle);
-
-      const nameApproved = (cfg.approvedNames || [])
-        .slice(0, maxApproved || undefined)
-        .some(n => normalizeKey(n) === name);
-
-      return handleApproved || nameApproved;
+      return approvedBrands.some((b) => String(b || '').trim().toUpperCase() === brandKey);
     }
 
     /** Parse `Custom Brands` HTML or plain comma-separated text into brand names. */
@@ -764,7 +741,7 @@
         ? fullBrandList.map(b => {
           const clean = b.trim();
           const key = clean.toUpperCase();
-          const isVerifiedBrand = VERIFIED_BRANDS.has(key);
+          const isVerifiedBrand = isLocationApprovedForBrand(row, clean);
           const check = isVerifiedBrand ? ` <span class="verified-check" title="Verified brand">✓</span>` : "";
           const href = fullBrandLinks.get(key);
 
