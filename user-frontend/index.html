@@ -1176,6 +1176,95 @@
       );
     }
 
+    function isMobileSafari() {
+      const ua = navigator.userAgent || '';
+      const isIOS = /iPhone|iPad|iPod/i.test(ua);
+      const isSafari = /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
+      return isIOS && isSafari;
+    }
+
+    function requestLocationFromDirectGesture() {
+      if (!navigator.geolocation) {
+        setNearMeStatus('Geolocation not supported.');
+        return;
+      }
+
+      setNearMeStatus('Locating...');
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+          cachedLatLng = ll;
+          lastLocationTime = Date.now();
+          startupLocateAttempted = true;
+          clearStartupGestureListeners();
+
+          showUserMarker(ll);
+
+          try {
+            localStorage.setItem('watchdna_location_enabled', 'true');
+          } catch (e) {
+            console.warn('Could not persist location preference.', e);
+          }
+
+          map.once('moveend', () => {
+            try {
+              const currentBounds = map.getBounds().pad(-0.05);
+
+              areaFilterEnabled = true;
+              areaFilterBounds = currentBounds;
+              lastSearchAreaBounds = currentBounds;
+
+              applyFilter();
+
+              const visible = getVisibleMarkers().length;
+              setNearMeStatus(`Showing ${visible} location${visible !== 1 ? 's' : ''} near you`);
+            } catch (err) {
+              console.error('Error applying location filter:', err);
+              setNearMeStatus('Unable to filter nearby locations.');
+            }
+          });
+
+          map.flyTo(ll, 10, {
+            animate: true,
+            duration: 1.8
+          });
+        },
+        (err) => {
+          const m = {
+            1: 'Location access was denied. Use the location button to try again.',
+            2: 'Position unavailable.',
+            3: 'Request timed out.'
+          };
+
+          setNearMeStatus(m[err.code] || 'Unable to get location.');
+          syncViewportCountVisibility();
+        },
+        {
+          enableHighAccuracy: false,
+          timeout: 15000,
+          maximumAge: 300000
+        }
+      );
+    }
+
+    function canUseBrowserLocation() {
+      return window.isSecureContext && !!navigator.geolocation;
+    }
+
+    async function getGeolocationPermissionState() {
+      try {
+        if (!navigator.permissions || !navigator.permissions.query) {
+          return 'unknown';
+        }
+
+        const result = await navigator.permissions.query({ name: 'geolocation' });
+        return result.state || 'unknown';
+      } catch (err) {
+        return 'unknown';
+      }
+    }
+
     let startupGestureArmed = false;
     let startupLocateAttempted = false;
     let startupGestureCleanup = null;
@@ -1192,10 +1281,8 @@
       if (startupGestureArmed || startupLocateAttempted || !navigator.geolocation) return;
 
       const triggerFromGesture = () => {
-        clearStartupGestureListeners();
         if (startupLocateAttempted) return;
-        startupLocateAttempted = true;
-        centerOnUserLocation({ triggeredByUserGesture: true });
+        requestLocationFromDirectGesture();
       };
 
       const onTouchEnd = () => triggerFromGesture();
@@ -1218,9 +1305,15 @@
         return;
       }
 
-      if (isTouchLikeDevice()) {
-        setNearMeStatus('Tap anywhere or use the location button to show nearby locations.');
+      if (isMobileSafari()) {
+        setNearMeStatus('Tap anywhere to show nearby locations.');
         armStartupGestureLocate();
+        return;
+      }
+
+      if (isTouchLikeDevice()) {
+        startupLocateAttempted = true;
+        centerOnUserLocation({ triggeredByUserGesture: false, suppressDeniedMessage: true });
         return;
       }
 
