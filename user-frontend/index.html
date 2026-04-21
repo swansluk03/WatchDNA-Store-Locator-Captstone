@@ -1285,12 +1285,6 @@
         requestLocationFromDirectGesture();
       };
 
-      const onTouchEnd = () => triggerFromGesture();
-      const onClick = () => triggerFromGesture();
-
-      document.addEventListener('touchend', onTouchEnd, { passive: true, once: true });
-      document.addEventListener('click', onClick, { once: true });
-
       startupGestureCleanup = () => {
         document.removeEventListener('touchend', onTouchEnd);
         document.removeEventListener('click', onClick);
@@ -1306,8 +1300,7 @@
       }
 
       if (isMobileSafari()) {
-        setNearMeStatus('Tap anywhere to show nearby locations.');
-        armStartupGestureLocate();
+        setNearMeStatus('Tap the ⌖ button to show nearby locations.');
         return;
       }
 
@@ -1445,7 +1438,9 @@
 
         locateBtn.addEventListener('click', (e) => {
           e.preventDefault();
-          centerOnUserLocation({ triggeredByUserGesture: true });
+          clearStartupGestureListeners();
+          startupLocateAttempted = true;
+          requestLocationFromDirectGesture();
         });
 
         return container;
