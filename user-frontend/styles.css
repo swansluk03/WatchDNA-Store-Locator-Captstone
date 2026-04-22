@@ -345,9 +345,9 @@ header::-webkit-scrollbar-thumb {
 }
 
 .filters-actions {
-  margin-top: 10px;
+  margin-top: 5px;
   display: flex;
-  gap: 8px;
+  gap: 160px;
   align-items: center;
 }
 
