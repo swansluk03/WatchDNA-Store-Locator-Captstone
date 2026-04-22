@@ -12,6 +12,7 @@ router.get('/images/:filename', premiumController.serveStoreImage);
 router.get('/names', premiumController.getNames);
 
 // Admin-only routes
+router.get('/shopify-files', authenticate, premiumController.searchShopifyFiles);
 router.post('/reconcile', authenticate, premiumController.reconcile);
 router.get('/stores', authenticate, premiumController.getStores);
 router.patch('/stores/:handle', authenticate, premiumController.updateStore);

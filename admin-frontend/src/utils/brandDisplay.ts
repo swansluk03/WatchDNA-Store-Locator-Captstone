@@ -3,13 +3,39 @@
 const SUFFIXES = ['_stores', '_retailers', '_dealers', '_watches'] as const;
 
 const DISPLAY_OVERRIDES: Record<string, string> = {
+  // Ampersand / special character brands
   'ALANGE SOEHNE': 'A. LANGE & SÖHNE',
   'BAUME ET MERCIER': 'BAUME & MERCIER',
   'BELL ROSS': 'BELL & ROSS',
+  // Accented name variants
+  'FREDERIQUE CONSTANT': 'FRÉDÉRIQUE CONSTANT',
+  'FREDERIQUE-CONSTANT': 'FRÉDÉRIQUE CONSTANT',
+  // Umlaut variants
+  'GLASHUTTE': 'GLASHÜTTE',
+  'GLASHUTTE ORIGINAL': 'GLASHÜTTE ORIGINAL',
+  'MUHLE GLASHUTTE': 'MUHLE GLASHÜTTE',
+  'NOMOS GLASHUTTE': 'NOMOS GLASHÜTTE',
+  'UNION GLASHUTTE': 'UNION GLASHÜTTE',
+  // Misspellings
+  'TOMMY HILFINGER': 'TOMMY HILFIGER',
+  // Hyphen/no-hyphen
+  'UBOAT': 'U-BOAT',
+  // Regional suffix variants
+  'GRAHAM OF LONDON': 'GRAHAM',
 };
 
+function stripSimpleHtml(s: string): string {
+  return s.replace(/<[^>]+>/g, '');
+}
+
+function looksLikeAddressLine(upper: string): boolean {
+  if (!/^\d{1,5}\s+/.test(upper)) return false;
+  return /\b(RUE|RUA|VIA|VIALE|CORSO|PIAZZA|C\/|STREET|ST\.|AVENUE|ROAD|BLVD|BOULEVARD|LANE|DRIVE|WAY|COURT|CARRER)\b/i.test(upper);
+}
+
+/** Keep in sync with backend `brandConfigIdToDisplayName` in brand-display-name.ts */
 export function brandConfigIdToDisplayName(brandId: string): string {
-  let name = brandId.trim();
+  let name = stripSimpleHtml(brandId).trim();
   if (!name) return '';
   for (const suf of SUFFIXES) {
     const low = name.toLowerCase();
@@ -19,6 +45,9 @@ export function brandConfigIdToDisplayName(brandId: string): string {
     }
   }
   name = name.replace(/_/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+  if (!name) return '';
+  if (!/[A-Z0-9]/i.test(name)) return '';
+  if (looksLikeAddressLine(name)) return '';
   return DISPLAY_OVERRIDES[name] ?? name;
 }
 

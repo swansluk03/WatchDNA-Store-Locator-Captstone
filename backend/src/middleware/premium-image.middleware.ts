@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 
+import { shopifyFilesConfigured } from '../services/shopify-files.service';
 import {
   STORE_IMAGE_MIME_TO_EXT,
   storeImagesAbsoluteDir,
@@ -10,7 +11,7 @@ import {
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
-const storage = multer.diskStorage({
+const diskStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     const dir = storeImagesAbsoluteDir();
     fs.mkdirSync(dir, { recursive: true });
@@ -30,8 +31,9 @@ const fileFilter: multer.Options['fileFilter'] = (_req, file, cb) => {
   cb(new Error('Only JPEG, PNG, WebP, or GIF images are allowed'));
 };
 
+/** Disk when Shopify uploads are off (default); memory when SHOPIFY_* env is set so we can stream to Shopify. */
 export const premiumImageUpload = multer({
-  storage,
+  storage: shopifyFilesConfigured() ? multer.memoryStorage() : diskStorage,
   fileFilter,
   limits: { fileSize: MAX_BYTES },
 });

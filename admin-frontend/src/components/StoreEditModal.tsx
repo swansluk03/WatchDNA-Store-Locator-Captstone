@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  searchShopifyFiles,
   updateStore,
   uploadStoreImage,
   type BrandFilterModeWire,
   type PremiumRetailKind,
+  type ShopifyFileResult,
   type StoreRecord,
   type StoreUpdatePayload,
 } from '../services/premium.service';
@@ -24,9 +26,13 @@ function imagePreviewSrc(imageUrl: string): string {
 }
 
 export interface StoreEditDraft {
+  name: string;
+  nameEn: string;
   addressLine1: string;
+  addressLine1En: string;
   addressLine2: string;
   city: string;
+  cityEn: string;
   stateProvinceRegion: string;
   postalCode: string;
   country: string;
@@ -49,9 +55,13 @@ export interface StoreEditDraft {
 
 function storeToDraft(s: StoreRecord): StoreEditDraft {
   return {
+    name: s.name,
+    nameEn: n2s(s.nameEn),
     addressLine1: s.addressLine1,
+    addressLine1En: n2s(s.addressLine1En),
     addressLine2: n2s(s.addressLine2),
     city: s.city,
+    cityEn: n2s(s.cityEn),
     stateProvinceRegion: n2s(s.stateProvinceRegion),
     postalCode: n2s(s.postalCode),
     country: s.country,
@@ -83,9 +93,13 @@ function draftToPayload(
 ): StoreUpdatePayload {
   const empty = (s: string) => (s.trim() === '' ? null : s.trim());
   const out: StoreUpdatePayload = {
+    name: d.name.trim(),
+    nameEn: empty(d.nameEn),
     addressLine1: d.addressLine1.trim(),
+    addressLine1En: empty(d.addressLine1En),
     addressLine2: empty(d.addressLine2),
     city: d.city.trim(),
+    cityEn: empty(d.cityEn),
     stateProvinceRegion: empty(d.stateProvinceRegion),
     postalCode: empty(d.postalCode),
     country: d.country.trim(),
@@ -243,6 +257,86 @@ export const BrandEditor: React.FC<{
   );
 };
 
+/** Inline Shopify Files picker: search by filename, click to select a CDN URL. */
+const ShopifyFilePicker: React.FC<{
+  onSelect: (url: string, gid: string) => void;
+  disabled?: boolean;
+}> = ({ onSelect, disabled }) => {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<ShopifyFileResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [configured, setConfigured] = useState(true);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const doSearch = useCallback(async (q: string) => {
+    setLoading(true);
+    try {
+      const res = await searchShopifyFiles(q, 20);
+      setConfigured(res.configured);
+      setResults(res.files.filter((f) => f.url && f.fileStatus === 'READY'));
+    } catch {
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => doSearch(query), 350);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query, open, doSearch]);
+
+  if (!configured) return null;
+
+  return (
+    <div className="shopify-file-picker">
+      <button
+        type="button"
+        className="store-edit-btn store-edit-btn--secondary"
+        onClick={() => { setOpen((o) => !o); if (!open) doSearch(query); }}
+        disabled={disabled}
+      >
+        {open ? 'Close file picker' : 'Pick from Shopify Files'}
+      </button>
+      {open && (
+        <div className="shopify-file-picker__panel">
+          <input
+            className="shopify-file-picker__search"
+            type="search"
+            placeholder="Search by file name…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
+          />
+          {loading && <p className="store-edit-hint">Searching…</p>}
+          {!loading && results.length === 0 && (
+            <p className="store-edit-hint">No ready images found{query ? ` for "${query}"` : ''}.</p>
+          )}
+          <div className="shopify-file-picker__grid">
+            {results.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                className="shopify-file-picker__item"
+                title={f.alt ?? f.url ?? ''}
+                onClick={() => { onSelect(f.url!, f.id); setOpen(false); }}
+              >
+                <img src={f.url!} alt={f.alt ?? ''} className="shopify-file-picker__thumb" />
+                <span className="shopify-file-picker__label">
+                  {f.alt ?? f.url!.split('/').pop()?.split('?')[0] ?? ''}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 /** Local state + ref so typing does not re-render the full edit modal. */
 const PageDescriptionField: React.FC<{
   initial: string;
@@ -332,6 +426,21 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
     }
   };
 
+  const handlePickShopifyFile = useCallback(async (cdnUrl: string, fileGid: string) => {
+    setEditSaving(true);
+    try {
+      const updated = await updateStore(store.handle, { imageUrl: cdnUrl, shopifyFileGid: fileGid });
+      onStoreSynced(updated);
+      setEditDraft(storeToDraft(updated));
+      setImagePreviewBroken(false);
+      onToast({ message: 'Image set from Shopify Files.', type: 'success' });
+    } catch {
+      onToast({ message: 'Failed to set image. Please try again.', type: 'error' });
+    } finally {
+      setEditSaving(false);
+    }
+  }, [store.handle, onStoreSynced, onToast]);
+
   const handleRemoveStoreImage = async () => {
     setEditSaving(true);
     try {
@@ -348,8 +457,13 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
   };
 
   const handleSaveEdit = async () => {
-    if (!editDraft.addressLine1.trim() || !editDraft.city.trim() || !editDraft.country.trim()) {
-      onToast({ message: 'Address line 1, city, and country are required.', type: 'error' });
+    if (
+      !editDraft.name.trim() ||
+      !editDraft.addressLine1.trim() ||
+      !editDraft.city.trim() ||
+      !editDraft.country.trim()
+    ) {
+      onToast({ message: 'Store name, address line 1, city, and country are required.', type: 'error' });
       return;
     }
     if (editDraft.isPremium) {
@@ -399,7 +513,32 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
         </div>
 
         <div className="store-edit-modal__body">
-          <p className="store-edit-modal__subtitle">{store.name}</p>
+          <p className="store-edit-modal__subtitle">{store.nameEn || store.name}</p>
+
+          <section className="store-edit-section">
+            <h3 className="store-edit-section__title">Store name</h3>
+            <p className="store-edit-hint">
+              Keep the original (local-language) name exactly as it appears. Use the English field for the translation
+              shoppers should see on the map — leave it blank when the original is already in English.
+            </p>
+            <div className="store-edit-grid">
+              <label className="store-edit-field store-edit-field--full">
+                <span className="store-edit-label">Name (original)</span>
+                <input
+                  value={editDraft.name}
+                  onChange={(e) => updateDraft({ name: e.target.value })}
+                />
+              </label>
+              <label className="store-edit-field store-edit-field--full">
+                <span className="store-edit-label">Name — English</span>
+                <input
+                  value={editDraft.nameEn}
+                  onChange={(e) => updateDraft({ nameEn: e.target.value })}
+                  placeholder="e.g. Rolex Ginza Boutique"
+                />
+              </label>
+            </div>
+          </section>
 
           <section className="store-edit-section">
             <h3 className="store-edit-section__title">Address</h3>
@@ -412,6 +551,14 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
                 />
               </label>
               <label className="store-edit-field store-edit-field--full">
+                <span className="store-edit-label">Address line 1 — English</span>
+                <input
+                  value={editDraft.addressLine1En}
+                  onChange={(e) => updateDraft({ addressLine1En: e.target.value })}
+                  placeholder="English translation of the street address (optional)"
+                />
+              </label>
+              <label className="store-edit-field store-edit-field--full">
                 <span className="store-edit-label">Address line 2</span>
                 <input
                   value={editDraft.addressLine2}
@@ -421,6 +568,14 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
               <label className="store-edit-field">
                 <span className="store-edit-label">City</span>
                 <input value={editDraft.city} onChange={(e) => updateDraft({ city: e.target.value })} />
+              </label>
+              <label className="store-edit-field">
+                <span className="store-edit-label">City — English</span>
+                <input
+                  value={editDraft.cityEn}
+                  onChange={(e) => updateDraft({ cityEn: e.target.value })}
+                  placeholder="e.g. Tokyo"
+                />
               </label>
               <label className="store-edit-field">
                 <span className="store-edit-label">State / province</span>
@@ -477,7 +632,7 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
 
           <section className="store-edit-section">
             <h3 className="store-edit-section__title">Image</h3>
-            <p className="store-edit-hint">Upload a JPEG, PNG, WebP, or GIF (max 5 MB). Saves immediately.</p>
+            <p className="store-edit-hint">Upload a new image (max 5 MB) or pick one already in Shopify Files. Saves immediately.</p>
             <div className="store-edit-image-actions">
               <label className="store-edit-field store-edit-field--full">
                 <span className="store-edit-label">Upload image</span>
@@ -499,6 +654,10 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
                 </button>
               )}
             </div>
+            <ShopifyFilePicker
+              onSelect={handlePickShopifyFile}
+              disabled={imageUploading || editSaving}
+            />
             {imageUploading && <p className="store-edit-hint">Uploading…</p>}
             {editDraft.imageUrl.trim() !== '' && !imagePreviewBroken && (
               <div className="store-edit-image-preview">

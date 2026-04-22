@@ -14,13 +14,13 @@
 3. [Technology Stack](#technology-stack)
 4. [File Structure & Navigation](#file-structure--navigation)
 5. [Installation & Setup](#installation--setup)
-6. [Libraries & Dependencies](#libraries--dependencies)
-7. [APIs & SDKs](#apis--sdks)
-8. [License Information](#license-information)
-9. [Database Schema](#database-schema)
-10. [API Endpoints](#api-endpoints)
-11. [Development Workflow](#development-workflow)
-12. [Documentation Alignment Addendum (No Deletions)](#documentation-alignment-addendum-no-deletions)
+6. [Hosting & Deployment](#hosting--deployment)
+7. [Libraries & Dependencies](#libraries--dependencies)
+8. [APIs & SDKs](#apis--sdks)
+9. [License Information](#license-information)
+10. [Database Schema](#database-schema)
+11. [API Endpoints](#api-endpoints)
+12. [Additional Resources](#additional-resources)
 
 ## Project Overview
 

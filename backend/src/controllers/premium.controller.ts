@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import { Request, Response } from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import {
   ERR_PREMIUM_MARK_METADATA,
   isValidPremiumRetailKind,
@@ -7,8 +8,15 @@ import {
   type MarkPremiumEntry,
   type PremiumStoreUpdateInput,
 } from '../services/premium.service';
+import {
+  deleteShopifyFile,
+  searchShopifyFiles,
+  shopifyFilesConfigured,
+  uploadPremiumStoreImageToShopify,
+} from '../services/shopify-files.service';
 import { logger } from '../utils/logger';
 import {
+  STORE_IMAGE_MIME_TO_EXT,
   contentTypeForStoreImageFilename,
   isValidStoreImageFilename,
   removeStoreImageFile,
@@ -16,15 +24,20 @@ import {
 } from '../utils/store-premium-image';
 
 const PATCH_KEYS: (keyof PremiumStoreUpdateInput)[] = [
+  'name',
+  'nameEn',
   'addressLine1',
+  'addressLine1En',
   'addressLine2',
   'city',
+  'cityEn',
   'stateProvinceRegion',
   'postalCode',
   'country',
   'phone',
   'website',
   'imageUrl',
+  'shopifyFileGid',
   'pageDescription',
   'brands',
   'monday',
@@ -190,17 +203,72 @@ export const premiumController = {
       return;
     }
     try {
+      if (shopifyFilesConfigured()) {
+        const buf = (file as Express.Multer.File & { buffer?: Buffer }).buffer;
+        if (!buf?.length) {
+          res.status(400).json({ error: 'Empty image upload' });
+          return;
+        }
+        const h = handle.trim();
+        logger.integration(`[premium-image] POST image (Shopify Files) handle=${h} size=${buf.length}`);
+
+        const oldGid = await premiumService.getLocationShopifyGid(h);
+
+        const ext = STORE_IMAGE_MIME_TO_EXT[file.mimetype] ?? '.jpg';
+        const originalName = (file.originalname || '').trim();
+        const baseName = originalName.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+        // Append a short timestamp so re-uploads of the same filename never silently collide in Shopify Files.
+        const ts = Date.now().toString(36);
+        const filename = baseName ? `${baseName}_${ts}${ext}` : `${uuidv4()}${ext}`;
+        const alt = `Store ${h.slice(0, 120)}`;
+        const { cdnUrl, fileGid } = await uploadPremiumStoreImageToShopify({
+          buffer: buf,
+          mimeType: file.mimetype,
+          filename,
+          alt,
+          storeHandle: h,
+        });
+        const store = await premiumService.applyStoreImageExternalUrl(handle, cdnUrl, fileGid);
+        if (!store) {
+          logger.warn(`[premium-image] store not found after Shopify upload handle=${h}`);
+          res.status(404).json({ error: 'Store not found' });
+          return;
+        }
+        logger.integration(`[premium-image] saved imageUrl to DB handle=${h} gid=${fileGid}`);
+
+        if (oldGid) {
+          logger.integration(`[premium-image] deleting replaced Shopify file gid=${oldGid} handle=${h}`);
+          deleteShopifyFile(oldGid).catch((err) =>
+            logger.warn(`[premium-image] old file delete failed gid=${oldGid}`, err)
+          );
+        }
+
+        res.json({ store });
+        return;
+      }
+
+      logger.integration(
+        `[premium-image] POST image (local disk) handle=${handle.trim()} file=${file.filename}`
+      );
       const store = await premiumService.applyStoreImageUpload(handle, file.filename);
       if (!store) {
         await removeStoreImageFile(file.filename).catch(() => undefined);
         res.status(404).json({ error: 'Store not found' });
         return;
       }
+      logger.integration(`[premium-image] saved local imageUrl handle=${handle.trim()}`);
       res.json({ store });
     } catch (err) {
-      logger.error('premiumController.uploadStoreImage error:', err);
-      await removeStoreImageFile(file.filename).catch(() => undefined);
-      res.status(500).json({ error: 'Failed to save store image' });
+      const h = handle?.trim() ?? '';
+      logger.error(
+        `[premium-image] upload failed handle=${h} shopify=${shopifyFilesConfigured()}`,
+        err
+      );
+      if (!shopifyFilesConfigured()) {
+        await removeStoreImageFile(file.filename).catch(() => undefined);
+      }
+      const msg = err instanceof Error ? err.message : 'Failed to save store image';
+      res.status(500).json({ error: msg });
     }
   },
 
@@ -218,11 +286,27 @@ export const premiumController = {
     }
 
     try {
+      // When imageUrl is being replaced or cleared, clean up the old Shopify file asset.
+      let oldGidToDelete: string | null = null;
+      if ('imageUrl' in patch && shopifyFilesConfigured()) {
+        oldGidToDelete = await premiumService.getLocationShopifyGid(handle);
+      }
+
       const store = await premiumService.updateStoreByHandle(handle, patch);
       if (!store) {
         res.status(404).json({ error: 'Store not found' });
         return;
       }
+
+      if (oldGidToDelete && oldGidToDelete !== (patch.shopifyFileGid ?? null)) {
+        logger.integration(
+          `[premium-image] deleting replaced Shopify file gid=${oldGidToDelete} handle=${handle.trim()}`
+        );
+        deleteShopifyFile(oldGidToDelete).catch((err) =>
+          logger.warn(`[premium-image] old file delete failed gid=${oldGidToDelete}`, err)
+        );
+      }
+
       res.json({ store });
     } catch (err: unknown) {
       if (err instanceof Error && err.message === 'STORE_TYPE_REQUIRES_PREMIUM') {
@@ -240,6 +324,35 @@ export const premiumController = {
       }
       logger.error('premiumController.updateStore error:', err);
       res.status(500).json({ error: 'Failed to update store' });
+    }
+  },
+
+  /**
+   * GET /api/premium-stores/shopify-files?q=&limit=
+   * Searches Shopify Content → Files for images matching the query. Requires read_files scope on the app.
+   */
+  async searchShopifyFiles(req: Request, res: Response): Promise<void> {
+    if (!shopifyFilesConfigured()) {
+      res.json({ files: [], configured: false });
+      return;
+    }
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    const limit = Math.min(parseInt(String(req.query.limit ?? '20'), 10) || 20, 50);
+    try {
+      const files = await searchShopifyFiles(q, limit);
+      res.json({ files, configured: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/access denied|unauthorized|read_files/i.test(msg)) {
+        logger.warn('premiumController.searchShopifyFiles: Shopify access denied — add read_files scope', msg);
+        res.status(503).json({
+          error: 'Shopify file search is unavailable. Ensure the app has the read_files scope and reinstall.',
+          configured: true,
+        });
+        return;
+      }
+      logger.error('premiumController.searchShopifyFiles error:', err);
+      res.status(500).json({ error: 'Failed to search Shopify files' });
     }
   },
 

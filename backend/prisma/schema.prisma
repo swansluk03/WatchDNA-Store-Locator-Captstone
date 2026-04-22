@@ -73,6 +73,8 @@ model Location {
   email                   String?
   website                 String?
   imageUrl                String?
+  /// Shopify Content → Files GID (e.g. gid://shopify/MediaImage/…) for the current imageUrl. Used for cleanup on replace/remove.
+  shopifyFileGid          String?
 
   // Hours
   monday                  String?

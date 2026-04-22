@@ -774,7 +774,10 @@ export const storeService = {
       distinct: ['country'],
       orderBy: { country: 'asc' },
     });
-    return rows.map((r) => r.country).filter((c) => typeof c === 'string' && c.trim() !== '');
+    const raw = rows.map((r) => r.country).filter((c) => typeof c === 'string' && c.trim() !== '');
+    // Normalize and deduplicate in-memory so dirty pre-backfill data doesn't produce duplicate options
+    const normalized = [...new Set(raw.map((c) => normalizeCountry(c) || c))];
+    return normalized.sort();
   },
 
   /**

@@ -10,9 +10,12 @@ export type BrandFilterModeWire = 'brand' | 'verified_brand';
 export interface StoreRecord {
   handle: string;
   name: string;
+  nameEn: string | null;
   addressLine1: string;
+  addressLine1En: string | null;
   addressLine2: string | null;
   city: string;
+  cityEn: string | null;
   stateProvinceRegion: string | null;
   country: string;
   postalCode: string | null;
@@ -37,9 +40,13 @@ export interface StoreRecord {
 
 /** Body for PATCH /premium-stores/stores/:handle — all fields optional on wire; we send a full snapshot on save. */
 export type StoreUpdatePayload = Partial<{
+  name: string;
+  nameEn: string | null;
   addressLine1: string;
+  addressLine1En: string | null;
   addressLine2: string | null;
   city: string;
+  cityEn: string | null;
   stateProvinceRegion: string | null;
   postalCode: string | null;
   country: string;
@@ -59,6 +66,7 @@ export type StoreUpdatePayload = Partial<{
   isServiceCenter: boolean;
   premiumRetailKind: PremiumRetailKind | null;
   brandFilterMode: BrandFilterModeWire | null;
+  shopifyFileGid: string | null;
 }>;
 
 export type MarkPremiumEntryPayload = {
@@ -79,6 +87,30 @@ export async function updateStore(
   const encoded = encodeURIComponent(handle);
   const res = await api.patch<{ store: StoreRecord }>(`/premium-stores/stores/${encoded}`, payload);
   return res.data.store;
+}
+
+export interface ShopifyFileResult {
+  id: string;
+  alt: string | null;
+  url: string | null;
+  width: number | null;
+  height: number | null;
+  createdAt: string;
+  fileStatus: string;
+}
+
+/**
+ * Search Shopify Content → Files by filename. Returns empty list when Shopify is not configured.
+ */
+export async function searchShopifyFiles(
+  query: string,
+  limit = 20
+): Promise<{ files: ShopifyFileResult[]; configured: boolean }> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  const res = await api.get<{ files: ShopifyFileResult[]; configured: boolean }>(
+    `/premium-stores/shopify-files?${params}`
+  );
+  return res.data;
 }
 
 /** POST multipart field `image` — saves file and updates store imageUrl. */

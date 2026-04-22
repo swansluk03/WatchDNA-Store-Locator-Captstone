@@ -13,16 +13,50 @@ export function looksLikeBrandConfigId(token: string): boolean {
 }
 
 const DISPLAY_OVERRIDES: Record<string, string> = {
+  // Ampersand / special character brands
   'ALANGE SOEHNE': 'A. LANGE & SÖHNE',
   'BAUME ET MERCIER': 'BAUME & MERCIER',
   'BELL ROSS': 'BELL & ROSS',
+  // Accented name variants
+  'FREDERIQUE CONSTANT': 'FRÉDÉRIQUE CONSTANT',
+  'FREDERIQUE-CONSTANT': 'FRÉDÉRIQUE CONSTANT',
+  // Umlaut variants
+  'GLASHUTTE': 'GLASHÜTTE',
+  'GLASHUTTE ORIGINAL': 'GLASHÜTTE ORIGINAL',
+  'MUHLE GLASHUTTE': 'MUHLE GLASHÜTTE',
+  'NOMOS GLASHUTTE': 'NOMOS GLASHÜTTE',
+  'UNION GLASHUTTE': 'UNION GLASHÜTTE',
+  // Misspellings
+  'TOMMY HILFINGER': 'TOMMY HILFIGER',
+  // Hyphen/no-hyphen
+  'UBOAT': 'U-BOAT',
+  // Regional suffix variants
+  'GRAHAM OF LONDON': 'GRAHAM',
 };
+
+/** Strip simple HTML so scraper/CSV glitches in the Brands column do not show as filter tokens. */
+function stripSimpleHtml(s: string): string {
+  return s.replace(/<[^>]+>/g, '');
+}
+
+/**
+ * Heuristic: "88 RUE DU RHONE" style values (street lines mistaken for a brand at ingest).
+ * Applied after case normalization; keep conservative to avoid dropping real watch names.
+ */
+function looksLikeAddressLine(upper: string): boolean {
+  // Starts with 1-5 digit street number, then text containing a common street token
+  // (French/Italian/English/Latin) — not typical watch brand phrasing
+  if (!/^\d{1,5}\s+/.test(upper)) return false;
+  return /\b(RUE|RUA|VIA|VIALE|CORSO|PIAZZA|C\/|STREET|ST\.|AVENUE|ROAD|BLVD|BOULEVARD|LANE|DRIVE|WAY|COURT|CARRER)\b/i.test(upper);
+}
 
 /**
  * Single brand token or config id → ALL CAPS display name, no _stores suffix.
+ * Returns '' for tokens that contain no alphanumeric characters (e.g. bare "-"),
+ * and strips HTML that was accidentally stored in the brands column.
  */
 export function brandConfigIdToDisplayName(brandId: string): string {
-  let name = brandId.trim();
+  let name = stripSimpleHtml(brandId).trim();
   if (!name) return '';
   for (const suf of SUFFIXES) {
     const low = name.toLowerCase();
@@ -32,6 +66,10 @@ export function brandConfigIdToDisplayName(brandId: string): string {
     }
   }
   name = name.replace(/_/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+  if (!name) return '';
+  // Reject tokens that are purely punctuation/symbols (e.g. "-")
+  if (!/[A-Z0-9]/i.test(name)) return '';
+  if (looksLikeAddressLine(name)) return '';
   return DISPLAY_OVERRIDES[name] ?? name;
 }
 

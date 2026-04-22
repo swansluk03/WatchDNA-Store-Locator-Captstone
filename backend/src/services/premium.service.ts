@@ -8,6 +8,8 @@ import type { Prisma } from '@prisma/client';
 
 import prisma from '../lib/prisma';
 import { locationTableHasBrandFilterModeColumn } from '../utils/location-brand-filter-column';
+import { locationTableHasShopifyFileGidColumn } from '../utils/location-shopify-gid-column';
+import { normalizeBrandsCsvField } from '../utils/brand-display-name';
 import { normalizeCountry } from '../utils/country';
 import { normalizePhone } from '../utils/normalize-phone';
 import {
@@ -40,9 +42,12 @@ export const ERR_PREMIUM_MARK_METADATA = 'PREMIUM_MARK_METADATA_REQUIRED';
 export interface PremiumStoreRecord {
   handle: string;
   name: string;
+  nameEn: string | null;
   addressLine1: string;
+  addressLine1En: string | null;
   addressLine2: string | null;
   city: string;
+  cityEn: string | null;
   stateProvinceRegion: string | null;
   country: string;
   postalCode: string | null;
@@ -69,9 +74,12 @@ export interface PremiumStoreRecord {
 const premiumStoreSelect = {
   handle: true,
   name: true,
+  nameEn: true,
   addressLine1: true,
+  addressLine1En: true,
   addressLine2: true,
   city: true,
+  cityEn: true,
   stateProvinceRegion: true,
   country: true,
   postalCode: true,
@@ -107,9 +115,12 @@ async function selectForPremiumLocationRow(): Promise<
 function toPremiumRecord(loc: {
   handle: string;
   name: string;
+  nameEn: string | null;
   addressLine1: string;
+  addressLine1En: string | null;
   addressLine2: string | null;
   city: string;
+  cityEn: string | null;
   stateProvinceRegion: string | null;
   country: string;
   postalCode: string | null;
@@ -161,9 +172,13 @@ function mergePremiumRegistry(
 
 /** PATCH body: only these keys may update Location (plus optional isPremium for registry sync). */
 export type PremiumStoreUpdateInput = Partial<{
+  name: string;
+  nameEn: string | null;
   addressLine1: string;
+  addressLine1En: string | null;
   addressLine2: string | null;
   city: string;
+  cityEn: string | null;
   stateProvinceRegion: string | null;
   postalCode: string | null;
   country: string;
@@ -183,6 +198,8 @@ export type PremiumStoreUpdateInput = Partial<{
   isServiceCenter: boolean;
   premiumRetailKind: PremiumRetailKind | null;
   brandFilterMode: BrandFilterModeWire | null;
+  /** Shopify file GID to store alongside a new imageUrl (e.g. when picking from Shopify Files). */
+  shopifyFileGid: string | null;
 }>;
 
 export type MarkPremiumEntry = {
@@ -250,14 +267,26 @@ export const premiumService = {
     const data: Prisma.LocationUpdateInput = {};
     let nextCountry = normalizeCountry(existing.country ?? '') || existing.country;
 
+    if (body.name !== undefined) {
+      data.name = (body.name ?? '').trim() || existing.name;
+    }
+    if (body.nameEn !== undefined) {
+      data.nameEn = emptyToNull(body.nameEn);
+    }
     if (body.addressLine1 !== undefined) {
       data.addressLine1 = (body.addressLine1 ?? '').trim() || existing.addressLine1;
+    }
+    if (body.addressLine1En !== undefined) {
+      data.addressLine1En = emptyToNull(body.addressLine1En);
     }
     if (body.addressLine2 !== undefined) {
       data.addressLine2 = emptyToNull(body.addressLine2);
     }
     if (body.city !== undefined) {
       data.city = (body.city ?? '').trim() || existing.city;
+    }
+    if (body.cityEn !== undefined) {
+      data.cityEn = emptyToNull(body.cityEn);
     }
     if (body.stateProvinceRegion !== undefined) {
       data.stateProvinceRegion = emptyToNull(body.stateProvinceRegion);
@@ -274,7 +303,8 @@ export const premiumService = {
       data.website = emptyToNull(body.website);
     }
     if (body.brands !== undefined) {
-      data.brands = emptyToNull(body.brands);
+      // Same rules as CSV import: strip HTML, apply aliases, drop address-like junk, dedupe
+      data.brands = normalizeBrandsCsvField(body.brands) ?? null;
     }
     if (body.imageUrl !== undefined) {
       data.imageUrl = emptyToNull(body.imageUrl);
@@ -295,6 +325,9 @@ export const premiumService = {
     }
     if (body.brandFilterMode !== undefined && (await locationTableHasBrandFilterModeColumn())) {
       data.brandFilterMode = body.brandFilterMode === 'verified_brand' ? 'verified_brand' : null;
+    }
+    if (body.shopifyFileGid !== undefined && (await locationTableHasShopifyFileGidColumn())) {
+      (data as Record<string, unknown>).shopifyFileGid = body.shopifyFileGid ?? null;
     }
 
     const premiumOp =
@@ -409,6 +442,66 @@ export const premiumService = {
     });
 
     if (prevFile && prevFile !== storedFilename) {
+      await removeStoreImageFile(prevFile).catch(() => undefined);
+    }
+
+    const [updated, premiumRow] = await Promise.all([
+      prisma.location.findUnique({ where: { handle: h }, select: locSelect }),
+      prisma.premiumStore.findUnique({
+        where: { handle: h },
+        select: { isServiceCenter: true, premiumRetailKind: true },
+      }),
+    ]);
+    if (!updated) return null;
+    return mergePremiumRegistry(toPremiumRecord(updated), premiumRow);
+  },
+
+  /**
+   * Return the current `shopifyFileGid` for a store, or null if the column does not exist or is empty.
+   * Used by callers that need to delete the old Shopify asset before replacing.
+   */
+  async getLocationShopifyGid(handle: string): Promise<string | null> {
+    if (!(await locationTableHasShopifyFileGidColumn())) return null;
+    const row = await prisma.$queryRawUnsafe<Array<{ shopifyFileGid: string | null }>>(
+      'SELECT "shopifyFileGid" FROM "Location" WHERE handle = $1 LIMIT 1',
+      handle.trim()
+    );
+    return row[0]?.shopifyFileGid ?? null;
+  },
+
+  /**
+   * Set `imageUrl` to an absolute URL (e.g. Shopify CDN) and optionally record its Shopify GID.
+   * Removes a previous **local** managed file if any.
+   */
+  async applyStoreImageExternalUrl(
+    handle: string,
+    imageUrl: string,
+    fileGid?: string
+  ): Promise<PremiumStoreRecord | null> {
+    const h = handle.trim();
+    const url = imageUrl.trim();
+    if (!h || !url.startsWith('https://')) return null;
+
+    const locSelect = await selectForPremiumLocationRow();
+    const existing = await prisma.location.findUnique({
+      where: { handle: h },
+      select: locSelect,
+    });
+    if (!existing) return null;
+
+    const prevFile = managedImageFilenameFromUrl(existing.imageUrl);
+
+    const updateData: Prisma.LocationUpdateInput = { imageUrl: url };
+    if (fileGid !== undefined && (await locationTableHasShopifyFileGidColumn())) {
+      (updateData as Record<string, unknown>).shopifyFileGid = fileGid || null;
+    }
+
+    await prisma.location.update({
+      where: { handle: h },
+      data: updateData,
+    });
+
+    if (prevFile) {
       await removeStoreImageFile(prevFile).catch(() => undefined);
     }
 

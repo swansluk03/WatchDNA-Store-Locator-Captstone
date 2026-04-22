@@ -13,28 +13,6 @@ import '../styles/Scraper.css';
 
 type TabType = 'jobs' | 'discovery' | 'master' | 'tools';
 
-/** Escape a value for CSV (quotes and commas) */
-function escapeCsvValue(val: string): string {
-  const s = String(val ?? '');
-  if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
-
-/** Convert columns and records to CSV string */
-function recordsToCsv(columns: string[], records: Record<string, string>[]): string {
-  const header = columns.map(escapeCsvValue).join(',');
-  const rows = records.map((r) =>
-    columns.map((col) => escapeCsvValue(r[col] ?? '')).join(',')
-  );
-  return [header, ...rows].join('\r\n');
-}
-
-function slugForFilename(s: string): string {
-  const t = s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  return t || 'unknown';
-}
 
 const Scraper: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('jobs');
@@ -70,6 +48,7 @@ const Scraper: React.FC = () => {
   } | null>(null);
   const [loadingDroppedRecords, setLoadingDroppedRecords] = useState(false);
   // Master store data tab
+  const [masterBrands, setMasterBrands] = useState<string[]>([]);
   const [masterBrandFilter, setMasterBrandFilter] = useState<string>('');
   const [masterCountryFilter, setMasterCountryFilter] = useState<string>('');
   const [masterPremiumOnly, setMasterPremiumOnly] = useState(false);
@@ -146,6 +125,14 @@ const Scraper: React.FC = () => {
     }, 5000);
     return () => clearInterval(interval);
   }, [loadJobs, refreshScraperStats]);
+
+  // Load DB-sourced brand list once when master tab first activates
+  useEffect(() => {
+    if (activeTab !== 'master' || masterBrands.length > 0) return;
+    scraperService.getDbBrands()
+      .then((b) => setMasterBrands(b))
+      .catch(() => {});
+  }, [activeTab, masterBrands.length]);
 
   useEffect(() => {
     if (activeTab !== 'master') return;
@@ -451,26 +438,6 @@ const Scraper: React.FC = () => {
       setError(err.response?.data?.error || 'Failed to load master store data');
     } finally {
       setLoadingMasterRecords(false);
-    }
-  };
-
-  const handleDownloadStoresCsv = async () => {
-    setError(null);
-    try {
-      const data = await scraperService.getMasterCsvRecords(masterCsvFilters());
-      const csv = recordsToCsv(data.columns, data.records);
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      const brandSlug = masterBrandFilter ? slugForFilename(masterBrandFilter.replace(/_/g, '-')) : 'all';
-      const countrySlug = masterCountryFilter.trim() ? slugForFilename(masterCountryFilter) : 'all';
-      const prem = masterPremiumOnly ? '-premium' : '';
-      link.download = `stores-${brandSlug}-${countrySlug}${prem}.csv`;
-      link.click();
-      URL.revokeObjectURL(url);
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to download stores CSV');
     }
   };
 
@@ -810,9 +777,9 @@ const Scraper: React.FC = () => {
                 className="filter-select"
               >
                 <option value="">All brands</option>
-                {brands.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
+                {masterBrands.map((b) => (
+                  <option key={b} value={b}>
+                    {b}
                   </option>
                 ))}
               </select>
@@ -851,30 +818,14 @@ const Scraper: React.FC = () => {
               >
                 Load & Edit Master Data
               </button>
-              <button
-                className="btn btn-secondary"
-                onClick={handleDownloadStoresCsv}
-                title={
-                  [
-                    masterBrandFilter &&
-                      `Brand: ${brands.find((b) => b.id === masterBrandFilter)?.name ?? masterBrandFilter}`,
-                    masterCountryFilter.trim() && `Country: ${masterCountryFilter.trim()}`,
-                    masterPremiumOnly && 'Premium only',
-                  ]
-                    .filter(Boolean)
-                    .join(' · ') || 'Download all stores (set filters to narrow)'
-                }
-              >
-                Download CSV
-              </button>
             </div>
           </div>
           <p className="records-hint">
             Pick a brand to limit the country list to countries that have at least one matching store in the
             database (same brand matching as the public locations API). Optional premium-only narrows both the
-            country list and the export. Stores with multiple brands still appear when a matching brand is selected.
+            country list and the editor view. Stores with multiple brands still appear when a matching brand is selected.
             If premium counts look wrong after a bulk import, use Reconcile premium flags on the Premium Stores page.
-            Click &quot;Load & Edit Master Data&quot; to open the editor, or &quot;Download CSV&quot; to export stores.
+            Click &quot;Load & Edit Master Data&quot; to open the inline editor. To export stores as CSV, use the Uploads page.
           </p>
         </div>
       ) : (
