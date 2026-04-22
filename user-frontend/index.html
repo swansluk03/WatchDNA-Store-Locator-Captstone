@@ -52,8 +52,14 @@
     <button id="hamburger" aria-expanded="false" aria-controls="filtersPanel" title="Show filters">
       ☰ Filter
     </button>
+    <div class="filters-actions">
+      <button id="clearFiltersBtn" type="button" title="Clear all filters" style="display:none;">Clear filters</button>
+    </div>
     <span id="nearMeStatus"></span>
+
     <div id="filtersPanel" class="filters-panel" hidden>
+      <div class="filter-lock-toast" id="filterLockToast" role="alert" aria-live="assertive">
+      </div>
       <!-- <label for="storeFilter"><strong>Filter by store:</strong></label> -->
       <div class="store-filter-wrapper">
         <input id="storeFilter" type="search" placeholder="Search by store, city, brand, zip, etc." />
@@ -80,9 +86,6 @@
       <label for="brandCheckboxes"><strong>Filter by Brand:</strong></label>
       <div id="brandCheckboxes">
         <!-- Brand checkboxes inserted here -->
-      </div>
-      <div class="filters-actions">
-        <button id="clearFiltersBtn" type="button" title="Clear all filters">Clear filters</button>
       </div>
     </div>
 
@@ -341,13 +344,12 @@
         const wasHidden = panel.hasAttribute('hidden');
 
         if (wasHidden) {
-          //opening the Filters panel
           panel.removeAttribute('hidden');
           btn.setAttribute('aria-expanded', 'true');
-          setStoreListHidden(true); //hide the store list
+          setStoreListHidden(true);
+          clearFiltersBtn.style.display = '';
 
           sidebar.classList.add('filters-open');
-          // Changing the header and paragraph text when the filter panel is open
           if (headerText) {
             headerText.textContent = "Find Jewellers In Your Area";
           }
@@ -356,28 +358,28 @@
           }
         }
         else {
-          //closing the Filters panel
           panel.setAttribute('hidden', '');
           btn.setAttribute('aria-expanded', 'false');
-          setStoreListHidden(false); //show the store list
+          setStoreListHidden(false);
+          clearFiltersBtn.style.display = 'none';  // ← hide it when closing
 
           sidebar.classList.remove('filters-open');
-          // Setting the header and parapraph text back to default
           if (headerText) {
             headerText.textContent = defaultHeaderText;
           }
           if (paragraph) {
             paragraph.textContent = defaultParagraph;
           }
-          // Do not clear the store search here; preserve user input when they close the panel.
         }
         e.stopPropagation();
       });
+
       document.addEventListener('click', (ev) => {
         if (!panel.hasAttribute('hidden') && !panel.contains(ev.target) && ev.target !== btn) {
           panel.setAttribute('hidden', '');
           btn.setAttribute('aria-expanded', 'false');
           setStoreListHidden(false);
+          clearFiltersBtn.style.display = 'none';
 
           sidebar.classList.remove('filters-open');
           if (headerText) {
@@ -387,9 +389,6 @@
             paragraph.textContent = defaultParagraph;
           }
 
-          // Clear the store search when closing the panel by clicking outside
-          const storeInput = document.getElementById('storeFilter');
-          // Leave the store search value intact when closing the panel by clicking outside.
           console.log('[document] closed filters by click outside');
         }
       });
@@ -1009,6 +1008,51 @@
       return bounds.contains(L.latLng(lat, lon));
     }
 
+    let toastTimer = null;
+
+    function showFilterLockToast() {
+      const toast = document.getElementById('filterLockToast');
+      if (!toast) return;
+      toast.classList.add('visible');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('visible'), 3800);
+    }
+
+    function checkFiltersActive() {
+      if ((document.getElementById('storeFilter')?.value || '').trim()) return true;
+      if (document.querySelectorAll('#brandCheckboxes input[type="checkbox"]:checked').length > 0) return true;
+      if (document.getElementById('serviceCenterCheckbox')?.checked) return true;
+      if (document.querySelectorAll('#storeCheckboxes input[type="checkbox"]:checked').length > 0) return true;
+      return false;
+    }
+
+    function updateToggleLockState(active) {
+      const toggle = document.getElementById('typeToggle');
+      const labelWatch = document.getElementById('toggleLabelWatch');
+      if (!toggle || !labelWatch) return;
+
+      if (active) {
+        // Force to AD Verified, lock the toggle
+        toggle.setAttribute('aria-checked', 'true');
+        toggle.style.opacity = '0.45';
+        toggle.style.cursor = 'not-allowed';
+        toggle.style.pointerEvents = 'none';
+        labelWatch.style.opacity = '0.38';
+        labelWatch.title = 'Clear all filters to switch back';
+
+        // Keep label classes in sync
+        const labelAccessory = document.getElementById('toggleLabelAccessory');
+        labelWatch.classList.add('inactive');
+        if (labelAccessory) labelAccessory.classList.remove('inactive');
+      } else {
+        toggle.style.opacity = '';
+        toggle.style.cursor = '';
+        toggle.style.pointerEvents = '';
+        labelWatch.style.opacity = '';
+        labelWatch.title = '';
+      }
+    }
+
     function applyFilter() {
       clusterGroup.clearLayers();
 
@@ -1017,6 +1061,7 @@
       const brandFilterActive = brandSet.size > 0;
       const storeInput = (document.getElementById('storeFilter').value || '').trim().toLowerCase();
       const premiumOnly = false;
+      updateToggleLockState(checkFiltersActive());
 
       const toggleEl = document.getElementById('typeToggle');
       const showVerified = toggleEl?.getAttribute('aria-checked') === 'true';
@@ -1090,6 +1135,7 @@
 
         const visibleBrandSet = new Set();
         brandListRows.forEach(row => {
+          if (!row._isPremium) return;
           (extractBrandsText(row) || '')
             .split(',')
             .map(s => s.trim())
@@ -1657,6 +1703,13 @@
       container.innerHTML = '';
 
       const brands = [...brandSet].sort();
+
+      if (brands.length === 0) {
+        const msg = document.createElement('p');
+        msg.textContent = 'See AD Verified stores for active brands.';
+        msg.style.cssText = 'font-size:0.9rem; opacity:0.6; margin:4px 0 0; font-style:italic;';
+        container.appendChild(msg);
+      }
       const VISIBLE_COUNT = 3;
 
       const groups = {};
@@ -1673,6 +1726,7 @@
 
         const group = document.createElement('div');
         group.className = 'brand-group';
+
 
         const allBrands = groups[letter];
         const visibleBrands = allBrands.slice(0, VISIBLE_COUNT);
@@ -1791,7 +1845,7 @@
     function clearAllFilters() {
       // Reset text search
       if (storeInput) storeInput.value = '';
-
+      updateToggleLockState(false);
       // Clear user-selected store checkboxes
       userCheckedStores.clear();
       document.querySelectorAll('#storeCheckboxes input[type="checkbox"]').forEach(cb => cb.checked = false);
@@ -2001,8 +2055,20 @@
         }
 
         typeToggle.addEventListener('click', () => {
-          const isAccessory = typeToggle.getAttribute('aria-checked') === 'true';
-          typeToggle.setAttribute('aria-checked', isAccessory ? 'false' : 'true');
+          const isChecked = typeToggle.getAttribute('aria-checked') === 'true';
+
+          if (isChecked) {
+            // Un-toggling: clear all filters and unlock
+            clearAllFilters();
+            return;
+          }
+
+          if (checkFiltersActive()) {
+            showFilterLockToast();
+            return;
+          }
+
+          typeToggle.setAttribute('aria-checked', 'true');
           updateToggleLabels();
           applyFilter();
         });
