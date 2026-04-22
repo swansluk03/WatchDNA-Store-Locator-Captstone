@@ -9,6 +9,7 @@ import { storeService } from './store.service';
 import { runScopedPostIngestDedup } from '../utils/location-merge-core';
 import { locationCountryEqualsWhere } from '../utils/location-country-filter';
 import { legacyBrandTextFilterWhere } from '../utils/legacy-brand-filter';
+import { brandConfigIdToDisplayName } from '../utils/brand-display-name';
 import { locationTableHasBrandFilterModeColumn } from '../utils/location-brand-filter-column';
 import { locationScalarSelectWithoutBrandFilterMode } from '../utils/location-scalar-select-without-brand-filter';
 
@@ -243,6 +244,8 @@ class LocationService {
 
   /**
    * Get unique list of brands from all locations (both brands and customBrands columns).
+   * Strips HTML tags before splitting so malformed anchors don't leak raw markup.
+   * Applies brandConfigIdToDisplayName for alias resolution and case-insensitive dedup.
    */
   async getBrands() {
     const locations = await prisma.location.findMany({
@@ -255,32 +258,25 @@ class LocationService {
       }
     });
 
+    const seen = new Set<string>();
     const brandsSet = new Set<string>();
 
+    const addTokens = (raw: string) => {
+      // Strip all HTML tags (handles malformed HTML missing closing tags)
+      const text = raw.replace(/<[^>]+>/g, '');
+      for (const token of text.split(',')) {
+        const display = brandConfigIdToDisplayName(token);
+        if (!display) continue;
+        const key = display.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        brandsSet.add(display);
+      }
+    };
+
     for (const loc of locations) {
-      // Plain-text comma-separated brands column
-      if (loc.brands) {
-        for (const b of loc.brands.split(',')) {
-          const trimmed = b.trim();
-          if (trimmed) brandsSet.add(trimmed);
-        }
-      }
-      // HTML anchor-formatted customBrands column
-      if (loc.customBrands) {
-        const matches = loc.customBrands.match(/>([^<]+)<\/A>/gi);
-        if (matches) {
-          for (const m of matches) {
-            const brand = m.replace(/^>|<\/A>$/gi, '').trim();
-            if (brand) brandsSet.add(brand);
-          }
-        } else {
-          // Fallback: plain comma-separated
-          for (const b of loc.customBrands.split(',')) {
-            const trimmed = b.trim();
-            if (trimmed) brandsSet.add(trimmed);
-          }
-        }
-      }
+      if (loc.brands) addTokens(loc.brands);
+      if (loc.customBrands) addTokens(loc.customBrands);
     }
 
     return Array.from(brandsSet).sort();

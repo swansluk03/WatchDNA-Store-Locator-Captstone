@@ -76,9 +76,15 @@ export interface CreateJobRequest {
 }
 
 export const scraperService = {
-  // Get all available brands
+  // Get all available brands (scraper config IDs — used for launching jobs)
   async getBrands(): Promise<Brand[]> {
     const response = await api.get('/scraper/brands');
+    return response.data.brands;
+  },
+
+  // Get all brands that actually exist in the DB (display name strings — used for filter dropdowns)
+  async getDbBrands(): Promise<string[]> {
+    const response = await api.get<{ brands: string[] }>('/locations/brands');
     return response.data.brands;
   },
 

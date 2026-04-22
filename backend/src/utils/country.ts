@@ -96,6 +96,26 @@ const ALIASES: Record<string, string> = {
   'saint-barthelemy': 'Saint Barthélemy',
   'saint martin': 'Saint Martin (French part)',
   'caribbean netherlands': 'Bonaire, Sint Eustatius and Saba',
+  // ISO official name variants with articles / parentheticals
+  'bahamas (the)': 'Bahamas',
+  'bahamas, the': 'Bahamas',
+  // Countries not in watch_store_countries.json — need explicit alias for case normalization
+  'dominican republic': 'Dominican Republic',
+  // Accent/encoding variants
+  'curacao': 'Curaçao',
+  // Comma-separated country qualifiers from scraper sources
+  'macau, china': 'Macau',
+  // Alternative names / parenthetical suffixes
+  'myanmar (burma)': 'Myanmar',
+  'burma': 'Myanmar',
+  // Misspellings from scraper / user data
+  'saudia arabia': 'Saudi Arabia',
+  'untied states': 'United States',
+  // Turkish name variants (Turkey is canonical in watch_store_countries.json)
+  'turkiye': 'Turkey',
+  'türkiye': 'Turkey',
+  // "The" prefix variants
+  'the netherlands': 'Netherlands',
 };
 
 /**

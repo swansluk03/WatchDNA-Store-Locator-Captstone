@@ -18,6 +18,18 @@ describe('brandConfigIdToDisplayName', () => {
   it('leaves already-clean tokens uppercased', () => {
     expect(brandConfigIdToDisplayName('OMEGA')).toBe('OMEGA');
   });
+
+  it('strips simple HTML in a single token (scraper/CSV error)', () => {
+    expect(
+      brandConfigIdToDisplayName(
+        '<A HREF="HTTPS://WATCHDNA.COM/BLOGS/HISTORY/HAMILTON">HAMILTON'
+      )
+    ).toBe('HAMILTON');
+  });
+
+  it('drops address-like lines mistaken for a brand', () => {
+    expect(brandConfigIdToDisplayName('88 RUE DU RHONE')).toBe('');
+  });
 });
 
 describe('normalizeBrandsCsvField', () => {

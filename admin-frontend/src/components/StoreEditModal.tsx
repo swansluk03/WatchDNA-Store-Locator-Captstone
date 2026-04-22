@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  searchShopifyFiles,
   updateStore,
   uploadStoreImage,
   type BrandFilterModeWire,
   type PremiumRetailKind,
+  type ShopifyFileResult,
   type StoreRecord,
   type StoreUpdatePayload,
 } from '../services/premium.service';
@@ -243,6 +245,86 @@ export const BrandEditor: React.FC<{
   );
 };
 
+/** Inline Shopify Files picker: search by filename, click to select a CDN URL. */
+const ShopifyFilePicker: React.FC<{
+  onSelect: (url: string, gid: string) => void;
+  disabled?: boolean;
+}> = ({ onSelect, disabled }) => {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<ShopifyFileResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [configured, setConfigured] = useState(true);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const doSearch = useCallback(async (q: string) => {
+    setLoading(true);
+    try {
+      const res = await searchShopifyFiles(q, 20);
+      setConfigured(res.configured);
+      setResults(res.files.filter((f) => f.url && f.fileStatus === 'READY'));
+    } catch {
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => doSearch(query), 350);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query, open, doSearch]);
+
+  if (!configured) return null;
+
+  return (
+    <div className="shopify-file-picker">
+      <button
+        type="button"
+        className="store-edit-btn store-edit-btn--secondary"
+        onClick={() => { setOpen((o) => !o); if (!open) doSearch(query); }}
+        disabled={disabled}
+      >
+        {open ? 'Close file picker' : 'Pick from Shopify Files'}
+      </button>
+      {open && (
+        <div className="shopify-file-picker__panel">
+          <input
+            className="shopify-file-picker__search"
+            type="search"
+            placeholder="Search by file name…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
+          />
+          {loading && <p className="store-edit-hint">Searching…</p>}
+          {!loading && results.length === 0 && (
+            <p className="store-edit-hint">No ready images found{query ? ` for "${query}"` : ''}.</p>
+          )}
+          <div className="shopify-file-picker__grid">
+            {results.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                className="shopify-file-picker__item"
+                title={f.alt ?? f.url ?? ''}
+                onClick={() => { onSelect(f.url!, f.id); setOpen(false); }}
+              >
+                <img src={f.url!} alt={f.alt ?? ''} className="shopify-file-picker__thumb" />
+                <span className="shopify-file-picker__label">
+                  {f.alt ?? f.url!.split('/').pop()?.split('?')[0] ?? ''}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 /** Local state + ref so typing does not re-render the full edit modal. */
 const PageDescriptionField: React.FC<{
   initial: string;
@@ -331,6 +413,21 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
       e.target.value = '';
     }
   };
+
+  const handlePickShopifyFile = useCallback(async (cdnUrl: string, fileGid: string) => {
+    setEditSaving(true);
+    try {
+      const updated = await updateStore(store.handle, { imageUrl: cdnUrl, shopifyFileGid: fileGid });
+      onStoreSynced(updated);
+      setEditDraft(storeToDraft(updated));
+      setImagePreviewBroken(false);
+      onToast({ message: 'Image set from Shopify Files.', type: 'success' });
+    } catch {
+      onToast({ message: 'Failed to set image. Please try again.', type: 'error' });
+    } finally {
+      setEditSaving(false);
+    }
+  }, [store.handle, onStoreSynced, onToast]);
 
   const handleRemoveStoreImage = async () => {
     setEditSaving(true);
@@ -477,7 +574,7 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
 
           <section className="store-edit-section">
             <h3 className="store-edit-section__title">Image</h3>
-            <p className="store-edit-hint">Upload a JPEG, PNG, WebP, or GIF (max 5 MB). Saves immediately.</p>
+            <p className="store-edit-hint">Upload a new image (max 5 MB) or pick one already in Shopify Files. Saves immediately.</p>
             <div className="store-edit-image-actions">
               <label className="store-edit-field store-edit-field--full">
                 <span className="store-edit-label">Upload image</span>
@@ -499,6 +596,10 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
                 </button>
               )}
             </div>
+            <ShopifyFilePicker
+              onSelect={handlePickShopifyFile}
+              disabled={imageUploading || editSaving}
+            />
             {imageUploading && <p className="store-edit-hint">Uploading…</p>}
             {editDraft.imageUrl.trim() !== '' && !imagePreviewBroken && (
               <div className="store-edit-image-preview">

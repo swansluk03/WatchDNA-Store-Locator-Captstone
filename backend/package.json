@@ -12,6 +12,7 @@
     "import-data": "ts-node src/scripts/import-csv-locations.ts",
     "import-master": "ts-node src/scripts/import-master-csv.ts",
     "reset-db": "ts-node src/scripts/reset-database.ts",
+    "normalize-brands": "ts-node src/scripts/normalize-db-brands.ts",
     "normalize-countries": "ts-node src/scripts/normalize-db-countries.ts",
     "verify-countries": "ts-node src/scripts/verify-country-normalization.ts",
     "audit:location-countries": "ts-node src/scripts/audit-location-countries.ts",

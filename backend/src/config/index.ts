@@ -54,6 +54,21 @@ export const config = {
   mapbox: {
     token: process.env.MAPBOX_SECRET,
   },
+
+  /**
+   * Optional: upload premium store images to Shopify Admin → Content → Files (CDN URL in DB).
+   * Set SHOPIFY_STORE_DOMAIN + either:
+   * - SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET (Dev Dashboard client_credentials; token auto-refreshed), or
+   * - SHOPIFY_ADMIN_ACCESS_TOKEN (static override, e.g. local dev).
+   * Scope write_files (or write_images) required on the app version.
+   */
+  shopify: {
+    storeDomain: process.env.SHOPIFY_STORE_DOMAIN || '',
+    accessToken: process.env.SHOPIFY_ADMIN_ACCESS_TOKEN || '',
+    clientId: process.env.SHOPIFY_CLIENT_ID || '',
+    clientSecret: process.env.SHOPIFY_CLIENT_SECRET || '',
+    adminApiVersion: process.env.SHOPIFY_ADMIN_API_VERSION || '2025-10',
+  },
 } as const;
 
 /**
