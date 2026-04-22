@@ -148,10 +148,13 @@
   <script>
     // --- Map bootstrap ---
     // NEW MAP THEME CODE
-    const map = L.map('map', { maxZoom: 19, minZoom: 2, zoomControl: false }).fitWorld();
+    const map = L.map('map', { maxZoom: 19, minZoom: 2, zoomControl: false, worldCopyJump: false }).setView([20, 0], 2);
     L.maplibreGL({
       style: 'https://tiles.openfreemap.org/styles/bright',
     }).addTo(map);
+    const mapBounds = [ [-90, -180], [90, 180] ];
+    map.setMaxBounds(mapBounds);
+    map.options.maxBoundsViscosity = 1.0;
 
     setTimeout(() => map.invalidateSize({ animate: false }), 300);
     setTimeout(() => map.invalidateSize({ animate: false }), 1000);
