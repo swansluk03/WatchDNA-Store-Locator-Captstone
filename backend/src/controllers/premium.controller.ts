@@ -24,9 +24,13 @@ import {
 } from '../utils/store-premium-image';
 
 const PATCH_KEYS: (keyof PremiumStoreUpdateInput)[] = [
+  'name',
+  'nameEn',
   'addressLine1',
+  'addressLine1En',
   'addressLine2',
   'city',
+  'cityEn',
   'stateProvinceRegion',
   'postalCode',
   'country',

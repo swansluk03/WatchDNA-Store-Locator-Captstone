@@ -15,8 +15,22 @@ import { parseBrandsForDisplay, storeMatchesBrandFilter } from '../utils/brandDi
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** One street line: line 1 if present, otherwise line 2 (never both). */
+/** True when the string contains any non-ASCII character (a heuristic for "needs translation"). */
+function hasNonLatin(s: string | null | undefined): boolean {
+  if (!s) return false;
+  // eslint-disable-next-line no-control-regex
+  return /[^\x00-\x7F]/.test(s);
+}
+
+/** English version if admin supplied one; otherwise the original (which may be in a non-Latin script). */
+function displayName(store: StoreRecord): string {
+  return (store.nameEn ?? '').trim() || store.name;
+}
+
+/** One street line: English if supplied, else line 1 if present, otherwise line 2. */
 function primaryAddressLine(store: StoreRecord): string {
+  const en = (store.addressLine1En ?? '').trim();
+  if (en) return en;
   const a1 = (store.addressLine1 ?? '').trim();
   if (a1) return a1;
   return (store.addressLine2 ?? '').trim();
@@ -24,7 +38,7 @@ function primaryAddressLine(store: StoreRecord): string {
 
 function formatAddress(store: StoreRecord): string {
   const street = primaryAddressLine(store);
-  const city = (store.city ?? '').trim();
+  const city = ((store.cityEn ?? '').trim() || (store.city ?? '').trim());
   const stateRaw = (store.stateProvinceRegion ?? '').trim();
   // Same text in city + state (e.g. "Dubai" as emirate and city) — show once.
   const state =
@@ -39,6 +53,28 @@ function formatAddress(store: StoreRecord): string {
     store.country,
   ].filter(Boolean);
   return parts.join(', ');
+}
+
+/** Non-Latin original form of address, if different from the displayed English form — used as a secondary line. */
+function originalAddressIfDifferent(store: StoreRecord): string | null {
+  const hasEnglishSubstitute =
+    ((store.addressLine1En ?? '').trim() !== '' && hasNonLatin(store.addressLine1)) ||
+    ((store.cityEn ?? '').trim() !== '' && hasNonLatin(store.city));
+  if (!hasEnglishSubstitute) return null;
+  const street = (store.addressLine1 ?? '').trim() || (store.addressLine2 ?? '').trim();
+  const parts = [street || undefined, (store.city ?? '').trim() || undefined].filter(Boolean);
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
+/** True when the store looks like it has a non-Latin name/address but no English translation yet. */
+function needsEnglishTranslation(store: StoreRecord): boolean {
+  const nameEn = (store.nameEn ?? '').trim();
+  const a1En = (store.addressLine1En ?? '').trim();
+  const cityEn = (store.cityEn ?? '').trim();
+  if (hasNonLatin(store.name) && !nameEn) return true;
+  if (hasNonLatin(store.addressLine1) && !a1En) return true;
+  if (hasNonLatin(store.city) && !cityEn) return true;
+  return false;
 }
 
 interface BulkPremiumRow {
@@ -65,6 +101,11 @@ const StoreCard: React.FC<StoreCardProps> = ({
   onEdit,
 }) => {
   const brands = parseBrandsForDisplay(store.brands);
+  const primaryName = displayName(store);
+  const originalName = store.name;
+  const showOriginalName = primaryName !== originalName;
+  const originalAddress = originalAddressIfDifferent(store);
+  const translationMissing = needsEnglishTranslation(store);
 
   return (
     <div
@@ -93,7 +134,7 @@ const StoreCard: React.FC<StoreCardProps> = ({
       </div>
 
       <div className="store-card__top">
-        <span className="store-card__name">{store.name}</span>
+        <span className="store-card__name">{primaryName}</span>
         <div className="store-card__badges">
           <span
             className={`badge badge-store-type${store.isPremium ? ' badge-store-type--verified' : ''}`}
@@ -109,10 +150,39 @@ const StoreCard: React.FC<StoreCardProps> = ({
           {store.isPremium && store.isServiceCenter && (
             <span className="badge badge-store-type">Service center</span>
           )}
+          {translationMissing && (
+            <span
+              className="badge badge-store-type"
+              style={{ background: '#fef3c7', color: '#92400e', borderColor: '#fcd34d' }}
+              title="This store has non-Latin text but no English translation yet. Click Edit to add one."
+            >
+              Needs English
+            </span>
+          )}
         </div>
       </div>
 
+      {showOriginalName && (
+        <div
+          className="store-card__original-name"
+          style={{ fontSize: '0.85em', color: '#6b7280', marginTop: '-4px' }}
+          title="Original (local-language) name"
+        >
+          {originalName}
+        </div>
+      )}
+
       <div className="store-card__address">{formatAddress(store)}</div>
+
+      {originalAddress && (
+        <div
+          className="store-card__original-address"
+          style={{ fontSize: '0.85em', color: '#6b7280' }}
+          title="Original (local-language) address"
+        >
+          {originalAddress}
+        </div>
+      )}
 
       {store.phone && (
         <div className="store-card__phone">{store.phone}</div>
@@ -236,7 +306,7 @@ const PremiumStores: React.FC = () => {
       if (selectedBrand && !storeMatchesBrandFilter(s.brands, selectedBrand)) return false;
       if (selectedCountry && s.country !== selectedCountry) return false;
       if (query) {
-        const haystack = `${s.name} ${formatAddress(s)}`.toLowerCase();
+        const haystack = `${s.name} ${s.nameEn ?? ''} ${s.addressLine1En ?? ''} ${s.cityEn ?? ''} ${formatAddress(s)}`.toLowerCase();
         if (!haystack.includes(query)) return false;
       }
       return true;
@@ -250,8 +320,8 @@ const PremiumStores: React.FC = () => {
     if (!query) return [];
     return stores
       .filter((s) => {
-        const nameLower = s.name.toLowerCase();
-        const addrLower = formatAddress(s).toLowerCase();
+        const nameLower = `${s.name} ${s.nameEn ?? ''}`.toLowerCase();
+        const addrLower = `${formatAddress(s)} ${s.addressLine1En ?? ''} ${s.cityEn ?? ''}`.toLowerCase();
         return nameLower.includes(query) || addrLower.includes(query);
       })
       .slice(0, AUTOCOMPLETE_LIMIT);
@@ -300,8 +370,8 @@ const PremiumStores: React.FC = () => {
   const openBulkPremiumModal = useCallback(() => {
     const rows: BulkPremiumRow[] = nonPremiumSelected.map((s) => ({
       handle: s.handle,
-      name: s.name,
-      city: (s.city ?? '').trim(),
+      name: displayName(s),
+      city: ((s.cityEn ?? '').trim() || (s.city ?? '').trim()),
       isServiceCenter: false,
       premiumRetailKind: '',
     }));
@@ -481,11 +551,11 @@ const PremiumStores: React.FC = () => {
                 <li
                   key={s.handle}
                   onMouseDown={() => {
-                    setSearchText(s.name);
+                    setSearchText(displayName(s));
                     setShowAutocomplete(false);
                   }}
                 >
-                  <div className="autocomplete-name">{s.name}</div>
+                  <div className="autocomplete-name">{displayName(s)}</div>
                   <div className="autocomplete-address">{formatAddress(s)}</div>
                 </li>
               ))}
@@ -709,7 +779,7 @@ const PremiumStores: React.FC = () => {
                     <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                   </svg>
                 )}
-                <span title={s.name}>{s.name}</span>
+                <span title={s.name}>{displayName(s)}</span>
                 <button
                   className="review-chip__remove"
                   onClick={(e) => { e.stopPropagation(); removeFromSelection(s.handle); }}

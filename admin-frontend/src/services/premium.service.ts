@@ -10,9 +10,12 @@ export type BrandFilterModeWire = 'brand' | 'verified_brand';
 export interface StoreRecord {
   handle: string;
   name: string;
+  nameEn: string | null;
   addressLine1: string;
+  addressLine1En: string | null;
   addressLine2: string | null;
   city: string;
+  cityEn: string | null;
   stateProvinceRegion: string | null;
   country: string;
   postalCode: string | null;
@@ -37,9 +40,13 @@ export interface StoreRecord {
 
 /** Body for PATCH /premium-stores/stores/:handle — all fields optional on wire; we send a full snapshot on save. */
 export type StoreUpdatePayload = Partial<{
+  name: string;
+  nameEn: string | null;
   addressLine1: string;
+  addressLine1En: string | null;
   addressLine2: string | null;
   city: string;
+  cityEn: string | null;
   stateProvinceRegion: string | null;
   postalCode: string | null;
   country: string;

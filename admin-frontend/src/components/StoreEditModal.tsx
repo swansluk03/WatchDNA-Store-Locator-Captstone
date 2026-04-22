@@ -26,9 +26,13 @@ function imagePreviewSrc(imageUrl: string): string {
 }
 
 export interface StoreEditDraft {
+  name: string;
+  nameEn: string;
   addressLine1: string;
+  addressLine1En: string;
   addressLine2: string;
   city: string;
+  cityEn: string;
   stateProvinceRegion: string;
   postalCode: string;
   country: string;
@@ -51,9 +55,13 @@ export interface StoreEditDraft {
 
 function storeToDraft(s: StoreRecord): StoreEditDraft {
   return {
+    name: s.name,
+    nameEn: n2s(s.nameEn),
     addressLine1: s.addressLine1,
+    addressLine1En: n2s(s.addressLine1En),
     addressLine2: n2s(s.addressLine2),
     city: s.city,
+    cityEn: n2s(s.cityEn),
     stateProvinceRegion: n2s(s.stateProvinceRegion),
     postalCode: n2s(s.postalCode),
     country: s.country,
@@ -85,9 +93,13 @@ function draftToPayload(
 ): StoreUpdatePayload {
   const empty = (s: string) => (s.trim() === '' ? null : s.trim());
   const out: StoreUpdatePayload = {
+    name: d.name.trim(),
+    nameEn: empty(d.nameEn),
     addressLine1: d.addressLine1.trim(),
+    addressLine1En: empty(d.addressLine1En),
     addressLine2: empty(d.addressLine2),
     city: d.city.trim(),
+    cityEn: empty(d.cityEn),
     stateProvinceRegion: empty(d.stateProvinceRegion),
     postalCode: empty(d.postalCode),
     country: d.country.trim(),
@@ -445,8 +457,13 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
   };
 
   const handleSaveEdit = async () => {
-    if (!editDraft.addressLine1.trim() || !editDraft.city.trim() || !editDraft.country.trim()) {
-      onToast({ message: 'Address line 1, city, and country are required.', type: 'error' });
+    if (
+      !editDraft.name.trim() ||
+      !editDraft.addressLine1.trim() ||
+      !editDraft.city.trim() ||
+      !editDraft.country.trim()
+    ) {
+      onToast({ message: 'Store name, address line 1, city, and country are required.', type: 'error' });
       return;
     }
     if (editDraft.isPremium) {
@@ -496,7 +513,32 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
         </div>
 
         <div className="store-edit-modal__body">
-          <p className="store-edit-modal__subtitle">{store.name}</p>
+          <p className="store-edit-modal__subtitle">{store.nameEn || store.name}</p>
+
+          <section className="store-edit-section">
+            <h3 className="store-edit-section__title">Store name</h3>
+            <p className="store-edit-hint">
+              Keep the original (local-language) name exactly as it appears. Use the English field for the translation
+              shoppers should see on the map — leave it blank when the original is already in English.
+            </p>
+            <div className="store-edit-grid">
+              <label className="store-edit-field store-edit-field--full">
+                <span className="store-edit-label">Name (original)</span>
+                <input
+                  value={editDraft.name}
+                  onChange={(e) => updateDraft({ name: e.target.value })}
+                />
+              </label>
+              <label className="store-edit-field store-edit-field--full">
+                <span className="store-edit-label">Name — English</span>
+                <input
+                  value={editDraft.nameEn}
+                  onChange={(e) => updateDraft({ nameEn: e.target.value })}
+                  placeholder="e.g. Rolex Ginza Boutique"
+                />
+              </label>
+            </div>
+          </section>
 
           <section className="store-edit-section">
             <h3 className="store-edit-section__title">Address</h3>
@@ -509,6 +551,14 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
                 />
               </label>
               <label className="store-edit-field store-edit-field--full">
+                <span className="store-edit-label">Address line 1 — English</span>
+                <input
+                  value={editDraft.addressLine1En}
+                  onChange={(e) => updateDraft({ addressLine1En: e.target.value })}
+                  placeholder="English translation of the street address (optional)"
+                />
+              </label>
+              <label className="store-edit-field store-edit-field--full">
                 <span className="store-edit-label">Address line 2</span>
                 <input
                   value={editDraft.addressLine2}
@@ -518,6 +568,14 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
               <label className="store-edit-field">
                 <span className="store-edit-label">City</span>
                 <input value={editDraft.city} onChange={(e) => updateDraft({ city: e.target.value })} />
+              </label>
+              <label className="store-edit-field">
+                <span className="store-edit-label">City — English</span>
+                <input
+                  value={editDraft.cityEn}
+                  onChange={(e) => updateDraft({ cityEn: e.target.value })}
+                  placeholder="e.g. Tokyo"
+                />
               </label>
               <label className="store-edit-field">
                 <span className="store-edit-label">State / province</span>

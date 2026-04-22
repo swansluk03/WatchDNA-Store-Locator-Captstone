@@ -42,9 +42,12 @@ export const ERR_PREMIUM_MARK_METADATA = 'PREMIUM_MARK_METADATA_REQUIRED';
 export interface PremiumStoreRecord {
   handle: string;
   name: string;
+  nameEn: string | null;
   addressLine1: string;
+  addressLine1En: string | null;
   addressLine2: string | null;
   city: string;
+  cityEn: string | null;
   stateProvinceRegion: string | null;
   country: string;
   postalCode: string | null;
@@ -71,9 +74,12 @@ export interface PremiumStoreRecord {
 const premiumStoreSelect = {
   handle: true,
   name: true,
+  nameEn: true,
   addressLine1: true,
+  addressLine1En: true,
   addressLine2: true,
   city: true,
+  cityEn: true,
   stateProvinceRegion: true,
   country: true,
   postalCode: true,
@@ -109,9 +115,12 @@ async function selectForPremiumLocationRow(): Promise<
 function toPremiumRecord(loc: {
   handle: string;
   name: string;
+  nameEn: string | null;
   addressLine1: string;
+  addressLine1En: string | null;
   addressLine2: string | null;
   city: string;
+  cityEn: string | null;
   stateProvinceRegion: string | null;
   country: string;
   postalCode: string | null;
@@ -163,9 +172,13 @@ function mergePremiumRegistry(
 
 /** PATCH body: only these keys may update Location (plus optional isPremium for registry sync). */
 export type PremiumStoreUpdateInput = Partial<{
+  name: string;
+  nameEn: string | null;
   addressLine1: string;
+  addressLine1En: string | null;
   addressLine2: string | null;
   city: string;
+  cityEn: string | null;
   stateProvinceRegion: string | null;
   postalCode: string | null;
   country: string;
@@ -254,14 +267,26 @@ export const premiumService = {
     const data: Prisma.LocationUpdateInput = {};
     let nextCountry = normalizeCountry(existing.country ?? '') || existing.country;
 
+    if (body.name !== undefined) {
+      data.name = (body.name ?? '').trim() || existing.name;
+    }
+    if (body.nameEn !== undefined) {
+      data.nameEn = emptyToNull(body.nameEn);
+    }
     if (body.addressLine1 !== undefined) {
       data.addressLine1 = (body.addressLine1 ?? '').trim() || existing.addressLine1;
+    }
+    if (body.addressLine1En !== undefined) {
+      data.addressLine1En = emptyToNull(body.addressLine1En);
     }
     if (body.addressLine2 !== undefined) {
       data.addressLine2 = emptyToNull(body.addressLine2);
     }
     if (body.city !== undefined) {
       data.city = (body.city ?? '').trim() || existing.city;
+    }
+    if (body.cityEn !== undefined) {
+      data.cityEn = emptyToNull(body.cityEn);
     }
     if (body.stateProvinceRegion !== undefined) {
       data.stateProvinceRegion = emptyToNull(body.stateProvinceRegion);
