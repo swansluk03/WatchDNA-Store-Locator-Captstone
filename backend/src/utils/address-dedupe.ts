@@ -26,9 +26,23 @@ function stripFloorMarkers(s: string): string {
 
 /**
  * Suite / building / unit tokens so the same street number merges across "Suite 101" vs "BLDG C, UNIT 4".
+ *
+ * Handles:
+ *  - "Suite 101", "STE 101"       — standard form (letter+number or number-only)
+ *  - "STE #300", "Suite #5"       — hash prefix before the unit number
+ *  - "STE. F-001", "Suite B-12"   — letter-hyphen-digit alphanumeric codes
+ *  - "unit #4", "UNIT 4B"         — unit keyword variants
+ *  - "BLDG C", "Building 3"       — building/bldg keyword variants
+ *
+ * Pattern anatomy for suite/ste:
+ *   \b(?:suite|ste)  — keyword
+ *   \.?              — optional trailing dot (e.g. "STE.")
+ *   \s*#?\s*         — optional whitespace, optional "#", optional whitespace
+ *   [a-z0-9]+        — first token (letter or digit run)
+ *   (?:-[a-z0-9]+)*  — optional hyphenated segments (e.g. "F-001", "B-12")
  */
 const SUBUNIT_RE =
-  /\b(?:suite|ste)\.?\s*[a-z0-9]+\b|\bunit\s*[a-z0-9]+\b|\bbldg\.?\s*[a-z0-9]+\b|\bbuilding\s*[a-z0-9]+\b/gi;
+  /\b(?:suite|ste)\.?\s*#?\s*[a-z0-9]+(?:-[a-z0-9]+)*\b|\bunit\s*#?\s*[a-z0-9]+(?:-[a-z0-9]+)*\b|\bbldg\.?\s*[a-z0-9]+\b|\bbuilding\s*[a-z0-9]+\b/gi;
 
 function stripSubunitTokens(s: string): string {
   return s.replace(SUBUNIT_RE, ' ');

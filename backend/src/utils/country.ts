@@ -55,6 +55,7 @@ const ALIASES: Record<string, string> = {
   'hong kong sar, china': 'Hong Kong',
   'hong kong sar. china': 'Hong Kong',
   'hong kong, china': 'Hong Kong',
+  'hong kong sar china': 'Hong Kong',
   // Macau / Macao SAR variants
   'macao': 'Macau',
   'macau sar': 'Macau',
@@ -71,6 +72,8 @@ const ALIASES: Record<string, string> = {
   'mainland china': 'China',
   // Taiwan
   'taiwan, province of china': 'Taiwan',
+  'taiwan province of china': 'Taiwan',
+  'taiwan, china': 'Taiwan',
   'chinese taipei': 'Taiwan',
   // Russia
   'russian federation': 'Russia',
@@ -84,6 +87,10 @@ const ALIASES: Record<string, string> = {
   'rsa': 'South Africa',
   // United States of America (returned by i18n-iso-countries for US)
   'brasil': 'Brazil',
+  // French/alternate spelling of Belgium
+  'belgique': 'Belgium',
+  // Brunei Darussalam (ISO official long name → project canonical)
+  'brunei darussalam': 'Brunei',
   // Scrapers / suppliers (not matched by i18n English name)
   'kingdom of saudi arabia': 'Saudi Arabia',
   'macedonia': 'North Macedonia',

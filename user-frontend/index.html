@@ -8,6 +8,9 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- API origin. Leave empty (default) to use the Railway production backend.
+       Override only for local testing: content="http://localhost:3001" -->
+  <meta name="watchdna-api-origin" content="" />
 
 
   <!-- Leaflet -->
@@ -242,8 +245,26 @@
     //});
     //}
 
-    const API_LOCATIONS_URL = 'https://backend-production-033e.up.railway.app/api/locations';
-    const BACKEND_BASE_URL = 'https://backend-production-033e.up.railway.app';
+    function readApiOrigin() {
+      const m = document.querySelector('meta[name="watchdna-api-origin"]');
+      const content = m ? (m.getAttribute('content') || '').trim() : '';
+      // Railway production is the primary backend; the meta tag is only set for local testing.
+      return content || 'https://backend-production-033e.up.railway.app';
+    }
+
+    const BACKEND_BASE_URL = readApiOrigin();
+    const API_LOCATIONS_URL = BACKEND_BASE_URL + '/api/locations';
+
+    async function loadBrandsFromApi() {
+      try {
+        const res = await fetch(`${BACKEND_BASE_URL}/api/locations/brands?v=${Date.now()}`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        return Array.isArray(data.brands) ? data.brands : null;
+      } catch {
+        return null;
+      }
+    }
 
     function normalizeApiLocation(loc) {
       return {
@@ -303,7 +324,7 @@
     }
 
     async function loadLocationsFromApi() {
-      const res = await fetch(`${API_LOCATIONS_URL}?limit=10000&v=${Date.now()}`);
+      const res = await fetch(`${API_LOCATIONS_URL}?limit=25000&v=${Date.now()}`);
       if (!res.ok) {
         throw new Error(`API request failed with status ${res.status}`);
       }
@@ -1965,8 +1986,8 @@
     }
 
     // --- Load data & render (with helpful logs) ---
-    loadLocationsFromApi()
-      .then(rows => {
+    Promise.all([loadLocationsFromApi(), loadBrandsFromApi()])
+      .then(([rows, apiBrands]) => {
         console.log('API rows (raw):', rows.length);
         const brandSet = new Set();
 
@@ -2046,7 +2067,14 @@
         if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
 
 
-        populateBrandSelect(brandSet);
+        // Prefer the API brand list (complete, normalized) for initial population;
+        // fall back to the row-derived set if the API call failed.
+        if (apiBrands && apiBrands.length > 0) {
+          const apiBrandSet = new Set(apiBrands);
+          populateBrandSelect(apiBrandSet);
+        } else {
+          populateBrandSelect(brandSet);
+        }
 
         const typeToggle = document.getElementById('typeToggle');
         const labelWatch = document.getElementById('toggleLabelWatch');
@@ -2108,7 +2136,7 @@
       })
       .catch(err => {
         console.error('Error loading locations API:', err);
-        alert('Failed to load locations from the Railway API.');
+        alert('Failed to load locations from the backend API.');
       });
 
     (function () {

@@ -9,6 +9,7 @@ import type { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { locationTableHasBrandFilterModeColumn } from '../utils/location-brand-filter-column';
 import { locationTableHasShopifyFileGidColumn } from '../utils/location-shopify-gid-column';
+import { locationTableHasShopifyExclusiveUploadColumn } from '../utils/location-shopify-exclusive-column';
 import { normalizeBrandsCsvField } from '../utils/brand-display-name';
 import { normalizeCountry } from '../utils/country';
 import { normalizePhone } from '../utils/normalize-phone';
@@ -19,8 +20,6 @@ import {
   removeStoreImageFile,
 } from '../utils/store-premium-image';
 
-export type PremiumRetailKind = 'boutique' | 'multi_brand';
-
 export const STORE_LISTING_AUTHORIZED_DEALERS = 'Authorized Dealers';
 export const STORE_LISTING_AD_VERIFIED = 'AD Verified';
 
@@ -28,16 +27,9 @@ export type StoreListingType = typeof STORE_LISTING_AUTHORIZED_DEALERS | typeof 
 
 export type BrandFilterModeWire = 'brand' | 'verified_brand';
 
-export function isValidPremiumRetailKind(v: unknown): v is PremiumRetailKind {
-  return v === 'boutique' || v === 'multi_brand';
-}
-
 function brandFilterModeFromDb(v: string | null | undefined): BrandFilterModeWire {
   return v === 'verified_brand' ? 'verified_brand' : 'brand';
 }
-
-/** Thrown when `isPremium: true` without valid `premiumRetailKind`. */
-export const ERR_PREMIUM_MARK_METADATA = 'PREMIUM_MARK_METADATA_REQUIRED';
 
 export interface PremiumStoreRecord {
   handle: string;
@@ -53,6 +45,7 @@ export interface PremiumStoreRecord {
   postalCode: string | null;
   phone: string | null;
   brands: string | null;
+  customBrands: string | null;
   isPremium: boolean;
   website: string | null;
   imageUrl: string | null;
@@ -68,7 +61,6 @@ export interface PremiumStoreRecord {
   storeType: StoreListingType;
   brandFilterMode: BrandFilterModeWire;
   isServiceCenter: boolean;
-  premiumRetailKind: PremiumRetailKind | null;
 }
 
 const premiumStoreSelect = {
@@ -85,6 +77,7 @@ const premiumStoreSelect = {
   postalCode: true,
   phone: true,
   brands: true,
+  customBrands: true,
   isPremium: true,
   website: true,
   imageUrl: true,
@@ -126,6 +119,7 @@ function toPremiumRecord(loc: {
   postalCode: string | null;
   phone: string | null;
   brands: string | null;
+  customBrands: string | null;
   isPremium: boolean;
   website: string | null;
   imageUrl: string | null;
@@ -148,25 +142,19 @@ function toPremiumRecord(loc: {
     storeType: listing,
     brandFilterMode: brandFilterModeFromDb(loc.brandFilterMode),
     isServiceCenter: false,
-    premiumRetailKind: null,
   };
 }
 
 function mergePremiumRegistry(
   base: PremiumStoreRecord,
-  row: {
-    isServiceCenter: boolean;
-    premiumRetailKind: string | null;
-  } | null
+  row: { isServiceCenter: boolean } | null
 ): PremiumStoreRecord {
   if (!row) {
-    return { ...base, isServiceCenter: false, premiumRetailKind: null };
+    return { ...base, isServiceCenter: false };
   }
-  const kind = isValidPremiumRetailKind(row.premiumRetailKind) ? row.premiumRetailKind : null;
   return {
     ...base,
     isServiceCenter: row.isServiceCenter,
-    premiumRetailKind: kind,
   };
 }
 
@@ -196,7 +184,6 @@ export type PremiumStoreUpdateInput = Partial<{
   sunday: string | null;
   isPremium: boolean;
   isServiceCenter: boolean;
-  premiumRetailKind: PremiumRetailKind | null;
   brandFilterMode: BrandFilterModeWire | null;
   /** Shopify file GID to store alongside a new imageUrl (e.g. when picking from Shopify Files). */
   shopifyFileGid: string | null;
@@ -205,7 +192,6 @@ export type PremiumStoreUpdateInput = Partial<{
 export type MarkPremiumEntry = {
   handle: string;
   isServiceCenter: boolean;
-  premiumRetailKind: PremiumRetailKind;
 };
 
 function emptyToNull(s: string | null | undefined): string | null {
@@ -230,7 +216,6 @@ export const premiumService = {
         select: {
           handle: true,
           isServiceCenter: true,
-          premiumRetailKind: true,
         },
       }),
     ]);
@@ -239,7 +224,6 @@ export const premiumService = {
         p.handle,
         {
           isServiceCenter: p.isServiceCenter,
-          premiumRetailKind: p.premiumRetailKind,
         },
       ])
     );
@@ -330,6 +314,27 @@ export const premiumService = {
       (data as Record<string, unknown>).shopifyFileGid = body.shopifyFileGid ?? null;
     }
 
+    if (await locationTableHasShopifyExclusiveUploadColumn()) {
+      const imageTouched = body.imageUrl !== undefined;
+      const gidTouched = body.shopifyFileGid !== undefined;
+      if (imageTouched) {
+        const newUrl = emptyToNull(body.imageUrl);
+        const oldUrl = existing.imageUrl;
+        if (newUrl === null) {
+          (data as Record<string, unknown>).shopifyStoreImageExclusiveUpload = null;
+          if (await locationTableHasShopifyFileGidColumn()) {
+            (data as Record<string, unknown>).shopifyFileGid = null;
+          }
+        } else if (gidTouched) {
+          (data as Record<string, unknown>).shopifyStoreImageExclusiveUpload = false;
+        } else if (newUrl !== oldUrl) {
+          (data as Record<string, unknown>).shopifyStoreImageExclusiveUpload = false;
+        }
+      } else if (gidTouched) {
+        (data as Record<string, unknown>).shopifyStoreImageExclusiveUpload = false;
+      }
+    }
+
     const premiumOp =
       body.isPremium === undefined
         ? null
@@ -339,9 +344,6 @@ export const premiumService = {
 
     const registryPatch: Prisma.PremiumStoreUpdateInput = {};
     if (body.isServiceCenter !== undefined) registryPatch.isServiceCenter = body.isServiceCenter;
-    if (body.premiumRetailKind !== undefined) {
-      registryPatch.premiumRetailKind = body.premiumRetailKind;
-    }
     const hasRegistryPatch = Object.keys(registryPatch).length > 0;
 
     if (hasRegistryPatch && premiumOp === null) {
@@ -354,13 +356,8 @@ export const premiumService = {
       }
     }
 
-    if (premiumOp === 'mark' && !isValidPremiumRetailKind(body.premiumRetailKind)) {
-      throw new Error(ERR_PREMIUM_MARK_METADATA);
-    }
-
     const premiumRowSelect = {
       isServiceCenter: true,
-      premiumRetailKind: true,
     } as const;
 
     await prisma.$transaction(async (tx) => {
@@ -368,7 +365,6 @@ export const premiumService = {
         const markData: Prisma.PremiumStoreCreateInput = {
           handle: h,
           isServiceCenter: body.isServiceCenter ?? false,
-          premiumRetailKind: body.premiumRetailKind as PremiumRetailKind,
           storeType: STORE_LISTING_AD_VERIFIED,
         };
         await tx.premiumStore.upsert({
@@ -376,7 +372,6 @@ export const premiumService = {
           update: {
             addedAt: new Date(),
             isServiceCenter: body.isServiceCenter ?? false,
-            premiumRetailKind: body.premiumRetailKind as PremiumRetailKind,
             storeType: STORE_LISTING_AD_VERIFIED,
           },
           create: markData,
@@ -449,7 +444,7 @@ export const premiumService = {
       prisma.location.findUnique({ where: { handle: h }, select: locSelect }),
       prisma.premiumStore.findUnique({
         where: { handle: h },
-        select: { isServiceCenter: true, premiumRetailKind: true },
+        select: { isServiceCenter: true },
       }),
     ]);
     if (!updated) return null;
@@ -457,26 +452,47 @@ export const premiumService = {
   },
 
   /**
-   * Return the current `shopifyFileGid` for a store, or null if the column does not exist or is empty.
-   * Used by callers that need to delete the old Shopify asset before replacing.
+   * Current store image row state for Shopify cleanup decisions.
    */
+  async getLocationShopifyImageRow(handle: string): Promise<{
+    imageUrl: string | null;
+    gid: string | null;
+    exclusiveUpload: boolean | null;
+  }> {
+    const h = handle.trim();
+    const row = await prisma.location.findUnique({
+      where: { handle: h },
+      select: {
+        imageUrl: true,
+        shopifyFileGid: true,
+        shopifyStoreImageExclusiveUpload: true,
+      },
+    });
+    if (!row) {
+      return { imageUrl: null, gid: null, exclusiveUpload: null };
+    }
+    return {
+      imageUrl: row.imageUrl,
+      gid: row.shopifyFileGid,
+      exclusiveUpload: row.shopifyStoreImageExclusiveUpload,
+    };
+  },
+
   async getLocationShopifyGid(handle: string): Promise<string | null> {
-    if (!(await locationTableHasShopifyFileGidColumn())) return null;
-    const row = await prisma.$queryRawUnsafe<Array<{ shopifyFileGid: string | null }>>(
-      'SELECT "shopifyFileGid" FROM "Location" WHERE handle = $1 LIMIT 1',
-      handle.trim()
-    );
-    return row[0]?.shopifyFileGid ?? null;
+    const row = await this.getLocationShopifyImageRow(handle);
+    return row.gid;
   },
 
   /**
    * Set `imageUrl` to an absolute URL (e.g. Shopify CDN) and optionally record its Shopify GID.
    * Removes a previous **local** managed file if any.
+   * Pass `exclusiveShopifyUpload: true` when the file was just created via POST …/image (safe to delete from Shopify later). Omit or false for linked / shared assets.
    */
   async applyStoreImageExternalUrl(
     handle: string,
     imageUrl: string,
-    fileGid?: string
+    fileGid?: string,
+    options?: { exclusiveShopifyUpload?: boolean }
   ): Promise<PremiumStoreRecord | null> {
     const h = handle.trim();
     const url = imageUrl.trim();
@@ -495,6 +511,10 @@ export const premiumService = {
     if (fileGid !== undefined && (await locationTableHasShopifyFileGidColumn())) {
       (updateData as Record<string, unknown>).shopifyFileGid = fileGid || null;
     }
+    const ex = options?.exclusiveShopifyUpload;
+    if (ex !== undefined && (await locationTableHasShopifyExclusiveUploadColumn())) {
+      (updateData as Record<string, unknown>).shopifyStoreImageExclusiveUpload = ex;
+    }
 
     await prisma.location.update({
       where: { handle: h },
@@ -509,7 +529,7 @@ export const premiumService = {
       prisma.location.findUnique({ where: { handle: h }, select: locSelect }),
       prisma.premiumStore.findUnique({
         where: { handle: h },
-        select: { isServiceCenter: true, premiumRetailKind: true },
+        select: { isServiceCenter: true },
       }),
     ]);
     if (!updated) return null;
@@ -524,7 +544,7 @@ export const premiumService = {
     if (entries.length === 0) return { marked: 0 };
 
     for (const e of entries) {
-      if (!e.handle?.trim() || typeof e.isServiceCenter !== 'boolean' || !isValidPremiumRetailKind(e.premiumRetailKind)) {
+      if (!e.handle?.trim() || typeof e.isServiceCenter !== 'boolean') {
         throw new Error('INVALID_MARK_PREMIUM_ENTRIES');
       }
     }
@@ -538,13 +558,11 @@ export const premiumService = {
           update: {
             addedAt: new Date(),
             isServiceCenter: e.isServiceCenter,
-            premiumRetailKind: e.premiumRetailKind,
             storeType: STORE_LISTING_AD_VERIFIED,
           },
           create: {
             handle: e.handle,
             isServiceCenter: e.isServiceCenter,
-            premiumRetailKind: e.premiumRetailKind,
             storeType: STORE_LISTING_AD_VERIFIED,
           },
         })

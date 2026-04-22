@@ -1,13 +1,7 @@
 import fs from 'fs/promises';
 import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import {
-  ERR_PREMIUM_MARK_METADATA,
-  isValidPremiumRetailKind,
-  premiumService,
-  type MarkPremiumEntry,
-  type PremiumStoreUpdateInput,
-} from '../services/premium.service';
+import { premiumService, type MarkPremiumEntry, type PremiumStoreUpdateInput } from '../services/premium.service';
 import {
   deleteShopifyFile,
   searchShopifyFiles,
@@ -22,6 +16,13 @@ import {
   removeStoreImageFile,
   storeImageAbsolutePath,
 } from '../utils/store-premium-image';
+
+function normImageUrl(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t === '' ? null : t;
+}
 
 const PATCH_KEYS: (keyof PremiumStoreUpdateInput)[] = [
   'name',
@@ -49,7 +50,6 @@ const PATCH_KEYS: (keyof PremiumStoreUpdateInput)[] = [
   'sunday',
   'isPremium',
   'isServiceCenter',
-  'premiumRetailKind',
   'brandFilterMode',
 ];
 
@@ -68,16 +68,6 @@ function pickPremiumUpdate(body: unknown): PremiumStoreUpdateInput {
     }
     if (key === 'isServiceCenter') {
       if (typeof v === 'boolean') out.isServiceCenter = v;
-      continue;
-    }
-    if (key === 'premiumRetailKind') {
-      if (v === null) {
-        out.premiumRetailKind = null;
-        continue;
-      }
-      if (typeof v === 'string' && isValidPremiumRetailKind(v)) {
-        out.premiumRetailKind = v;
-      }
       continue;
     }
     if (key === 'brandFilterMode') {
@@ -138,18 +128,15 @@ export const premiumController = {
       const handle = typeof o.handle === 'string' ? o.handle.trim() : '';
       if (!handle) continue;
       if (typeof o.isServiceCenter !== 'boolean') continue;
-      if (!isValidPremiumRetailKind(o.premiumRetailKind)) continue;
       parsed.push({
         handle,
         isServiceCenter: o.isServiceCenter,
-        premiumRetailKind: o.premiumRetailKind,
       });
     }
 
     if (parsed.length === 0 || parsed.length !== entries.length) {
       res.status(400).json({
-        error:
-          'Each entry must include handle (string), isServiceCenter (boolean), and premiumRetailKind ("boutique" | "multi_brand")',
+        error: 'Each entry must include handle (string) and isServiceCenter (boolean)',
       });
       return;
     }
@@ -212,7 +199,7 @@ export const premiumController = {
         const h = handle.trim();
         logger.integration(`[premium-image] POST image (Shopify Files) handle=${h} size=${buf.length}`);
 
-        const oldGid = await premiumService.getLocationShopifyGid(h);
+        const beforeShopify = await premiumService.getLocationShopifyImageRow(h);
 
         const ext = STORE_IMAGE_MIME_TO_EXT[file.mimetype] ?? '.jpg';
         const originalName = (file.originalname || '').trim();
@@ -228,7 +215,9 @@ export const premiumController = {
           alt,
           storeHandle: h,
         });
-        const store = await premiumService.applyStoreImageExternalUrl(handle, cdnUrl, fileGid);
+        const store = await premiumService.applyStoreImageExternalUrl(handle, cdnUrl, fileGid, {
+          exclusiveShopifyUpload: true,
+        });
         if (!store) {
           logger.warn(`[premium-image] store not found after Shopify upload handle=${h}`);
           res.status(404).json({ error: 'Store not found' });
@@ -236,10 +225,12 @@ export const premiumController = {
         }
         logger.integration(`[premium-image] saved imageUrl to DB handle=${h} gid=${fileGid}`);
 
-        if (oldGid) {
-          logger.integration(`[premium-image] deleting replaced Shopify file gid=${oldGid} handle=${h}`);
-          deleteShopifyFile(oldGid).catch((err) =>
-            logger.warn(`[premium-image] old file delete failed gid=${oldGid}`, err)
+        if (beforeShopify.exclusiveUpload === true && beforeShopify.gid) {
+          logger.integration(
+            `[premium-image] deleting replaced app-owned Shopify file gid=${beforeShopify.gid} handle=${h}`
+          );
+          deleteShopifyFile(beforeShopify.gid).catch((err) =>
+            logger.warn(`[premium-image] old file delete failed gid=${beforeShopify.gid}`, err)
           );
         }
 
@@ -286,11 +277,7 @@ export const premiumController = {
     }
 
     try {
-      // When imageUrl is being replaced or cleared, clean up the old Shopify file asset.
-      let oldGidToDelete: string | null = null;
-      if ('imageUrl' in patch && shopifyFilesConfigured()) {
-        oldGidToDelete = await premiumService.getLocationShopifyGid(handle);
-      }
+      const beforeRow = await premiumService.getLocationShopifyImageRow(handle.trim());
 
       const store = await premiumService.updateStoreByHandle(handle, patch);
       if (!store) {
@@ -298,12 +285,30 @@ export const premiumController = {
         return;
       }
 
-      if (oldGidToDelete && oldGidToDelete !== (patch.shopifyFileGid ?? null)) {
+      // Only delete from Shopify when the previous file was created by our upload flow (exclusive)
+      // and the store is actually releasing that asset (URL/GID changed or image cleared).
+      let gidToDelete: string | null = null;
+      if (shopifyFilesConfigured() && beforeRow.exclusiveUpload === true && beforeRow.gid) {
+        const patchUrl = 'imageUrl' in patch ? normImageUrl(patch.imageUrl) : undefined;
+        const patchGid = 'shopifyFileGid' in patch ? (patch.shopifyFileGid ?? null) : undefined;
+        const beforeUrl = normImageUrl(beforeRow.imageUrl);
+
+        const urlCleared = patchUrl !== undefined && patchUrl === null && beforeUrl !== null;
+        const urlChanged =
+          patchUrl !== undefined && beforeUrl !== null && patchUrl !== beforeUrl;
+        const gidChanged = patchGid !== undefined && patchGid !== beforeRow.gid;
+
+        if (urlCleared || urlChanged || gidChanged) {
+          gidToDelete = beforeRow.gid;
+        }
+      }
+
+      if (gidToDelete) {
         logger.integration(
-          `[premium-image] deleting replaced Shopify file gid=${oldGidToDelete} handle=${handle.trim()}`
+          `[premium-image] deleting released app-owned Shopify file gid=${gidToDelete} handle=${handle.trim()}`
         );
-        deleteShopifyFile(oldGidToDelete).catch((err) =>
-          logger.warn(`[premium-image] old file delete failed gid=${oldGidToDelete}`, err)
+        deleteShopifyFile(gidToDelete).catch((err) =>
+          logger.warn(`[premium-image] old file delete failed gid=${gidToDelete}`, err)
         );
       }
 
@@ -312,13 +317,6 @@ export const premiumController = {
       if (err instanceof Error && err.message === 'STORE_TYPE_REQUIRES_PREMIUM') {
         res.status(400).json({
           error: 'Mark the store as premium before changing premium-only fields.',
-        });
-        return;
-      }
-      if (err instanceof Error && err.message === ERR_PREMIUM_MARK_METADATA) {
-        res.status(400).json({
-          error:
-            'When marking as premium, premiumRetailKind is required and must be "boutique" or "multi_brand".',
         });
         return;
       }

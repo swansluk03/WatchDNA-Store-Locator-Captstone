@@ -75,6 +75,8 @@ model Location {
   imageUrl                String?
   /// Shopify Content → Files GID (e.g. gid://shopify/MediaImage/…) for the current imageUrl. Used for cleanup on replace/remove.
   shopifyFileGid          String?
+  /// When true, the file was created via POST /premium-stores/stores/:handle/image (Shopify upload). Safe to fileDelete on replace/remove. When false/null, the asset may be shared (theme, other pages) — never delete from Shopify.
+  shopifyStoreImageExclusiveUpload Boolean?
 
   // Hours
   monday                  String?
@@ -198,7 +200,6 @@ model PremiumStore {
   notes               String?
   storeType           String? // AD Verified (set when in premium program)
   isServiceCenter     Boolean  @default(false)
-  premiumRetailKind   String? // boutique | multi_brand when in premium program
 }
 
 /// Per-brand scraper config; merged over backend/brand_configs.json for persistence on Railway.

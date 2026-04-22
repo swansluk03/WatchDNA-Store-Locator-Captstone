@@ -1,8 +1,6 @@
 import { isAxiosError } from 'axios';
 import api from './api';
 
-export type PremiumRetailKind = 'boutique' | 'multi_brand';
-
 export type StoreListingType = 'Authorized Dealers' | 'AD Verified';
 
 export type BrandFilterModeWire = 'brand' | 'verified_brand';
@@ -21,6 +19,7 @@ export interface StoreRecord {
   postalCode: string | null;
   phone: string | null;
   brands: string | null;
+  customBrands: string | null;
   isPremium: boolean;
   website: string | null;
   imageUrl: string | null;
@@ -35,7 +34,6 @@ export interface StoreRecord {
   storeType: StoreListingType;
   brandFilterMode: BrandFilterModeWire;
   isServiceCenter: boolean;
-  premiumRetailKind: PremiumRetailKind | null;
 }
 
 /** Body for PATCH /premium-stores/stores/:handle — all fields optional on wire; we send a full snapshot on save. */
@@ -64,7 +62,6 @@ export type StoreUpdatePayload = Partial<{
   sunday: string | null;
   isPremium: boolean;
   isServiceCenter: boolean;
-  premiumRetailKind: PremiumRetailKind | null;
   brandFilterMode: BrandFilterModeWire | null;
   shopifyFileGid: string | null;
 }>;
@@ -72,7 +69,6 @@ export type StoreUpdatePayload = Partial<{
 export type MarkPremiumEntryPayload = {
   handle: string;
   isServiceCenter: boolean;
-  premiumRetailKind: PremiumRetailKind;
 };
 
 export async function fetchAllStores(): Promise<StoreRecord[]> {

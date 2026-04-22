@@ -1327,7 +1327,7 @@ const Scraper: React.FC = () => {
                 {(() => {
                   const parts: string[] = [];
                   if (masterBrandFilter) {
-                    parts.push(brands.find((b) => b.id === masterBrandFilter)?.name ?? masterBrandFilter);
+                    parts.push(masterBrandFilter);
                   }
                   if (masterCountryFilter.trim()) parts.push(masterCountryFilter.trim());
                   if (masterPremiumOnly) parts.push('Premium only');

@@ -4,7 +4,6 @@ import {
   updateStore,
   uploadStoreImage,
   type BrandFilterModeWire,
-  type PremiumRetailKind,
   type ShopifyFileResult,
   type StoreRecord,
   type StoreUpdatePayload,
@@ -49,7 +48,6 @@ export interface StoreEditDraft {
   sunday: string;
   isPremium: boolean;
   isServiceCenter: boolean;
-  premiumRetailKind: PremiumRetailKind | '';
   brandFilterMode: BrandFilterModeWire;
 }
 
@@ -78,10 +76,6 @@ function storeToDraft(s: StoreRecord): StoreEditDraft {
     sunday: n2s(s.sunday),
     isPremium: s.isPremium,
     isServiceCenter: Boolean(s.isServiceCenter),
-    premiumRetailKind:
-      s.premiumRetailKind === 'boutique' || s.premiumRetailKind === 'multi_brand'
-        ? s.premiumRetailKind
-        : '',
     brandFilterMode: s.brandFilterMode === 'verified_brand' ? 'verified_brand' : 'brand',
   };
 }
@@ -118,10 +112,6 @@ function draftToPayload(
   };
   if (d.isPremium) {
     out.isServiceCenter = d.isServiceCenter;
-    out.premiumRetailKind =
-      d.premiumRetailKind === 'boutique' || d.premiumRetailKind === 'multi_brand'
-        ? d.premiumRetailKind
-        : null;
   }
   if (d.isPremium !== baseline.isPremium) {
     out.isPremium = d.isPremium;
@@ -466,15 +456,6 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
       onToast({ message: 'Store name, address line 1, city, and country are required.', type: 'error' });
       return;
     }
-    if (editDraft.isPremium) {
-      if (editDraft.premiumRetailKind !== 'boutique' && editDraft.premiumRetailKind !== 'multi_brand') {
-        onToast({
-          message: 'AD Verified stores must have a retail type: choose Boutique or Multi-brand retailer.',
-          type: 'error',
-        });
-        return;
-      }
-    }
     setEditSaving(true);
     try {
       const updated = await updateStore(
@@ -735,27 +716,6 @@ const StoreEditModal: React.FC<StoreEditModalProps> = ({
                   />
                   <span>Authorized service center</span>
                 </label>
-                <fieldset className="store-edit-fieldset">
-                  <legend className="store-edit-label">Retail type (required for AD Verified)</legend>
-                  <label className="store-edit-radio-row">
-                    <input
-                      type="radio"
-                      name="premium-retail-kind"
-                      checked={editDraft.premiumRetailKind === 'boutique'}
-                      onChange={() => updateDraft({ premiumRetailKind: 'boutique' })}
-                    />
-                    <span>Boutique</span>
-                  </label>
-                  <label className="store-edit-radio-row">
-                    <input
-                      type="radio"
-                      name="premium-retail-kind"
-                      checked={editDraft.premiumRetailKind === 'multi_brand'}
-                      onChange={() => updateDraft({ premiumRetailKind: 'multi_brand' })}
-                    />
-                    <span>Retailer (multiple brands)</span>
-                  </label>
-                </fieldset>
               </div>
             )}
             <label className="store-edit-field store-edit-field--full">

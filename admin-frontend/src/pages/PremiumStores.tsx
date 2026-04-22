@@ -5,13 +5,13 @@ import {
   markStoresPremium,
   reconcilePremiumFlags,
   removeStoresPremium,
-  type PremiumRetailKind,
   type StoreRecord,
 } from '../services/premium.service';
 import StoreEditModal from '../components/StoreEditModal';
 import ManualAddStoreModal from '../components/ManualAddStoreModal';
 import '../styles/PremiumStores.css';
 import { parseBrandsForDisplay, storeMatchesBrandFilter } from '../utils/brandDisplay';
+import { scraperService } from '../services/scraper.service';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -82,7 +82,6 @@ interface BulkPremiumRow {
   name: string;
   city: string;
   isServiceCenter: boolean;
-  premiumRetailKind: PremiumRetailKind | '';
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -141,12 +140,6 @@ const StoreCard: React.FC<StoreCardProps> = ({
           >
             {store.storeType}
           </span>
-          {store.isPremium && store.premiumRetailKind === 'boutique' && (
-            <span className="badge badge-store-type">Boutique</span>
-          )}
-          {store.isPremium && store.premiumRetailKind === 'multi_brand' && (
-            <span className="badge badge-store-type">Multi-brand</span>
-          )}
           {store.isPremium && store.isServiceCenter && (
             <span className="badge badge-store-type">Service center</span>
           )}
@@ -234,8 +227,12 @@ const PremiumStores: React.FC = () => {
   const [bulkPremiumRows, setBulkPremiumRows] = useState<BulkPremiumRow[]>([]);
   const [bulkPremiumSubmitting, setBulkPremiumSubmitting] = useState(false);
 
-  // Load all stores once on mount
+  const [apiCountries, setApiCountries] = useState<string[]>([]);
+
+  // Load all stores and the normalized country list on mount
   useEffect(() => {
+    scraperService.getMasterCsvCountries().then(setApiCountries).catch(() => {});
+
     fetchAllStores()
       .then(setStores)
       .catch((err: unknown) => {
@@ -287,15 +284,20 @@ const PremiumStores: React.FC = () => {
 
   const allBrands = useMemo(() => {
     const set = new Set<string>();
-    stores.forEach((s) => parseBrandsForDisplay(s.brands).forEach((b) => set.add(b)));
+    stores.forEach((s) => {
+      parseBrandsForDisplay(s.brands).forEach((b) => set.add(b));
+      parseBrandsForDisplay(s.customBrands).forEach((b) => set.add(b));
+    });
     return Array.from(set).sort();
   }, [stores]);
 
+  // Use the API-sourced normalized country list; fall back to raw store countries if the API call failed.
   const allCountries = useMemo(() => {
+    if (apiCountries.length > 0) return apiCountries;
     const set = new Set<string>();
     stores.forEach((s) => s.country && set.add(s.country));
     return Array.from(set).sort();
-  }, [stores]);
+  }, [apiCountries, stores]);
 
   // ── Filtered stores ───────────────────────────────────────────────────────
 
@@ -373,7 +375,6 @@ const PremiumStores: React.FC = () => {
       name: displayName(s),
       city: ((s.cityEn ?? '').trim() || (s.city ?? '').trim()),
       isServiceCenter: false,
-      premiumRetailKind: '',
     }));
     setBulkPremiumRows(rows);
     setBulkPremiumOpen(true);
@@ -387,22 +388,11 @@ const PremiumStores: React.FC = () => {
 
   const handleConfirmBulkPremium = async () => {
     if (bulkPremiumRows.length === 0) return;
-    const incomplete = bulkPremiumRows.some(
-      (r) => r.premiumRetailKind !== 'boutique' && r.premiumRetailKind !== 'multi_brand'
-    );
-    if (incomplete) {
-      setToast({
-        message: 'Choose Boutique or Multi-brand for every store before confirming.',
-        type: 'error',
-      });
-      return;
-    }
     setBulkPremiumSubmitting(true);
     try {
       const entries = bulkPremiumRows.map((r) => ({
         handle: r.handle,
         isServiceCenter: r.isServiceCenter,
-        premiumRetailKind: r.premiumRetailKind as PremiumRetailKind,
       }));
       const result = await markStoresPremium(entries);
       const storesFresh = await fetchAllStores();
@@ -668,8 +658,7 @@ const PremiumStores: React.FC = () => {
             <div className="store-edit-modal__body bulk-premium-modal__body">
               <p className="store-edit-hint bulk-premium-hint">
                 These stores will be listed as AD Verified on the public map. For each location, indicate whether it is
-                an authorized service center and choose Boutique or multi-brand retailer. All rows must be completed
-                before confirming.
+                an authorized service center.
               </p>
               <div className="bulk-premium-table-wrap">
                 <table className="bulk-premium-table">
@@ -678,7 +667,6 @@ const PremiumStores: React.FC = () => {
                       <th scope="col">Store</th>
                       <th scope="col">Location</th>
                       <th scope="col">Service center</th>
-                      <th scope="col">Retail type</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -702,32 +690,6 @@ const PremiumStores: React.FC = () => {
                             <span>Yes</span>
                           </label>
                         </td>
-                        <td>
-                          <div className="bulk-premium-radios">
-                            <label>
-                              <input
-                                type="radio"
-                                name={`bulk-retail-${r.handle}`}
-                                checked={r.premiumRetailKind === 'boutique'}
-                                onChange={() => updateBulkPremiumRow(r.handle, { premiumRetailKind: 'boutique' })}
-                                disabled={bulkPremiumSubmitting}
-                              />
-                              Boutique
-                            </label>
-                            <label>
-                              <input
-                                type="radio"
-                                name={`bulk-retail-${r.handle}`}
-                                checked={r.premiumRetailKind === 'multi_brand'}
-                                onChange={() =>
-                                  updateBulkPremiumRow(r.handle, { premiumRetailKind: 'multi_brand' })
-                                }
-                                disabled={bulkPremiumSubmitting}
-                              />
-                              Multi-brand
-                            </label>
-                          </div>
-                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -747,13 +709,7 @@ const PremiumStores: React.FC = () => {
                 type="button"
                 className="store-edit-btn store-edit-btn--primary"
                 onClick={handleConfirmBulkPremium}
-                disabled={
-                  bulkPremiumSubmitting ||
-                  bulkPremiumRows.length === 0 ||
-                  bulkPremiumRows.some(
-                    (r) => r.premiumRetailKind !== 'boutique' && r.premiumRetailKind !== 'multi_brand'
-                  )
-                }
+                disabled={bulkPremiumSubmitting || bulkPremiumRows.length === 0}
               >
                 {bulkPremiumSubmitting ? 'Saving…' : `Confirm (${bulkPremiumRows.length})`}
               </button>

@@ -71,7 +71,6 @@ const baseRow = {
 
 const emptyPremiumRow = {
   isServiceCenter: false,
-  premiumRetailKind: null as string | null,
 };
 
 describe('premiumService.updateStoreByHandle', () => {
@@ -99,7 +98,6 @@ describe('premiumService.updateStoreByHandle', () => {
   it('runs transaction with premium upsert and location update when marking premium', async () => {
     premiumFindUnique.mockResolvedValue({
       isServiceCenter: false,
-      premiumRetailKind: 'boutique',
     });
 
     const txPremiumUpsert = vi.fn().mockResolvedValue(undefined);
@@ -122,7 +120,6 @@ describe('premiumService.updateStoreByHandle', () => {
     const result = await premiumService.updateStoreByHandle('h1', {
       isPremium: true,
       isServiceCenter: false,
-      premiumRetailKind: 'boutique',
     });
 
     expect(txPremiumUpsert).toHaveBeenCalledWith(
@@ -131,7 +128,6 @@ describe('premiumService.updateStoreByHandle', () => {
         create: expect.objectContaining({
           handle: 'h1',
           isServiceCenter: false,
-          premiumRetailKind: 'boutique',
           storeType: 'AD Verified',
         }),
       })
@@ -141,16 +137,6 @@ describe('premiumService.updateStoreByHandle', () => {
       data: expect.objectContaining({ isPremium: true }),
     });
     expect(result?.isPremium).toBe(true);
-    expect(result?.premiumRetailKind).toBe('boutique');
-  });
-
-  it('throws when marking premium without valid premiumRetailKind', async () => {
-    findUnique.mockResolvedValueOnce({ ...baseRow });
-
-    await expect(
-      premiumService.updateStoreByHandle('h1', { isPremium: true })
-    ).rejects.toThrow('PREMIUM_MARK_METADATA_REQUIRED');
-    expect($transaction).not.toHaveBeenCalled();
   });
 
   it('deletes premium row and sets isPremium false when unmarking', async () => {
@@ -315,8 +301,8 @@ describe('premiumService.batchMarkPremium / batchRemovePremium', () => {
     );
 
     const r = await premiumService.batchMarkPremium([
-      { handle: 'a', isServiceCenter: true, premiumRetailKind: 'boutique' },
-      { handle: 'b', isServiceCenter: false, premiumRetailKind: 'multi_brand' },
+      { handle: 'a', isServiceCenter: true },
+      { handle: 'b', isServiceCenter: false },
     ]);
 
     expect(r.marked).toBe(2);
@@ -327,7 +313,6 @@ describe('premiumService.batchMarkPremium / batchRemovePremium', () => {
         create: expect.objectContaining({
           handle: 'a',
           isServiceCenter: true,
-          premiumRetailKind: 'boutique',
           storeType: 'AD Verified',
         }),
       })
@@ -342,7 +327,7 @@ describe('premiumService.batchMarkPremium / batchRemovePremium', () => {
     await expect(
       premiumService.batchMarkPremium([
         // @ts-expect-error exercise runtime validation
-        { handle: 'a', isServiceCenter: false, premiumRetailKind: 'invalid' },
+        { handle: '  ', isServiceCenter: true },
       ])
     ).rejects.toThrow('INVALID_MARK_PREMIUM_ENTRIES');
   });

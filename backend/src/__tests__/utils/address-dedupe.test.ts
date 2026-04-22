@@ -28,6 +28,30 @@ describe('expandTrailingStreetAbbrevForDedupe / dedupeAddressFingerprint', () =>
     );
   });
 
+  it('strips hash-prefixed suite numbers (STE #300, Suite #5)', () => {
+    expect(dedupeAddressFingerprint('12300 Jefferson Avenue, STE #300')).toBe(
+      dedupeAddressFingerprint('12300 Jefferson Avenue')
+    );
+    expect(dedupeAddressFingerprint('100 Main St Suite #5')).toBe(
+      dedupeAddressFingerprint('100 Main Street')
+    );
+  });
+
+  it('strips hyphenated alphanumeric suite codes (STE. F-001, Suite B-12)', () => {
+    expect(dedupeAddressFingerprint('6600 Menaul Blvd. NE STE. F-001')).toBe(
+      dedupeAddressFingerprint('6600 Menaul Blvd. NE')
+    );
+    expect(dedupeAddressFingerprint('500 Broadway Suite B-12')).toBe(
+      dedupeAddressFingerprint('500 Broadway')
+    );
+  });
+
+  it('strips hash-prefixed unit numbers (unit #4)', () => {
+    expect(dedupeAddressFingerprint('200 Oak Ave unit #4')).toBe(
+      dedupeAddressFingerprint('200 Oak Avenue')
+    );
+  });
+
   it('strips floor markers and collapses hyphenated lot numbers', () => {
     expect(dedupeAddressFingerprint('1-1-43 ABENOSUJI')).toBe(dedupeAddressFingerprint('1-1-43 11F ABENOSUJI'));
   });
