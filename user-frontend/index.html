@@ -635,10 +635,10 @@
         const key = clean.toUpperCase();
         const isVerifiedBrand = isLocationApprovedForBrand(row, clean);
         const check = isVerifiedBrand ? ` <span class="verified-check" title="Verified brand">✓</span>` : "";
-        const href = brandLinks.get(key);
+        const href = getWatchDnaBrandHref(clean, brandLinks.get(key));
 
         if (isValidBrandHref(href)) {
-          return `<a class="brand-pill brand-pill--link" href="${escapeHtml(buildBrandHref(href))}" target="_blank" rel="noopener">${escapeHtml(clean)}${check}</a>`;
+          return `<a class="brand-pill brand-pill--link" href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(clean)}${check}</a>`;
         }
 
         return `<span class="brand-pill">${escapeHtml(clean)}${check}</span>`;
@@ -742,6 +742,41 @@
       fromCsv.forEach(add);
       fromCustom.forEach(add);
       return merged.join(', ');
+    }
+
+    const WATCHDNA_BRAND_PAGE_OVERRIDES = {
+      'Eberhard & Co.': 'eberhard-co',
+      'Eberhard & Co': 'eberhard-co'
+    };
+
+    function slugifyBrandForWatchDna(brandName) {
+      const original = String(brandName || '').trim();
+      if (!original) return '';
+
+      if (WATCHDNA_BRAND_PAGE_OVERRIDES[original]) {
+        return WATCHDNA_BRAND_PAGE_OVERRIDES[original];
+      }
+
+      return original
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/&/g, ' and ')
+        .replace(/['’]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .replace(/-+/g, '-');
+    }
+
+    function getWatchDnaBrandHref(brandName, existingHref) {
+      if (isValidBrandHref(existingHref)) {
+        return buildBrandHref(existingHref);
+      }
+
+      const slug = slugifyBrandForWatchDna(brandName);
+      if (!slug) return '#';
+
+      return `https://watchdna.com/blogs/history/${slug}`;
     }
 
     function extractBrandLinksMap(row) {
@@ -854,10 +889,10 @@
           const key = clean.toUpperCase();
           const isVerifiedBrand = isLocationApprovedForBrand(row, clean);
           const check = isVerifiedBrand ? ` <span class="verified-check" title="Verified brand">✓</span>` : "";
-          const href = fullBrandLinks.get(key);
+          const href = getWatchDnaBrandHref(clean, fullBrandLinks.get(key));
 
           if (isValidBrandHref(href)) {
-            return `<a class="brand-pill brand-pill--link" href="${escapeHtml(buildBrandHref(href))}" target="_blank" rel="noopener">${escapeHtml(clean)}${check}</a>`;
+            return `<a class="brand-pill brand-pill--link" href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(clean)}${check}</a>`;
           }
 
           return `<span class="brand-pill">${escapeHtml(clean)}${check}</span>`;
