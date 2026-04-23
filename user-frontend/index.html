@@ -58,7 +58,7 @@
       </button>
       <button id="clearFiltersBtn" type="button" title="Clear all filters" style="display:none;">Clear filters</button>
     </div>
-    
+
     <span id="nearMeStatus"></span>
 
     <div id="filtersPanel" class="filters-panel" hidden>
@@ -156,7 +156,7 @@
     L.maplibreGL({
       style: 'https://tiles.openfreemap.org/styles/bright',
     }).addTo(map);
-    const mapBounds = [ [-90, -180], [90, 180] ];
+    const mapBounds = [[-90, -180], [90, 180]];
     map.setMaxBounds(mapBounds);
     map.options.maxBoundsViscosity = 1.0;
 
@@ -315,6 +315,7 @@
         'Custom Button title 2': loc.customButton2Title || '',
         'Custom Button URL 2': loc.customButton2Url || '',
         '_isPremium': !!loc.isPremium,
+        '_isServiceCenterDb': !!loc.isServiceCenter,
         '_brandFilterMode': loc.brandFilterMode === 'verified_brand' ? 'verified_brand' : 'brand',
         // English translations (for non-Latin stores)
         'Name EN': loc.nameEn || '',
@@ -324,11 +325,36 @@
     }
 
     async function loadLocationsFromApi() {
+      // Fallback: load everything (used when geolocation is unavailable/denied)
       const res = await fetch(`${API_LOCATIONS_URL}?limit=25000&v=${Date.now()}`);
       if (!res.ok) {
         throw new Error(`API request failed with status ${res.status}`);
       }
+      const payload = await res.json();
+      const locations = Array.isArray(payload?.data) ? payload.data : [];
+      return locations.map(normalizeApiLocation);
+    }
 
+    async function loadLocationsNearby(lat, lng, radiusMiles) {
+      // Primary startup path: only load stores near the user
+      const url = `${BACKEND_BASE_URL}/api/locations/nearby?lat=${lat}&lng=${lng}&radius=${radiusMiles}&v=${Date.now()}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Nearby API request failed with status ${res.status}`);
+      }
+      const payload = await res.json();
+      const locations = Array.isArray(payload?.data) ? payload.data : [];
+      return locations.map(normalizeApiLocation);
+    }
+
+    async function loadLocationsByBrand(brandName) {
+      // Called when user selects a brand filter that yields zero visible markers
+      const encoded = encodeURIComponent(brandName);
+      const url = `${API_LOCATIONS_URL}?brand=${encoded}&limit=5000&v=${Date.now()}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Brand API request failed with status ${res.status}`);
+      }
       const payload = await res.json();
       const locations = Array.isArray(payload?.data) ? payload.data : [];
       return locations.map(normalizeApiLocation);
@@ -456,6 +482,51 @@
     let userAccuracyCircle = null;
     let focusedMarker = null;
 
+    // Tracks which location keys are already in allRows to avoid duplicates across incremental loads
+    const _ingestedKeys = new Set();
+
+    function ingestRows(rows) {
+      // Classifies, deduplicates, builds markers, and adds to cluster for a batch of raw rows.
+      // Safe to call multiple times — already-seen keys are skipped.
+      rows.forEach(row => {
+        const key = [
+          String(row['Name'] || '').trim().toLowerCase(),
+          String(row['Address Line 1'] || '').trim().toLowerCase(),
+          String(row['City'] || '').trim().toLowerCase(),
+          String(row['Country'] || '').trim().toLowerCase()
+        ].join('|');
+
+        if (_ingestedKeys.has(key)) return;
+        _ingestedKeys.add(key);
+
+        const lat = parseFloat(String(row.Latitude).trim());
+        const lon = parseFloat(String(row.Longitude).trim());
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+        if (isServiceCenterRow(row)) {
+          row._type = 'services-center';
+        } else {
+          row._type = 'watch-brands';
+        }
+        row._isPremium = !!row._isPremium;
+        row._isServiceCenter = isServiceCenterRow(row);
+        row._isPremiumBrandOnly = isPremiumBrandOnlyRow(row);
+
+        const marker = L.marker([lat, lon], { icon: getMarkerIconForRow(row) });
+        marker.on('click', () => {
+          if (focusedMarker && focusedMarker !== marker) {
+            focusedMarker.setZIndexOffset(0);
+          }
+          focusedMarker = marker;
+          marker.setZIndexOffset(1000);
+          openStoreDetail(row, marker);
+        });
+        allRows.push(row);
+        allMarkers.push({ row, marker });
+        bounds.extend([lat, lon]);
+      });
+    }
+
     function createStoreIcon(iconUrl) {
       return L.icon({
         iconUrl,
@@ -579,16 +650,32 @@
     }
 
     function isServiceCenterRow(row) {
+      // Rule: a location is treated as a service center for marker/filter purposes
+      // ONLY if it is strictly a service center — not if it is also a retailer.
+      // A premium store or a store with brand data is a retailer first; the service
+      // center marker should not override that even if it offers repairs.
+
+      // 1. If the DB flag is explicitly false, it's not a service center.
+      if (row['_isServiceCenterDb'] === false) return false;
+
+      // 2. If it's a premium retailer, keep the retailer marker regardless.
+      if (row['_isPremium']) return false;
+
+      // 3. If it has brand data, it's functioning as a retailer — don't override.
+      const hasBrands = !!(row['Brands'] || '').trim() || !!(row['Custom Brands'] || '').trim();
+      if (hasBrands) return false;
+
+      // 4. Trust the DB flag if explicitly set to true.
+      if (row['_isServiceCenterDb'] === true) return true;
+
+      // 5. Fallback: text heuristic for stores where the DB flag isn't available yet.
       const text = [
         row['Name'] || '',
-        row['Page Description'] || '',
         row['Page Title'] || '',
-        row['Meta Description'] || '',
-        row['Custom Brands'] || '',
-        row[' Tags'] || ''
+        row['Tags'] || ''
       ].join(' ').toLowerCase();
 
-      return /service center|customer service|watch service|watch repair|repair specialists|repair|service\b/.test(text);
+      return /service center|watch service|watch repair|repair specialists/.test(text);
     }
 
     function isPremiumBrandOnlyRow(row) {
@@ -1203,6 +1290,39 @@
         if (show) clusterGroup.addLayer(marker);
       });
 
+      // Expand to full load when a filter is active that needs the complete dataset.
+      // AD Verified: expand unconditionally (premium stores are spread globally,
+      //   a nearby-only load will always miss some).
+      // Brand filter: expand only if zero markers matched (same as before).
+      const selectedBrandCount = document.querySelectorAll('#brandCheckboxes input[type="checkbox"]:checked').length;
+      const toggleEl2 = document.getElementById('typeToggle');
+      const adVerifiedActive = toggleEl2?.getAttribute('aria-checked') === 'true';
+
+      const needsFullLoad = !_fullLoadDone && (
+        adVerifiedActive ||
+        (selectedBrandCount > 0 && clusterGroup.getLayers().length === 0)
+      );
+
+      if (needsFullLoad) {
+        expandToFullLoad().then(() => {
+          // After the full load, clear the area filter so premium stores
+          // outside the initial viewport aren't clipped — then fit the map
+          // to show all matching results.
+          if (adVerifiedActive) {
+            areaFilterEnabled = false;
+            areaFilterBounds = null;
+          }
+          applyFilter();
+          // Fit to visible markers only — NOT the global `bounds` accumulator
+          // (which spans the entire world after a full 25k-row load).
+          const visibleAfterLoad = getVisibleMarkers();
+          if (visibleAfterLoad.length > 0) {
+            const visibleBounds = L.latLngBounds(visibleAfterLoad.map(m => m.getLatLng()));
+            map.fitBounds(visibleBounds.pad(0.2));
+          }
+        });
+      }
+
       updateSidebarForViewport();
 
       const countEl = document.getElementById('searchResultCount');
@@ -1229,10 +1349,54 @@
         areaFilterBounds = currentBounds;
         lastSearchAreaBounds = currentBounds;
 
-        applyFilter();
+        // If a full load has already been done, just filter in-place (original behaviour)
+        if (_fullLoadDone) {
+          applyFilter();
+          const visible = getVisibleMarkers().length;
+          setNearMeStatus(`Showing ${visible} location${visible !== 1 ? 's' : ''} in this area`);
+          return;
+        }
 
-        const visible = getVisibleMarkers().length;
-        setNearMeStatus(`Showing ${visible} location${visible !== 1 ? 's' : ''} in this area`);
+        // Check how much of the current viewport is covered by already-loaded data.
+        // We measure this by counting how many markers fall inside the viewport bounds.
+        // If zero markers are visible in the new viewport, the area hasn't been loaded yet.
+        applyFilter();
+        const alreadyVisible = getVisibleMarkers().length;
+
+        if (alreadyVisible > 0) {
+          // Data is already present for this area — no fetch needed
+          setNearMeStatus(`Showing ${alreadyVisible} location${alreadyVisible !== 1 ? 's' : ''} in this area`);
+          return;
+        }
+
+        // No markers in viewport — fetch stores near the centre of the current view
+        const centre = currentBounds.getCenter();
+        setNearMeStatus('Loading locations in this area…');
+
+        // Derive a radius that covers the full viewport (distance from centre to corner)
+        const corner = L.latLng(currentBounds.getNorth(), currentBounds.getEast());
+        const radiusMiles = Math.min(
+          Math.ceil(map.distance(centre, corner) / 1609.34) + 30, // metres → miles + buffer
+          500 // hard cap so we never accidentally request the entire world
+        );
+
+        loadLocationsNearby(centre.lat, centre.lng, radiusMiles)
+          .then(rows => {
+            const validRows = rows.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
+            ingestRows(validRows);
+            applyFilter(); // re-run now that new rows are in allMarkers
+            const visible = getVisibleMarkers().length;
+            if (visible > 0) {
+              setNearMeStatus(`Showing ${visible} location${visible !== 1 ? 's' : ''} in this area`);
+            } else {
+              setNearMeStatus('No locations found in this area.');
+            }
+          })
+          .catch(err => {
+            console.error('Error loading locations for this area:', err);
+            setNearMeStatus('Unable to load locations in this area.');
+          });
+
       } catch (err) {
         console.error('Error searching this area:', err);
         setNearMeStatus('Unable to search this area.');
@@ -1985,159 +2149,207 @@
       return hasPlus ? `tel:+${digitsOnly}` : `tel:${digitsOnly}`;
     }
 
-    // --- Load data & render (with helpful logs) ---
-    Promise.all([loadLocationsFromApi(), loadBrandsFromApi()])
-      .then(([rows, apiBrands]) => {
-        console.log('API rows (raw):', rows.length);
-        const brandSet = new Set();
+    // --- Load data & render ---
+    // Step 1: load brands immediately (fast, small payload) so filters are ready
+    // Step 2: attempt geolocation; if granted, load only nearby stores first
+    // Step 3: if geolocation denied/unavailable, fall back to loading all stores
 
-        // Keep only rows that *have something* in lat/lon
-        const seenLocationKeys = new Set();
+    const NEARBY_RADIUS_MILES = 150; // tune this with sponsor if needed
 
-        allRows = rows.filter(r => {
-          if ((r.Latitude ?? '') === '' || (r.Longitude ?? '') === '') return false;
+    function finishMapSetup(apiBrands) {
+      // Wire up controls that depend on allRows/allMarkers being populated
+      map.addLayer(clusterGroup);
+      map.addControl(new NearMeControl());
 
-          const key = [
-            String(r['Name'] || '').trim().toLowerCase(),
-            String(r['Address Line 1'] || '').trim().toLowerCase(),
-            String(r['City'] || '').trim().toLowerCase(),
-            String(r['Country'] || '').trim().toLowerCase()
-          ].join('|');
+      const detailCloseBtn = document.getElementById('detailCloseBtn');
+      if (detailCloseBtn) {
+        detailCloseBtn.addEventListener('click', () => setDetailPanelVisible(false));
+      }
 
-          if (seenLocationKeys.has(key)) return false;
-          seenLocationKeys.add(key);
-          return true;
-        });
-        console.log('Rows with any lat/lon value:', allRows.length);
+      if (apiBrands && apiBrands.length > 0) {
+        populateBrandSelect(new Set(apiBrands));
+      }
 
-        const detailCloseBtn = document.getElementById('detailCloseBtn');
-        if (detailCloseBtn) {
-          detailCloseBtn.addEventListener('click', () => setDetailPanelVisible(false));
+      const typeToggle = document.getElementById('typeToggle');
+      const labelWatch = document.getElementById('toggleLabelWatch');
+      const labelAccessory = document.getElementById('toggleLabelAccessory');
+
+      function updateToggleLabels() {
+        const isSingle = typeToggle.getAttribute('aria-checked') === 'true';
+        labelWatch.classList.toggle('inactive', isSingle);
+        labelAccessory.classList.toggle('inactive', !isSingle);
+      }
+
+      typeToggle.addEventListener('click', () => {
+        const isChecked = typeToggle.getAttribute('aria-checked') === 'true';
+        if (isChecked) {
+          clearAllFilters();
+          return;
         }
-
-        allRows.forEach(row => {
-          // classify row type using heuristics
-          const descFields = [row['Name'], row['Page Description'], row['Page Title'], row['Meta Description'], row['Tags'], row['Custom Brands']]
-            .filter(Boolean)
-            .join('\n')
-            .toLowerCase();
-
-          if (isServiceCenterRow(row)) {
-            row._type = 'services-center';
-          } else {
-            row._type = 'watch-brands';
-          }
-          const lat = parseFloat(String(row.Latitude).trim());
-          const lon = parseFloat(String(row.Longitude).trim());
-          if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-
-          row._isPremium = !!row._isPremium;
-          row._isServiceCenter = isServiceCenterRow(row);
-          row._isPremiumBrandOnly = isPremiumBrandOnlyRow(row);
-
-          const iconToUse = getMarkerIconForRow(row);
-
-          const marker = L.marker([lat, lon], { icon: iconToUse });
-          marker.on('click', () => {
-            if (focusedMarker && focusedMarker !== marker) {
-              focusedMarker.setZIndexOffset(0);
-            }
-            focusedMarker = marker;
-            marker.setZIndexOffset(1000);
-            openStoreDetail(row, marker);
-          });
-          allMarkers.push({ row, marker });
-          clusterGroup.addLayer(marker);
-          bounds.extend([lat, lon]);
-
-          extractBrandsText(row)
-            .split(',')
-            .map(s => s.trim())
-            .filter(Boolean)
-            .forEach(b => brandSet.add(b));
-          // also expose type values for debugging / UI
-          // (we don't include types in the brand list)
-
-        });
-
-        map.addLayer(clusterGroup);
-
-        map.addControl(new NearMeControl());
-
-        if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
-
-
-        // Prefer the API brand list (complete, normalized) for initial population;
-        // fall back to the row-derived set if the API call failed.
-        if (apiBrands && apiBrands.length > 0) {
-          const apiBrandSet = new Set(apiBrands);
-          populateBrandSelect(apiBrandSet);
-        } else {
-          populateBrandSelect(brandSet);
+        if (checkFiltersActive()) {
+          showFilterLockToast();
+          return;
         }
-
-        const typeToggle = document.getElementById('typeToggle');
-        const labelWatch = document.getElementById('toggleLabelWatch');
-        const labelAccessory = document.getElementById('toggleLabelAccessory');
-
-        function updateToggleLabels() {
-          const isSingle = typeToggle.getAttribute('aria-checked') === 'true';
-          labelWatch.classList.toggle('inactive', isSingle);      // Multi-Brand label
-          labelAccessory.classList.toggle('inactive', !isSingle); // Single Brand label
-        }
-
-        typeToggle.addEventListener('click', () => {
-          const isChecked = typeToggle.getAttribute('aria-checked') === 'true';
-
-          if (isChecked) {
-            // Un-toggling: clear all filters and unlock
-            clearAllFilters();
-            return;
-          }
-
-          if (checkFiltersActive()) {
-            showFilterLockToast();
-            return;
-          }
-
-          typeToggle.setAttribute('aria-checked', 'true');
-          updateToggleLabels();
-          applyFilter();
-        });
-
-        updateToggleLabels(); // set initial label opacity
-
-        document.getElementById('serviceCenterCheckbox').addEventListener('change', () => {
-          applyFilter();
-        });
-        rebuildStoreCheckboxes(allRows);
-
-        // Preload filters from URL, then apply once
-        document.getElementById('storeFilter').value = INITIAL.store;
-        if (INITIAL.brand) {
-          const b = INITIAL.brand.toLowerCase();
-          document.querySelectorAll('#brandCheckboxes input[type="checkbox"]').forEach(cb => {
-            if ((cb.value || '').toLowerCase().includes(b)) cb.checked = true;
-          });
-        }
-        if (INITIAL.type) {
-          const t = INITIAL.type.toLowerCase();
-        }
+        typeToggle.setAttribute('aria-checked', 'true');
+        updateToggleLabels();
         applyFilter();
-        tryAutoLocateOnStartup();
+      });
 
-        // Do not pre-check checkboxes from URL params; users must explicitly
-        // select stores using the checkbox controls.
+      updateToggleLabels();
 
-        console.log('Markers added:', allMarkers.length);
-        if (allMarkers.length === 0) {
-          showBanner('No markers loaded — check that the backend returned rows with numeric Latitude/Longitude.');
+      document.getElementById('serviceCenterCheckbox').addEventListener('change', () => {
+        applyFilter();
+      });
+
+      document.getElementById('storeFilter').value = INITIAL.store;
+      if (INITIAL.brand) {
+        const b = INITIAL.brand.toLowerCase();
+        document.querySelectorAll('#brandCheckboxes input[type="checkbox"]').forEach(cb => {
+          if ((cb.value || '').toLowerCase().includes(b)) cb.checked = true;
+        });
+      }
+
+      rebuildStoreCheckboxes(allRows);
+      applyFilter();
+    }
+
+    function addRowsAndRefresh(rows) {
+      // Ingest new rows, re-add all passing markers to cluster, refresh sidebar
+      ingestRows(rows);
+      applyFilter();
+      if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
+    }
+
+    // Track whether we've already done a full load so brand-expand doesn't double-load
+    let _fullLoadDone = false;
+
+    async function expandToFullLoad() {
+      if (_fullLoadDone) return;
+      _fullLoadDone = true;
+      setNearMeStatus('Loading all locations…');
+      try {
+        const rows = await loadLocationsFromApi();
+        const validRows = rows.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
+        ingestRows(validRows);
+        applyFilter();
+        setNearMeStatus('');
+      } catch (err) {
+        console.error('Full load failed:', err);
+        setNearMeStatus('');
+      }
+    }
+
+    loadBrandsFromApi().then(async (apiBrands) => {
+      // Map + controls are ready immediately; markers come in shortly after
+      finishMapSetup(apiBrands);
+
+      // Try geolocation first
+      const geoAvailable = canUseBrowserLocation();
+      if (!geoAvailable) {
+        // No geolocation support at all — load everything
+        _fullLoadDone = true;
+        setNearMeStatus('Loading all locations…');
+        try {
+          const rows = await loadLocationsFromApi();
+          const validRows = rows.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
+          ingestRows(validRows);
+          applyFilter();
+          if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
+          setNearMeStatus('');
+        } catch (err) {
+          console.error('Error loading locations API:', err);
+          alert('Failed to load locations from the backend API.');
         }
-      })
-      .catch(err => {
-        console.error('Error loading locations API:', err);
+        return;
+      }
+
+      // Geolocation is available — try to get user position
+      setNearMeStatus('Locating…');
+      getUserLatLng(
+        async (ll) => {
+          // Got user location — load only nearby stores
+          cachedLatLng = ll;
+          lastLocationTime = Date.now();
+
+          try {
+            localStorage.setItem('watchdna_location_enabled', 'true');
+          } catch (e) { /* Safari ITP — non-fatal */ }
+
+          setNearMeStatus('Loading nearby locations…');
+          try {
+            const rows = await loadLocationsNearby(ll.lat, ll.lng, NEARBY_RADIUS_MILES);
+            const validRows = rows.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
+            ingestRows(validRows);
+
+            showUserMarker(ll);
+            applyFilter();
+            map.flyTo(ll, 10, { animate: true, duration: 1.2 });
+
+            map.once('moveend', () => {
+              try {
+                areaFilterEnabled = true;
+                areaFilterBounds = map.getBounds().pad(-0.05);
+                lastSearchAreaBounds = areaFilterBounds;
+                applyFilter();
+                const visible = getVisibleMarkers().length;
+                setNearMeStatus(`Showing ${visible} location${visible !== 1 ? 's' : ''} near you`);
+              } catch (e) {
+                console.error('Error setting area filter after fly:', e);
+                setNearMeStatus('');
+              }
+            });
+
+            startupLocateAttempted = true;
+          } catch (err) {
+            console.error('Nearby load failed, falling back to full load:', err);
+            const rows = await loadLocationsFromApi();
+            const validRows = rows.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
+            _fullLoadDone = true;
+            finishMapSetup(null);
+            ingestRows(validRows);
+            // Populate brands from row data since the brands API failed
+            const fallbackBrandSet = new Set();
+            validRows.forEach(row => {
+              extractBrandsText(row).split(',').map(s => s.trim()).filter(Boolean)
+                .forEach(b => fallbackBrandSet.add(b));
+            });
+            if (fallbackBrandSet.size > 0) populateBrandSelect(fallbackBrandSet);
+            applyFilter();
+            if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
+            setNearMeStatus('');
+          }
+        },
+        async (_err) => {
+          // Geolocation denied or timed out — load everything, show world view
+          _fullLoadDone = true;
+          setNearMeStatus('');
+          try {
+            const rows = await loadLocationsFromApi();
+            const validRows = rows.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
+            ingestRows(validRows);
+            applyFilter();
+            if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
+          } catch (err) {
+            console.error('Error loading locations API:', err);
+            alert('Failed to load locations from the backend API.');
+          }
+        }
+      );
+    }).catch(err => {
+      console.error('Error loading brands API:', err);
+      // Still try to load locations even if brands fail
+      loadLocationsFromApi().then(rows => {
+        const validRows = rows.filter(r => (r.Latitude ?? '') !== '' && (r.Longitude ?? '') !== '');
+        _fullLoadDone = true;
+        finishMapSetup(null);
+        ingestRows(validRows);
+        applyFilter();
+        if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
+      }).catch(err2 => {
+        console.error('Error loading locations API:', err2);
         alert('Failed to load locations from the backend API.');
       });
+    });
 
     (function () {
       const btn = document.getElementById('mapToggleBtn');
